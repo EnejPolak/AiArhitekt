@@ -88,7 +88,7 @@ const FEATURES = [
 
 export default function AIFeaturesPage() {
   return (
-    <main className="min-h-screen bg-[#0A0F14]">
+    <main className="min-h-screen">
       <AIFeaturesHero />
       {FEATURES.map((feature, index) => (
         <FeatureBlock

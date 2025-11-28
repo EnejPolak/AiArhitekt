@@ -33,28 +33,29 @@ export const Navbar: React.FC<NavbarProps> = ({ className }) => {
             AI Features
           </Link>
           <Link
-            href="#pricing"
+            href="/pricing"
             className="text-[15px] font-medium text-[#BFBFBF] transition-colors duration-200 ease-in-out hover:text-white"
           >
             Pricing
           </Link>
           <Link
-            href="#about"
+            href="/about"
             className="text-[15px] font-medium text-[#BFBFBF] transition-colors duration-200 ease-in-out hover:text-white"
           >
             About
           </Link>
           <Link
-            href="#contact"
+            href="/contact"
             className="text-[15px] font-medium text-[#BFBFBF] transition-colors duration-200 ease-in-out hover:text-white"
           >
             Contact
           </Link>
-          <button
+          <Link
+            href="/sign-in"
             className="px-5 py-2 text-[15px] font-semibold text-[#EAEAEA] border border-[rgba(255,255,255,0.18)] rounded-lg bg-transparent transition-all duration-200 ease-in-out hover:bg-[rgba(255,255,255,0.08)] hover:border-[rgba(255,255,255,0.25)] active:bg-[rgba(255,255,255,0.12)] active:border-[rgba(255,255,255,0.35)]"
           >
             Sign in
-          </button>
+          </Link>
         </nav>
       </Container>
     </header>
