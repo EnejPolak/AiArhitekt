@@ -27,13 +27,7 @@ export const Navbar: React.FC<NavbarProps> = ({ className }) => {
             Home
           </Link>
           <Link
-            href="#how-it-works"
-            className="text-[15px] font-medium text-[#BFBFBF] transition-colors duration-200 ease-in-out hover:text-white"
-          >
-            How It Works
-          </Link>
-          <Link
-            href="#ai-features"
+            href="/ai-features"
             className="text-[15px] font-medium text-[#BFBFBF] transition-colors duration-200 ease-in-out hover:text-white"
           >
             AI Features

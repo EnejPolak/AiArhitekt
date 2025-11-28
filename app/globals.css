@@ -43,3 +43,21 @@
   }
 }
 
+/* Utility classes for AI Features page */
+.bg-gradient-radial {
+  background: radial-gradient(circle, var(--tw-gradient-stops));
+}
+
+.pt-30 {
+  padding-top: 120px;
+}
+
+.pb-35 {
+  padding-bottom: 140px;
+}
+
+.py-35 {
+  padding-top: 140px;
+  padding-bottom: 140px;
+}
+
