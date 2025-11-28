@@ -1,0 +1,45 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+  }
+
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  
+  html {
+    background: radial-gradient(
+      circle at 15% 10%,
+      #1b1b1b 0%,
+      #0e0e0e 45%,
+      #050505 70%,
+      #000000 100%
+    );
+    min-height: 100vh;
+  }
+  
+  body {
+    @apply bg-transparent text-foreground;
+    color: #c9c9c9;
+    line-height: 1.6;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    font-weight: 800;
+    line-height: 1.1;
+    color: #ffffff;
+  }
+}
+
