@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Manrope } from "next/font/google";
 import "./globals.css";
-import { Navbar } from "@/components/layout/Navbar";
+import { ConditionalNavbar } from "@/components/layout/ConditionalNavbar";
 import { CookieProvider } from "@/lib/contexts/CookieContext";
 import { CookieConsent } from "@/components/cookies/CookieConsent";
 
@@ -24,7 +24,7 @@ export default function RootLayout({
     <html lang="en" className={manrope.variable}>
       <body className="font-sans antialiased">
         <CookieProvider>
-          <Navbar />
+          <ConditionalNavbar />
           {children}
           <CookieConsent />
         </CookieProvider>
