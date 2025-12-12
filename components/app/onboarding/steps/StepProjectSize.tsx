@@ -5,30 +5,30 @@ import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
 import { ChatMessage } from "../ChatMessage";
 
-export interface StepPlotSizeProps {
-  data: { size: number | null; buildingFootprint?: number | null; terrainType: "flat" | "slope" | "unknown" | null } | null;
-  onComplete: (data: { size: number; buildingFootprint?: number | null; terrainType: "flat" | "slope" | "unknown" }) => void;
+export interface StepProjectSizeProps {
+  data: { size: number | null; rooms: number | null; ceilingHeight: "standard" | "high" | null } | null;
+  onComplete: (data: { size: number; rooms: number; ceilingHeight: "standard" | "high" }) => void;
 }
 
-const TERRAIN_TYPES = [
-  { id: "flat", label: "Flat" },
-  { id: "slope", label: "Slope" },
-  { id: "unknown", label: "Unknown" },
+const CEILING_HEIGHTS = [
+  { id: "standard", label: "Standard" },
+  { id: "high", label: "High" },
 ];
 
-export const StepPlotSize: React.FC<StepPlotSizeProps> = ({ data, onComplete }) => {
+export const StepProjectSize: React.FC<StepProjectSizeProps> = ({ data, onComplete }) => {
   const [size, setSize] = React.useState<string>(data?.size?.toString() || "");
-  const [buildingFootprint, setBuildingFootprint] = React.useState<string>(data?.buildingFootprint?.toString() || "");
-  const [terrainType, setTerrainType] = React.useState<"flat" | "slope" | "unknown" | null>(data?.terrainType || null);
+  const [rooms, setRooms] = React.useState<string>(data?.rooms?.toString() || "");
+  const [ceilingHeight, setCeilingHeight] = React.useState<"standard" | "high" | null>(data?.ceilingHeight || null);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const sizeNum = parseFloat(size);
-    if (sizeNum > 0) {
+    const roomsNum = parseInt(rooms);
+    if (sizeNum > 0 && roomsNum > 0 && ceilingHeight) {
       onComplete({
         size: sizeNum,
-        buildingFootprint: buildingFootprint ? parseFloat(buildingFootprint) : null,
-        terrainType: terrainType || "unknown",
+        rooms: roomsNum,
+        ceilingHeight,
       });
     }
   };
@@ -37,22 +37,22 @@ export const StepPlotSize: React.FC<StepPlotSizeProps> = ({ data, onComplete }) 
     <div className="space-y-6">
       <ChatMessage
         type="ai"
-        content={`**Step 3 — Plot Size**
+        content={`**Step 4 — Project Size**
 
-Tell us about your plot size and terrain.`}
+Tell us about the size and layout of your project.`}
       />
       <div className="flex justify-start">
         <div className="max-w-[85%] rounded-[16px] px-5 py-5 bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.08)]">
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-[13px] font-medium text-[rgba(255,255,255,0.70)] mb-2">
-                Plot size (m²)
+                Project size (m²)
               </label>
               <input
                 type="number"
                 value={size}
                 onChange={(e) => setSize(e.target.value)}
-                placeholder="500"
+                placeholder="150"
                 min="1"
                 step="1"
                 required
@@ -68,15 +68,16 @@ Tell us about your plot size and terrain.`}
 
             <div>
               <label className="block text-[13px] font-medium text-[rgba(255,255,255,0.70)] mb-2">
-                Building footprint (m²) <span className="text-[rgba(255,255,255,0.40)]">(optional)</span>
+                Number of rooms
               </label>
               <input
                 type="number"
-                value={buildingFootprint}
-                onChange={(e) => setBuildingFootprint(e.target.value)}
-                placeholder="200"
+                value={rooms}
+                onChange={(e) => setRooms(e.target.value)}
+                placeholder="4"
                 min="1"
                 step="1"
+                required
                 className={cn(
                   "w-full h-[40px] px-3 rounded-lg",
                   "bg-[rgba(255,255,255,0.05)] border border-[rgba(255,255,255,0.10)]",
@@ -89,22 +90,22 @@ Tell us about your plot size and terrain.`}
 
             <div>
               <label className="block text-[13px] font-medium text-[rgba(255,255,255,0.70)] mb-2">
-                Terrain type
+                Ceiling height
               </label>
-              <div className="grid grid-cols-3 gap-2">
-                {TERRAIN_TYPES.map((type) => (
+              <div className="grid grid-cols-2 gap-2">
+                {CEILING_HEIGHTS.map((height) => (
                   <button
-                    key={type.id}
+                    key={height.id}
                     type="button"
-                    onClick={() => setTerrainType(type.id as any)}
+                    onClick={() => setCeilingHeight(height.id as any)}
                     className={cn(
                       "px-4 py-2 rounded-lg text-[13px] font-medium transition-all",
-                      terrainType === type.id
+                      ceilingHeight === height.id
                         ? "bg-[rgba(59,130,246,0.15)] border border-[#3B82F6] text-white"
                         : "bg-[rgba(255,255,255,0.05)] border border-[rgba(255,255,255,0.10)] text-[rgba(255,255,255,0.70)] hover:border-[rgba(255,255,255,0.15)]"
                     )}
                   >
-                    {type.label}
+                    {height.label}
                   </button>
                 ))}
               </div>
@@ -112,7 +113,7 @@ Tell us about your plot size and terrain.`}
 
             <Button
               type="submit"
-              disabled={!size || parseFloat(size) <= 0 || !terrainType}
+              disabled={!size || parseFloat(size) <= 0 || !rooms || parseInt(rooms) <= 0 || !ceilingHeight}
               className={cn(
                 "w-full bg-gradient-to-br from-[#3B82F6] to-[#2563EB]",
                 "text-white border-0",

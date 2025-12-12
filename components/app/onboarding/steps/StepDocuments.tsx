@@ -7,32 +7,36 @@ import { ChatMessage } from "../ChatMessage";
 
 export interface StepDocumentsProps {
   data: {
-    hasOfficialPlans: boolean;
-    hasSketch: boolean;
-    hasNoPlans: boolean;
-    hasPermitDrawings: boolean;
+    hasNoDocuments: boolean;
+    hasFloorPlan: boolean;
+    hasMeasurements: boolean;
+    hasPhotos: boolean;
+    needsPermitHelp: boolean;
   } | null;
   onComplete: (data: {
-    hasOfficialPlans: boolean;
-    hasSketch: boolean;
-    hasNoPlans: boolean;
-    hasPermitDrawings: boolean;
+    hasNoDocuments: boolean;
+    hasFloorPlan: boolean;
+    hasMeasurements: boolean;
+    hasPhotos: boolean;
+    needsPermitHelp: boolean;
   }) => void;
 }
 
 export const StepDocuments: React.FC<StepDocumentsProps> = ({ data, onComplete }) => {
-  const [hasOfficialPlans, setHasOfficialPlans] = React.useState(data?.hasOfficialPlans || false);
-  const [hasSketch, setHasSketch] = React.useState(data?.hasSketch || false);
-  const [hasNoPlans, setHasNoPlans] = React.useState(data?.hasNoPlans || false);
-  const [hasPermitDrawings, setHasPermitDrawings] = React.useState(data?.hasPermitDrawings || false);
+  const [hasNoDocuments, setHasNoDocuments] = React.useState(data?.hasNoDocuments || false);
+  const [hasFloorPlan, setHasFloorPlan] = React.useState(data?.hasFloorPlan || false);
+  const [hasMeasurements, setHasMeasurements] = React.useState(data?.hasMeasurements || false);
+  const [hasPhotos, setHasPhotos] = React.useState(data?.hasPhotos || false);
+  const [needsPermitHelp, setNeedsPermitHelp] = React.useState(data?.needsPermitHelp || false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     onComplete({
-      hasOfficialPlans,
-      hasSketch,
-      hasNoPlans,
-      hasPermitDrawings,
+      hasNoDocuments,
+      hasFloorPlan,
+      hasMeasurements,
+      hasPhotos,
+      needsPermitHelp,
     });
   };
 
@@ -40,9 +44,9 @@ export const StepDocuments: React.FC<StepDocumentsProps> = ({ data, onComplete }
     <div className="space-y-6">
       <ChatMessage
         type="ai"
-        content={`**Step 4 — Documents & permits**
+        content={`**Step 5 — Documents & Permits**
 
-Tell me what kind of documentation you already have. This affects how detailed the analysis can be.`}
+What documentation do you already have?`}
       />
       <div className="flex justify-start">
         <div className="max-w-[85%] rounded-[16px] px-5 py-5 bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.08)]">
@@ -51,71 +55,80 @@ Tell me what kind of documentation you already have. This affects how detailed t
               <label className="flex items-center gap-3 cursor-pointer">
                 <input
                   type="checkbox"
-                  checked={hasOfficialPlans}
+                  checked={hasNoDocuments}
                   onChange={(e) => {
-                    setHasOfficialPlans(e.target.checked);
+                    setHasNoDocuments(e.target.checked);
                     if (e.target.checked) {
-                      setHasNoPlans(false);
+                      setHasFloorPlan(false);
+                      setHasMeasurements(false);
+                      setHasPhotos(false);
                     }
                   }}
                   className="w-4 h-4 rounded border-[rgba(255,255,255,0.18)] bg-[rgba(255,255,255,0.04)] text-[#3B82F6] focus:ring-[rgba(59,130,246,0.3)] focus:ring-offset-0"
                 />
                 <span className="text-[14px] text-[rgba(255,255,255,0.85)]">
-                  I have official floor plans (PDF or DWG exported as PDF)
+                  I have no documents
                 </span>
               </label>
               <label className="flex items-center gap-3 cursor-pointer">
                 <input
                   type="checkbox"
-                  checked={hasSketch}
+                  checked={hasFloorPlan}
                   onChange={(e) => {
-                    setHasSketch(e.target.checked);
+                    setHasFloorPlan(e.target.checked);
                     if (e.target.checked) {
-                      setHasNoPlans(false);
+                      setHasNoDocuments(false);
                     }
                   }}
                   className="w-4 h-4 rounded border-[rgba(255,255,255,0.18)] bg-[rgba(255,255,255,0.04)] text-[#3B82F6] focus:ring-[rgba(59,130,246,0.3)] focus:ring-offset-0"
                 />
                 <span className="text-[14px] text-[rgba(255,255,255,0.85)]">
-                  I only have a sketch / hand drawing
+                  I have a floor plan
                 </span>
               </label>
               <label className="flex items-center gap-3 cursor-pointer">
                 <input
                   type="checkbox"
-                  checked={hasNoPlans}
+                  checked={hasMeasurements}
                   onChange={(e) => {
-                    setHasNoPlans(e.target.checked);
+                    setHasMeasurements(e.target.checked);
                     if (e.target.checked) {
-                      setHasOfficialPlans(false);
-                      setHasSketch(false);
+                      setHasNoDocuments(false);
                     }
                   }}
                   className="w-4 h-4 rounded border-[rgba(255,255,255,0.18)] bg-[rgba(255,255,255,0.04)] text-[#3B82F6] focus:ring-[rgba(59,130,246,0.3)] focus:ring-offset-0"
                 />
                 <span className="text-[14px] text-[rgba(255,255,255,0.85)]">
-                  I have no plans yet, just an idea
+                  I have measurements
                 </span>
               </label>
-            </div>
-
-            <div className="pt-2 border-t border-[rgba(255,255,255,0.08)]">
               <label className="flex items-center gap-3 cursor-pointer">
                 <input
                   type="checkbox"
-                  checked={hasPermitDrawings}
-                  onChange={(e) => setHasPermitDrawings(e.target.checked)}
+                  checked={hasPhotos}
+                  onChange={(e) => {
+                    setHasPhotos(e.target.checked);
+                    if (e.target.checked) {
+                      setHasNoDocuments(false);
+                    }
+                  }}
                   className="w-4 h-4 rounded border-[rgba(255,255,255,0.18)] bg-[rgba(255,255,255,0.04)] text-[#3B82F6] focus:ring-[rgba(59,130,246,0.3)] focus:ring-offset-0"
                 />
                 <span className="text-[14px] text-[rgba(255,255,255,0.85)]">
-                  I already have some permit drawings or a project file
+                  I have photos
                 </span>
               </label>
-              {hasPermitDrawings && (
-                <p className="mt-2 text-[12px] text-[rgba(255,255,255,0.60)] ml-7">
-                  Later you'll be able to upload permit documents so we can highlight potential issues.
-                </p>
-              )}
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={needsPermitHelp}
+                  onChange={(e) => setNeedsPermitHelp(e.target.checked)}
+                  className="w-4 h-4 rounded border-[rgba(255,255,255,0.18)] bg-[rgba(255,255,255,0.04)] text-[#3B82F6] focus:ring-[rgba(59,130,246,0.3)] focus:ring-offset-0"
+                />
+                <span className="text-[14px] text-[rgba(255,255,255,0.85)]">
+                  I need help finding out what permits I need
+                </span>
+              </label>
             </div>
 
             <Button
@@ -142,5 +155,3 @@ Tell me what kind of documentation you already have. This affects how detailed t
     </div>
   );
 };
-
-

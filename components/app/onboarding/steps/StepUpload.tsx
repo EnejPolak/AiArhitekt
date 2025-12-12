@@ -7,136 +7,162 @@ import { ChatMessage } from "../ChatMessage";
 import { Upload, X, File } from "lucide-react";
 
 export interface StepUploadProps {
-  data: { files: File[]; notes: string } | null;
-  onComplete: (data: { files: File[]; notes: string }) => void;
+  data: { floorplanImage?: File | null; roomPhotos: File[]; sketches?: File[]; googleMapsScreenshot?: File | null } | null;
+  onComplete: (data: { floorplanImage?: File | null; roomPhotos: File[]; sketches?: File[]; googleMapsScreenshot?: File | null }) => void;
 }
 
 export const StepUpload: React.FC<StepUploadProps> = ({ data, onComplete }) => {
-  const [files, setFiles] = React.useState<File[]>(data?.files || []);
-  const [notes, setNotes] = React.useState(data?.notes || "");
-  const [isDragging, setIsDragging] = React.useState(false);
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const [floorplanImage, setFloorplanImage] = React.useState<File | null>(data?.floorplanImage || null);
+  const [roomPhotos, setRoomPhotos] = React.useState<File[]>(data?.roomPhotos || []);
+  const [sketches, setSketches] = React.useState<File[]>(data?.sketches || []);
+  const [googleMapsScreenshot, setGoogleMapsScreenshot] = React.useState<File | null>(data?.googleMapsScreenshot || null);
 
-  const handleFileSelect = (selectedFiles: FileList | null) => {
-    if (selectedFiles) {
-      const newFiles = Array.from(selectedFiles).filter(
-        (file) => file.type.startsWith("image/") || file.type === "application/pdf"
-      );
-      setFiles((prev) => [...prev, ...newFiles]);
+  const handleFileSelect = (files: FileList | null, type: "floorplan" | "roomPhotos" | "sketches" | "maps") => {
+    if (!files) return;
+    const fileArray = Array.from(files);
+    
+    if (type === "floorplan") {
+      setFloorplanImage(fileArray[0] || null);
+    } else if (type === "roomPhotos") {
+      setRoomPhotos((prev) => [...prev, ...fileArray]);
+    } else if (type === "sketches") {
+      setSketches((prev) => [...prev, ...fileArray]);
+    } else if (type === "maps") {
+      setGoogleMapsScreenshot(fileArray[0] || null);
     }
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    handleFileSelect(e.dataTransfer.files);
-  };
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-  };
-
-  const handleDragLeave = () => {
-    setIsDragging(false);
-  };
-
-  const removeFile = (index: number) => {
-    setFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onComplete({ files, notes });
+    onComplete({ floorplanImage, roomPhotos, sketches, googleMapsScreenshot });
+  };
+
+  const FileUploadSection = ({ 
+    title, 
+    description, 
+    files, 
+    onSelect, 
+    onRemove, 
+    accept = "image/*,.pdf",
+    multiple = false 
+  }: {
+    title: string;
+    description: string;
+    files: File | File[] | null;
+    onSelect: (files: FileList | null) => void;
+    onRemove: () => void;
+    accept?: string;
+    multiple?: boolean;
+  }) => {
+    const fileArray = Array.isArray(files) ? files : files ? [files] : [];
+    const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+    return (
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <div>
+            <label className="block text-[13px] font-medium text-[rgba(255,255,255,0.70)] mb-1">
+              {title}
+            </label>
+            <p className="text-[12px] text-[rgba(255,255,255,0.50)]">{description}</p>
+          </div>
+        </div>
+        <div
+          onClick={() => fileInputRef.current?.click()}
+          className={cn(
+            "border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-all",
+            "border-[rgba(255,255,255,0.15)] hover:border-[rgba(255,255,255,0.25)]"
+          )}
+        >
+          <Upload className="w-5 h-5 mx-auto mb-2 text-[rgba(255,255,255,0.60)]" />
+          <p className="text-[12px] text-[rgba(255,255,255,0.70)]">
+            Click to upload {multiple ? "files" : "file"}
+          </p>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple={multiple}
+            accept={accept}
+            onChange={(e) => onSelect(e.target.files)}
+            className="hidden"
+          />
+        </div>
+        {fileArray.length > 0 && (
+          <div className="space-y-1">
+            {fileArray.map((file, index) => (
+              <div
+                key={index}
+                className="flex items-center gap-2 p-2 rounded bg-[rgba(255,255,255,0.05)] border border-[rgba(255,255,255,0.08)]"
+              >
+                <File className="w-3 h-3 text-[rgba(255,255,255,0.60)] flex-shrink-0" />
+                <span className="flex-1 text-[12px] text-[rgba(255,255,255,0.85)] truncate">
+                  {file.name}
+                </span>
+                <button
+                  type="button"
+                  onClick={onRemove}
+                  className="p-1 rounded hover:bg-[rgba(255,255,255,0.10)] transition-colors"
+                >
+                  <X className="w-3 h-3 text-[rgba(255,255,255,0.60)]" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
   };
 
   return (
     <div className="space-y-6">
       <ChatMessage
         type="ai"
-        content={`**Step 5 — Upload plans & photos**
+        content={`**Step 6 — Upload Plans & Photos**
 
-Upload anything you have: floor plans, sketches, photos of the current state. We'll use this as the base for your 3D model and cost estimate.`}
+Upload any files you have to help us understand your project better.`}
       />
       <div className="flex justify-start">
         <div className="max-w-[85%] rounded-[16px] px-5 py-5 bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.08)]">
           <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Upload Area */}
-            <div
-              onDrop={handleDrop}
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onClick={() => fileInputRef.current?.click()}
-              className={cn(
-                "border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-all",
-                isDragging
-                  ? "border-[#3B82F6] bg-[rgba(59,130,246,0.10)]"
-                  : "border-[rgba(255,255,255,0.15)] hover:border-[rgba(255,255,255,0.25)]"
-              )}
-            >
-              <Upload className="w-8 h-8 mx-auto mb-3 text-[rgba(255,255,255,0.60)]" />
-              <p className="text-[14px] text-white mb-1">
-                Drop files here or click to browse
-              </p>
-              <p className="text-[12px] text-[rgba(255,255,255,0.50)]">
-                Supports: JPG, PNG, PDF
-              </p>
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                accept="image/*,.pdf"
-                onChange={(e) => handleFileSelect(e.target.files)}
-                className="hidden"
-              />
-            </div>
+            <FileUploadSection
+              title="Floorplan image"
+              description="Upload your floor plan (required)"
+              files={floorplanImage}
+              onSelect={(files) => handleFileSelect(files, "floorplan")}
+              onRemove={() => setFloorplanImage(null)}
+              accept="image/*,.pdf"
+            />
 
-            {/* File List */}
-            {files.length > 0 && (
-              <div className="space-y-2">
-                {files.map((file, index) => (
-                  <div
-                    key={index}
-                    className="flex items-center gap-3 p-3 rounded-lg bg-[rgba(255,255,255,0.05)] border border-[rgba(255,255,255,0.08)]"
-                  >
-                    <File className="w-4 h-4 text-[rgba(255,255,255,0.60)] flex-shrink-0" />
-                    <span className="flex-1 text-[13px] text-[rgba(255,255,255,0.85)] truncate">
-                      {file.name}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => removeFile(index)}
-                      className="p-1 rounded hover:bg-[rgba(255,255,255,0.10)] transition-colors"
-                    >
-                      <X className="w-4 h-4 text-[rgba(255,255,255,0.60)]" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
+            <FileUploadSection
+              title="Room photos"
+              description="Upload photos of rooms (optional)"
+              files={roomPhotos}
+              onSelect={(files) => handleFileSelect(files, "roomPhotos")}
+              onRemove={() => setRoomPhotos([])}
+              multiple
+            />
 
-            {/* Notes */}
-            <div>
-              <label className="block text-[13px] font-medium text-[rgba(255,255,255,0.70)] mb-2">
-                Anything special you want me to focus on?
-              </label>
-              <textarea
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="Optional notes..."
-                rows={3}
-                className={cn(
-                  "w-full px-3 py-2 rounded-lg",
-                  "bg-[rgba(255,255,255,0.05)] border border-[rgba(255,255,255,0.10)]",
-                  "text-[14px] text-white placeholder-[rgba(255,255,255,0.40)]",
-                  "focus:outline-none focus:border-[rgba(59,130,246,0.40)]",
-                  "transition-colors resize-none"
-                )}
-              />
-            </div>
+            <FileUploadSection
+              title="Sketches"
+              description="Upload any sketches or drawings (optional)"
+              files={sketches}
+              onSelect={(files) => handleFileSelect(files, "sketches")}
+              onRemove={() => setSketches([])}
+              multiple
+            />
+
+            <FileUploadSection
+              title="Google Maps screenshot"
+              description="Screenshot of location (optional)"
+              files={googleMapsScreenshot}
+              onSelect={(files) => handleFileSelect(files, "maps")}
+              onRemove={() => setGoogleMapsScreenshot(null)}
+              accept="image/*"
+            />
 
             <Button
               type="submit"
+              disabled={!floorplanImage}
               className={cn(
                 "w-full bg-gradient-to-br from-[#3B82F6] to-[#2563EB]",
                 "text-white border-0",
@@ -148,7 +174,8 @@ Upload anything you have: floor plans, sketches, photos of the current state. We
                 "active:scale-[0.99]",
                 "h-[44px] text-[14px] font-medium",
                 "rounded-[12px]",
-                "transition-all duration-200"
+                "transition-all duration-200",
+                "disabled:opacity-50 disabled:cursor-not-allowed"
               )}
             >
               Continue
@@ -159,5 +186,3 @@ Upload anything you have: floor plans, sketches, photos of the current state. We
     </div>
   );
 };
-
-

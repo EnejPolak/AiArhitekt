@@ -6,38 +6,44 @@ import { cn } from "@/lib/utils";
 import { ChatMessage } from "../ChatMessage";
 
 export interface StepProjectTypeProps {
-  data: { type: "new-build" | "renovation" | "interior-only" | null; livesInBuilding: boolean | null } | null;
-  onComplete: (data: { type: "new-build" | "renovation" | "interior-only"; livesInBuilding: boolean | null }) => void;
+  data: { type: "new-construction" | "renovation" | "extension" | null; renovationCondition?: "poor" | "medium" | "good" | null } | null;
+  onComplete: (data: { type: "new-construction" | "renovation" | "extension"; renovationCondition?: "poor" | "medium" | "good" | null }) => void;
 }
 
 const PROJECT_TYPES = [
   {
-    id: "new-build",
-    label: "New build",
-    description: "From empty plot to full new house.",
+    id: "new-construction",
+    label: "New Construction",
+    description: "Building from scratch on an empty plot.",
   },
   {
     id: "renovation",
     label: "Renovation",
-    description: "Updating or expanding an existing building.",
+    description: "Updating or improving an existing building.",
   },
   {
-    id: "interior-only",
-    label: "Interior only",
-    description: "Focus on layout and interior design.",
+    id: "extension",
+    label: "Extension",
+    description: "Adding space to an existing building.",
   },
 ];
 
+const RENOVATION_CONDITIONS = [
+  { id: "poor", label: "Poor", description: "Full reconstruction needed" },
+  { id: "medium", label: "Medium", description: "Partial renovation required" },
+  { id: "good", label: "Good", description: "Mostly cosmetic changes" },
+];
+
 export const StepProjectType: React.FC<StepProjectTypeProps> = ({ data, onComplete }) => {
-  const [selectedType, setSelectedType] = React.useState<"new-build" | "renovation" | "interior-only" | null>(data?.type || null);
-  const [livesInBuilding, setLivesInBuilding] = React.useState<boolean | null>(data?.livesInBuilding ?? null);
+  const [selectedType, setSelectedType] = React.useState<"new-construction" | "renovation" | "extension" | null>(data?.type || null);
+  const [renovationCondition, setRenovationCondition] = React.useState<"poor" | "medium" | "good" | null>(data?.renovationCondition || null);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (selectedType) {
       onComplete({
         type: selectedType,
-        livesInBuilding: selectedType !== "new-build" ? livesInBuilding : null,
+        renovationCondition: selectedType === "renovation" ? renovationCondition : null,
       });
     }
   };
@@ -46,7 +52,7 @@ export const StepProjectType: React.FC<StepProjectTypeProps> = ({ data, onComple
     <div className="space-y-6">
       <ChatMessage
         type="ai"
-        content={`**Step 3 — Project type**
+        content={`**Step 2 — Project Type**
 
 What kind of project are you planning?`}
       />
@@ -72,43 +78,35 @@ What kind of project are you planning?`}
               ))}
             </div>
 
-            {(selectedType === "renovation" || selectedType === "interior-only") && (
-              <div>
+            {selectedType === "renovation" && (
+              <div className="pt-2 border-t border-[rgba(255,255,255,0.08)]">
                 <label className="block text-[13px] font-medium text-[rgba(255,255,255,0.70)] mb-3">
-                  Do you already live in this building?
+                  Renovation condition
                 </label>
-                <div className="flex gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setLivesInBuilding(true)}
-                    className={cn(
-                      "flex-1 px-4 py-2 rounded-lg text-[13px] font-medium transition-all",
-                      livesInBuilding === true
-                        ? "bg-[rgba(59,130,246,0.15)] border border-[#3B82F6] text-white"
-                        : "bg-[rgba(255,255,255,0.05)] border border-[rgba(255,255,255,0.10)] text-[rgba(255,255,255,0.70)] hover:border-[rgba(255,255,255,0.15)]"
-                    )}
-                  >
-                    Yes
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setLivesInBuilding(false)}
-                    className={cn(
-                      "flex-1 px-4 py-2 rounded-lg text-[13px] font-medium transition-all",
-                      livesInBuilding === false
-                        ? "bg-[rgba(59,130,246,0.15)] border border-[#3B82F6] text-white"
-                        : "bg-[rgba(255,255,255,0.05)] border border-[rgba(255,255,255,0.10)] text-[rgba(255,255,255,0.70)] hover:border-[rgba(255,255,255,0.15)]"
-                    )}
-                  >
-                    No
-                  </button>
+                <div className="grid grid-cols-1 gap-2">
+                  {RENOVATION_CONDITIONS.map((condition) => (
+                    <button
+                      key={condition.id}
+                      type="button"
+                      onClick={() => setRenovationCondition(condition.id as any)}
+                      className={cn(
+                        "text-left p-3 rounded-lg border-2 transition-all",
+                        renovationCondition === condition.id
+                          ? "bg-[rgba(59,130,246,0.10)] border-[#3B82F6]"
+                          : "bg-[rgba(255,255,255,0.03)] border-[rgba(255,255,255,0.10)] hover:border-[rgba(255,255,255,0.15)]"
+                      )}
+                    >
+                      <div className="font-medium text-white text-[13px] mb-0.5">{condition.label}</div>
+                      <div className="text-[12px] text-[rgba(255,255,255,0.60)]">{condition.description}</div>
+                    </button>
+                  ))}
                 </div>
               </div>
             )}
 
             <Button
               type="submit"
-              disabled={!selectedType || (selectedType !== "new-build" && livesInBuilding === null)}
+              disabled={!selectedType || (selectedType === "renovation" && !renovationCondition)}
               className={cn(
                 "w-full bg-gradient-to-br from-[#3B82F6] to-[#2563EB]",
                 "text-white border-0",
@@ -132,5 +130,3 @@ What kind of project are you planning?`}
     </div>
   );
 };
-
-
