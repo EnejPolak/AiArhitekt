@@ -23,7 +23,8 @@ export const StoreMap: React.FC<StoreMapProps> = ({ stores, userLocation }) => {
   const mapRef = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
-    if (!mapRef.current || stores.length === 0) return;
+    const mapEl = mapRef.current;
+    if (!mapEl || stores.length === 0) return;
 
     // Dynamically load Leaflet CSS and JS
     const loadLeaflet = async () => {
@@ -50,7 +51,7 @@ export const StoreMap: React.FC<StoreMapProps> = ({ stores, userLocation }) => {
       }
 
       const L = (window as any).L;
-      if (!L || !mapRef.current) return;
+      if (!L || !mapEl) return;
 
       // Parse coordinates
       const validStores = stores.filter(
@@ -66,7 +67,7 @@ export const StoreMap: React.FC<StoreMapProps> = ({ stores, userLocation }) => {
         validStores.reduce((sum, s) => sum + Number(s.lon), 0) / validStores.length;
 
       // Initialize map
-      const map = L.map(mapRef.current).setView([centerLat, centerLon], 11);
+      const map = L.map(mapEl).setView([centerLat, centerLon], 11);
 
       // Add tile layer
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -109,9 +110,7 @@ export const StoreMap: React.FC<StoreMapProps> = ({ stores, userLocation }) => {
 
     return () => {
       // Cleanup
-      if (mapRef.current) {
-        mapRef.current.innerHTML = "";
-      }
+      mapEl.innerHTML = "";
     };
   }, [stores, userLocation]);
 

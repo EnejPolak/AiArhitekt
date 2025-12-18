@@ -19,7 +19,7 @@ export const FormattedSummary: React.FC<FormattedSummaryProps> = ({ content }) =
 
     // Match all markup tags
     const tagRegex = /<(section-heading|card-header)>(.*?)<\/\1>/g;
-    const matches: Array<{ type: string; content: string; index: number }> = [];
+    const matches: Array<{ type: string; content: string; index: number; rawLength: number }> = [];
     let match;
 
     while ((match = tagRegex.exec(text)) !== null) {
@@ -27,6 +27,7 @@ export const FormattedSummary: React.FC<FormattedSummaryProps> = ({ content }) =
         type: match[1],
         content: match[2],
         index: match.index,
+        rawLength: match[0].length,
       });
     }
 
@@ -62,7 +63,7 @@ export const FormattedSummary: React.FC<FormattedSummaryProps> = ({ content }) =
         );
       }
 
-      lastIndex = tagMatch.index + tagMatch[0].length;
+      lastIndex = tagMatch.index + tagMatch.rawLength;
     });
 
     // Process remaining text after last tag

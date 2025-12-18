@@ -11,23 +11,19 @@ import { X } from "lucide-react";
 export const CookieModal: React.FC = () => {
   const cookieContext = useCookieOptional();
 
-  if (!cookieContext) {
-    return null;
-  }
-
   const {
-    showModal,
+    showModal = false,
     preferences,
     setPreferences,
     closeModal,
     acceptAll,
-  } = cookieContext;
+  } = cookieContext ?? {};
 
-  const [localPrefs, setLocalPrefs] = React.useState({
+  const [localPrefs, setLocalPrefs] = React.useState(() => ({
     essential: true,
     functional: preferences?.functional ?? false,
     analytics: preferences?.analytics ?? false,
-  });
+  }));
 
   React.useEffect(() => {
     if (preferences) {
@@ -40,12 +36,16 @@ export const CookieModal: React.FC = () => {
   }, [preferences, showModal]);
 
   const handleSave = () => {
-    setPreferences(localPrefs);
+    setPreferences?.(localPrefs);
   };
 
   const handleAcceptAll = () => {
-    acceptAll();
+    acceptAll?.();
   };
+
+  if (!cookieContext) {
+    return null;
+  }
 
   return (
     <AnimatePresence>

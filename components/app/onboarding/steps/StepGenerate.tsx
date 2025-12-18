@@ -77,9 +77,11 @@ export const StepGenerate: React.FC<StepGenerateProps> = ({ projectData, onCompl
       canvas.width = viewport.width;
       
       await page.render({
+        // pdfjs v5 RenderParameters requires `canvas`
+        canvas,
         canvasContext: context,
-        viewport: viewport,
-      }).promise;
+        viewport,
+      } as any).promise;
       
       return canvas.toDataURL("image/png");
     } catch (error) {

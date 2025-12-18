@@ -38,8 +38,3 @@ async function testAPI() {
 }
 
 testAPI();
-
-
-
-
-

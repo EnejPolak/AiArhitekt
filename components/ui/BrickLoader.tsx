@@ -11,15 +11,36 @@ export interface BrickLoaderProps {
 const BRICK_ROWS = 4;
 const BRICKS_PER_ROW = 5;
 
+// Deterministic pseudo-random (avoids Math.random during render)
+function mulberry32(seed: number) {
+  return () => {
+    let t = (seed += 0x6d2b79f5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 export const BrickLoader: React.FC<BrickLoaderProps> = ({ className }) => {
   const bricks = React.useMemo(() => {
-    const brickArray: Array<{ row: number; col: number; id: string }> = [];
+    const brickArray: Array<{
+      row: number;
+      col: number;
+      id: string;
+      crashYOffset: number;
+      crashRotate: number;
+    }> = [];
     for (let row = 0; row < BRICK_ROWS; row++) {
       for (let col = 0; col < BRICKS_PER_ROW; col++) {
+        const seed = row * 100 + col * 7 + 1337;
+        const rand = mulberry32(seed);
         brickArray.push({
           row,
           col,
           id: `${row}-${col}`,
+          // Deterministic "random" variation per brick
+          crashYOffset: -15 + rand() * 10,
+          crashRotate: (rand() - 0.5) * 30,
         });
       }
     }
@@ -69,7 +90,7 @@ export const BrickLoader: React.FC<BrickLoaderProps> = ({ className }) => {
                   30, // Start below
                   0, // Move to position
                   0, // Stay in position
-                  -15 + Math.random() * 10, // Crash down with variation
+                  brick.crashYOffset, // Crash down with variation
                   30, // Reset below
                 ],
                 scale: [
@@ -83,7 +104,7 @@ export const BrickLoader: React.FC<BrickLoaderProps> = ({ className }) => {
                   0, // Start straight
                   0, // Stay straight during build
                   0, // Stay straight while built
-                  (Math.random() - 0.5) * 30, // Random rotation during crash
+                  brick.crashRotate, // Random rotation during crash
                   0, // Reset
                 ],
               }}

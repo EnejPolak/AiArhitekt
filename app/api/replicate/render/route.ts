@@ -37,11 +37,14 @@ const STYLE_PRESETS = {
   },
 };
 
+type ReplicateModelId = `${string}/${string}` | `${string}/${string}:${string}`;
+
 // ONLY TWO MODELS - NO FALLBACKS
 const MODELS = {
   normal: "sdxl-based/realvisxl-v3", // Primary model for normal renders
-  floorplan: "sdxl-based/realvisxl-v3-multi-controlnet-lora:90a4a3604cd637cb9f1a2bdae1cfa9ed869362ca028814cdce310a78e27daade", // Floorplan model with ControlNet
-};
+  floorplan:
+    "sdxl-based/realvisxl-v3-multi-controlnet-lora:90a4a3604cd637cb9f1a2bdae1cfa9ed869362ca028814cdce310a78e27daade", // Floorplan model with ControlNet
+} as const satisfies Record<"normal" | "floorplan", ReplicateModelId>;
 
 // Global lock to prevent concurrent requests
 let isProcessing = false;
@@ -254,19 +257,19 @@ export async function POST(req: Request) {
       );
     }
 
-    // Replicate returns an array of URLs or a single URL
-    // Handle both direct URLs and objects with .url() method
-    let imageUrl: string;
-    if (Array.isArray(output)) {
-      const firstOutput = output[0];
-      imageUrl = typeof firstOutput === 'string' 
-        ? firstOutput 
-        : (firstOutput?.url ? firstOutput.url() : firstOutput);
-    } else {
-      imageUrl = typeof output === 'string' 
-        ? output 
-        : (output?.url ? output.url() : output);
-    }
+    // Replicate returns an array of URLs or a single URL.
+    // Some outputs are objects with a .url() method.
+    const extractUrl = (val: unknown): string | null => {
+      if (typeof val === "string") return val;
+      if (val && typeof val === "object") {
+        const anyVal = val as any;
+        if (typeof anyVal.url === "function") return anyVal.url();
+        if (typeof anyVal.url === "string") return anyVal.url;
+      }
+      return null;
+    };
+
+    const imageUrl = Array.isArray(output) ? extractUrl(output[0]) : extractUrl(output);
 
     if (!imageUrl) {
       isProcessing = false;
