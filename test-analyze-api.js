@@ -51,6 +51,15 @@ const sampleProjectData = {
   interiorStyle: "modern",
   materialGrade: "mid-range",
   furnitureStyle: "minimalist",
+  shoppingPreferences: {
+    flooring: "local",
+    paint: "local",
+    lighting: "local",
+    kitchen: "local",
+    bathroom: "local",
+    furniture: "local",
+    decor: "local",
+  },
   renderAngle: "eye-level",
   budgetRange: {
     min: 20000,
@@ -101,11 +110,70 @@ async function testAnalyzeAPI() {
       console.log("📊 JSON Structure:");
       console.log(JSON.stringify(data.json, null, 2));
       console.log("");
+      
+      // Check links in cost_model
+      if (data.json.cost_model && data.json.cost_model.materials) {
+        console.log("🔗 CHECKING PRODUCT LINKS IN cost_model:");
+        console.log("─".repeat(60));
+        Object.keys(data.json.cost_model.materials).forEach((key) => {
+          const material = data.json.cost_model.materials[key];
+          if (material && material.link) {
+            const link = material.link;
+            const isHomepage = link.match(/^https?:\/\/[^/]+\/?$/);
+            const isCategory = link.includes("/kategorija/") || link.includes("/category/") || link.includes("/izdelki/") && !link.match(/\/[^/]+\/[^/]+\//);
+            const isSearch = link.includes("?q=") || link.includes("search");
+            
+            console.log(`\n${key}:`);
+            console.log(`  Link: ${link}`);
+            if (isHomepage) {
+              console.log(`  ❌ WRONG: This is a homepage!`);
+            } else if (isCategory) {
+              console.log(`  ❌ WRONG: This looks like a category page!`);
+            } else if (isSearch) {
+              console.log(`  ❌ WRONG: This is a search results page!`);
+            } else if (!link || link === "" || link === "N/A") {
+              console.log(`  ⚠️  No link provided`);
+            } else {
+              console.log(`  ✅ OK: Looks like a direct product link`);
+            }
+          } else {
+            console.log(`\n${key}: No link provided`);
+          }
+        });
+        console.log("");
+      }
     }
     
     if (data.summary) {
       console.log("📄 UI Summary:");
       console.log(data.summary);
+      console.log("");
+      
+      // Check links in summary
+      console.log("🔗 CHECKING LINKS IN SUMMARY:");
+      console.log("─".repeat(60));
+      const linkMatches = data.summary.match(/Link:\s*(https?:\/\/[^\s\n]+)/gi);
+      if (linkMatches) {
+        linkMatches.forEach((match, idx) => {
+          const link = match.replace(/Link:\s*/i, "").trim();
+          const isHomepage = link.match(/^https?:\/\/[^/]+\/?$/);
+          const isCategory = link.includes("/kategorija/") || link.includes("/category/") || (link.includes("/izdelki/") && !link.match(/\/[^/]+\/[^/]+\//));
+          const isSearch = link.includes("?q=") || link.includes("search");
+          
+          console.log(`\nLink ${idx + 1}: ${link}`);
+          if (isHomepage) {
+            console.log(`  ❌ WRONG: This is a homepage!`);
+          } else if (isCategory) {
+            console.log(`  ❌ WRONG: This looks like a category page!`);
+          } else if (isSearch) {
+            console.log(`  ❌ WRONG: This is a search results page!`);
+          } else {
+            console.log(`  ✅ OK: Looks like a direct product link`);
+          }
+        });
+      } else {
+        console.log("No links found in summary text");
+      }
       console.log("");
     }
     

@@ -2,452 +2,293 @@
 
 import * as React from "react";
 import { Button } from "@/components/ui/Button";
-import { cn } from "@/lib/utils";
 import { ChatMessage } from "../ChatMessage";
 import { ProjectData } from "../OnboardingFlow";
-import { Check, Loader2, Download, RefreshCw } from "lucide-react";
-import { FormattedSummary } from "./FormattedSummary";
-import { StoreMap } from "./StoreMap";
+import { Loader2, Check, AlertCircle } from "lucide-react";
 
 export interface StepGenerateProps {
   projectData: ProjectData;
   onComplete: () => void;
 }
 
+interface GenerateResponse {
+  products: Array<{
+    category: string;
+    name: string;
+    store: string;
+    price: string;
+    link: string;
+    justification: string;
+  }>;
+  summary: string;
+  renderImage: string;
+  storesMap: Array<{
+    store: string;
+    address: string;
+    lat: number;
+    lng: number;
+  }>;
+}
+
 const GENERATION_STEPS = [
-  "Reading your floor plan…",
-  "Building the 3D volume…",
-  "Generating realistic render…",
-  "Estimating cost range…",
+  "Določanje iskalnih poizvedb...",
+  "Iskanje produktov na slovenskem spletu...",
+  "Razlaga produktov...",
+  "Generiranje 3D renderja...",
+  "Priprava lokacij trgovin...",
 ];
 
-// Style options removed - using interiorStyle from projectData instead
-
-// Global lock to prevent concurrent requests
-let isGlobalGenerating = false;
-let lastRequestTime = 0;
-const MIN_REQUEST_INTERVAL = 10000; // 10 seconds minimum between requests
-
 export const StepGenerate: React.FC<StepGenerateProps> = ({ projectData, onComplete }) => {
-  const [currentStep, setCurrentStep] = React.useState(0);
-  const [isComplete, setIsComplete] = React.useState(false);
+  const [currentStepIndex, setCurrentStepIndex] = React.useState(0);
   const [isGenerating, setIsGenerating] = React.useState(false);
-  const [generatedImageUrl, setGeneratedImageUrl] = React.useState<string | null>(null);
-  const [selectedMode, setSelectedMode] = React.useState<"normal" | "floorplan">("normal");
   const [error, setError] = React.useState<string | null>(null);
-  const [retryAfter, setRetryAfter] = React.useState<number | null>(null);
-  const [analysisResult, setAnalysisResult] = React.useState<{ json: any; summary: string } | null>(null);
-  
-  // Ref to prevent stale closures
-  const generateRenderRef = React.useRef<(() => Promise<void>) | null>(null);
-  const debounceTimerRef = React.useRef<NodeJS.Timeout | null>(null);
+  const [result, setResult] = React.useState<GenerateResponse | null>(null);
+  const hasStartedRef = React.useRef(false); // Prevent multiple calls
 
-  // Convert File to base64 data URL
-  const fileToBase64 = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = () => {
-        const base64 = reader.result as string;
-        resolve(base64);
-      };
-      reader.onerror = (error) => reject(error);
-    });
-  };
-
-  // Convert PDF to image (first page)
-  const pdfToImage = async (file: File): Promise<string> => {
-    try {
-      const pdfjsLib = await import("pdfjs-dist");
-      pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
-
-      const arrayBuffer = await file.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-      const page = await pdf.getPage(1);
-      const scale = 2.0;
-      const viewport = page.getViewport({ scale });
-      
-      const canvas = document.createElement("canvas");
-      const context = canvas.getContext("2d");
-      if (!context) {
-        throw new Error("Could not get canvas context");
-      }
-      
-      canvas.height = viewport.height;
-      canvas.width = viewport.width;
-      
-      await page.render({
-        // pdfjs v5 RenderParameters requires `canvas`
-        canvas,
-        canvasContext: context,
-        viewport,
-      } as any).promise;
-      
-      return canvas.toDataURL("image/png");
-    } catch (error) {
-      console.error("PDF to image conversion error:", error);
-      throw new Error("Failed to convert PDF to image. Please try uploading an image file instead.");
-    }
-  };
-
-  // Generate analysis using ChatGPT API
-  const generateRender = React.useCallback(async () => {
-
-    // Protection 1: Check if already generating
-    if (isGenerating || isGlobalGenerating) {
-      console.warn("⚠️ [RATE LIMIT] generateRender() called but already generating. Ignoring request.");
+  const handleGenerate = React.useCallback(async () => {
+    // Prevent multiple simultaneous calls
+    if (isGenerating) {
+      console.log("[StepGenerate] Already generating, skipping...");
       return;
     }
-
-    // Protection 2: Check minimum interval
-    const timeSinceLastRequest = Date.now() - lastRequestTime;
-    if (timeSinceLastRequest < MIN_REQUEST_INTERVAL) {
-      const waitTime = Math.ceil((MIN_REQUEST_INTERVAL - timeSinceLastRequest) / 1000);
-      console.warn(`⚠️ [RATE LIMIT] Too soon since last request. Please wait ${waitTime} seconds.`);
-      setError(`Please wait ${waitTime} seconds before generating again.`);
-      return;
-    }
-
-    // Protection 3: Check retry_after if set
-    if (retryAfter && Date.now() < retryAfter) {
-      const waitTime = Math.ceil((retryAfter - Date.now()) / 1000);
-      console.warn(`⚠️ [RATE LIMIT] Rate limit active. Please wait ${waitTime} seconds.`);
-      setError(`Rate limit active. Please wait ${waitTime} seconds before trying again.`);
-      return;
-    }
-
-    // Set locks
+    
+    console.log("[StepGenerate] Starting generation...");
     setIsGenerating(true);
-    isGlobalGenerating = true;
-    lastRequestTime = Date.now();
     setError(null);
-    setCurrentStep(0);
-    setRetryAfter(null);
-    setAnalysisResult(null);
+    setCurrentStepIndex(0);
+    hasStartedRef.current = true;
 
     try {
-      // Call ChatGPT Analyze API
-      setCurrentStep(1);
-      console.log("🚀 [API] Sending request to /api/analyze");
-      console.log("📤 [API] Project data:", projectData);
-      
-      const response = await fetch("/api/analyze", {
+      // Prepare uploads
+      let floorPlanBase64: string | undefined;
+      if (projectData.uploads?.floorplanImage) {
+        floorPlanBase64 = await fileToBase64(projectData.uploads.floorplanImage);
+      }
+
+      // Prepare project data for API
+      const apiData = {
+        projectData: {
+          location: projectData.location,
+          projectType: projectData.projectType,
+          interiorStyle: projectData.interiorStyle,
+          materialGrade: projectData.materialGrade,
+          furnitureStyle: projectData.furnitureStyle,
+          shoppingPreferences: projectData.shoppingPreferences,
+          uploads: floorPlanBase64
+            ? {
+                floorPlan: floorPlanBase64,
+              }
+            : undefined,
+          specialRequirements: projectData.specialRequirements,
+        },
+      };
+
+      // Step 1: Intent
+      setCurrentStepIndex(0);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      // Step 2: Search
+      setCurrentStepIndex(1);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      // Step 3: Curate
+      setCurrentStepIndex(2);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      // Call API
+      const response = await fetch("/api/generate", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          projectData: projectData,
-        }),
+        body: JSON.stringify(apiData),
       });
-
-      const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || "Failed to analyze project. Please try again.");
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Napaka pri generiranju");
       }
 
-      setCurrentStep(2);
-      setAnalysisResult({
-        json: data.json,
-        summary: data.summary,
-      });
-      setIsComplete(true);
-      console.log("✅ [API] Successfully analyzed project");
-      console.log("📥 [API] JSON result:", data.json ? "✓" : "✗");
-      console.log("📥 [API] Summary:", data.summary ? "✓" : "✗");
-    } catch (err: any) {
-      console.error("❌ [API] Analysis error:", err);
-      setError(err.message || "Failed to analyze project. Please try again.");
-      setIsComplete(false);
-    } finally {
+      // Step 4: Render
+      setCurrentStepIndex(3);
+      const data: GenerateResponse = await response.json();
+
+      // Step 5: Map
+      setCurrentStepIndex(4);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      setResult(data);
       setIsGenerating(false);
-      isGlobalGenerating = false;
+
+      // Auto-complete after showing results
+      setTimeout(() => {
+        onComplete();
+      }, 2000);
+    } catch (err: any) {
+      console.error("Generate error:", err);
+      setError(err.message || "Napaka pri generiranju. Poskusite znova.");
+      setIsGenerating(false);
+      hasStartedRef.current = false; // Allow retry on error
     }
-  }, [projectData, isGenerating, retryAfter]);
+  }, [projectData, onComplete, isGenerating]);
 
-  // Store ref for stable access
+  // Convert File to base64
+  const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64String = reader.result as string;
+        resolve(base64String);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
+  // Auto-start generation on mount (only once)
   React.useEffect(() => {
-    generateRenderRef.current = generateRender;
-  }, [generateRender]);
-
-  // Debounced version for style changes
-  const debouncedGenerateRender = React.useCallback(() => {
-    if (debounceTimerRef.current) {
-      clearTimeout(debounceTimerRef.current);
+    // Only start if we haven't started yet
+    if (hasStartedRef.current) {
+      console.log("[StepGenerate] Already started, skipping useEffect");
+      return; // Already started, don't run again
     }
     
-    debounceTimerRef.current = setTimeout(() => {
-      if (generateRenderRef.current) {
-        generateRenderRef.current();
-      }
-    }, 1000); // 1 second debounce
-  }, []);
-
-  // Simulate step progression during generation
-  React.useEffect(() => {
-    if (isGenerating && !isComplete) {
-      const interval = setInterval(() => {
-        setCurrentStep((prev) => {
-          if (prev < GENERATION_STEPS.length - 1) {
-            return prev + 1;
-          }
-          return prev;
-        });
-      }, 3000);
-
-      return () => clearInterval(interval);
+    if (!isGenerating && !result && !error) {
+      console.log("[StepGenerate] Starting from useEffect");
+      handleGenerate();
     }
-  }, [isGenerating, isComplete]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Empty deps - only run once on mount
 
-  // Cleanup on unmount
-  React.useEffect(() => {
-    return () => {
-      if (debounceTimerRef.current) {
-        clearTimeout(debounceTimerRef.current);
-      }
-      isGlobalGenerating = false;
-    };
-  }, []);
+  if (error) {
+    return (
+      <div className="space-y-6">
+        <ChatMessage
+          type="ai"
+          content={`**Napaka pri generiranju**
 
-  const handleRegenerate = React.useCallback(() => {
-    if (isGenerating || isGlobalGenerating) {
-      console.warn("⚠️ [RATE LIMIT] handleRegenerate() called but already generating. Ignoring.");
-      return;
-    }
+${error}`}
+        />
+        <div className="flex justify-start">
+          <div className="max-w-[85%] rounded-[16px] px-5 py-5 bg-red-500/10 border border-red-500/30">
+            <div className="flex items-center gap-3 text-red-400">
+              <AlertCircle className="w-5 h-5" />
+              <span className="text-[14px]">{error}</span>
+            </div>
+            <Button
+              type="button"
+              onClick={() => {
+                hasStartedRef.current = false; // Reset for retry
+                handleGenerate();
+              }}
+              className="mt-4 w-full bg-gradient-to-br from-[#3B82F6] to-[#2563EB] text-white border-0 h-[44px] text-[14px] font-medium rounded-[12px]"
+            >
+              Poskusi znova
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
-    setAnalysisResult(null);
-    setIsComplete(false);
-    setCurrentStep(0);
-    setError(null);
-    setRetryAfter(null);
-    
-    // Use debounced version to prevent spam
-    debouncedGenerateRender();
-  }, [isGenerating, debouncedGenerateRender]);
+  if (result) {
+    return (
+      <div className="space-y-6">
+        <ChatMessage
+          type="ai"
+          content={`**Generiranje končano!**
 
-  // Style change handler removed - using interiorStyle from projectData
+Našli smo ${result.products.length} produktov z verifikovanimi povezavami.
 
-  // Model type change handler removed - only SDXL is used
+${result.summary}`}
+        />
 
-  return (
-    <div className="space-y-6 w-full">
-      {!isGenerating && !isComplete ? (
-        <>
-          <ChatMessage
-            type="ai"
-            content={`**Step 15 — Analyze Project**
-
-Ready to analyze your project! Click "Analyze Project" to get AI insights, cost estimates, and recommendations.`}
-          />
+        {/* Render Image */}
+        {result.renderImage && (
           <div className="flex justify-start">
-            <div className="max-w-[85%] rounded-[16px] px-5 py-5 bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.08)] space-y-4">
-              {/* Mode Selector */}
-              <div>
-                <h3 className="text-[16px] font-semibold text-white mb-3">Render Mode</h3>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={() => {
-                      if (isGenerating || isGlobalGenerating) return;
-                      setSelectedMode("normal");
-                      // Auto-regeneration disabled to prevent credit usage
-                      // if (generatedImageUrl) handleRegenerate();
-                    }}
-                    disabled={isGenerating || isGlobalGenerating}
-                    className={cn(
-                      "px-4 py-2 rounded-lg text-[14px] font-medium transition-all text-left",
-                      selectedMode === "normal"
-                        ? "bg-[#3B82F6] text-white"
-                        : "bg-[rgba(255,255,255,0.05)] text-[rgba(255,255,255,0.70)] hover:bg-[rgba(255,255,255,0.10)]",
-                      (isGenerating || isGlobalGenerating) && "opacity-50 cursor-not-allowed"
-                    )}
-                  >
-                    <div className="font-semibold">Normal Render</div>
-                    <div className="text-[12px] opacity-80">High quality interior</div>
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (isGenerating || isGlobalGenerating) return;
-                      setSelectedMode("floorplan");
-                      // Auto-regeneration disabled to prevent credit usage
-                      // if (generatedImageUrl) handleRegenerate();
-                    }}
-                    disabled={isGenerating || isGlobalGenerating}
-                    className={cn(
-                      "px-4 py-2 rounded-lg text-[14px] font-medium transition-all text-left",
-                      selectedMode === "floorplan"
-                        ? "bg-[#3B82F6] text-white"
-                        : "bg-[rgba(255,255,255,0.05)] text-[rgba(255,255,255,0.70)] hover:bg-[rgba(255,255,255,0.10)]",
-                      (isGenerating || isGlobalGenerating) && "opacity-50 cursor-not-allowed"
-                    )}
-                  >
-                    <div className="font-semibold">Floorplan</div>
-                    <div className="text-[12px] opacity-80">Structure-aware</div>
-                  </button>
-                </div>
-              </div>
-
-              {/* Generate Button */}
-              <Button
-                onClick={generateRender}
-                disabled={
-                  isGenerating || 
-                  isGlobalGenerating ||
-                  (retryAfter !== null && Date.now() < retryAfter)
-                }
-                className={cn(
-                  "w-full bg-gradient-to-br from-[#3B82F6] to-[#2563EB]",
-                  "text-white border-0",
-                  "shadow-[0_4px_16px_rgba(59,130,246,0.25)]",
-                  "hover:from-[#2563EB] hover:to-[#1D4ED8]",
-                  "h-[44px] text-[14px] font-medium rounded-[12px]",
-                  "transition-all duration-200",
-                  (isGenerating || isGlobalGenerating) && "opacity-50 cursor-not-allowed"
-                )}
-              >
-                {isGenerating || isGlobalGenerating ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Analyzing...
-                  </>
-                ) : (
-                  "Analyze Project"
-                )}
-              </Button>
-
-              {error && (
-                <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/20">
-                  <p className="text-[14px] text-red-400">{error}</p>
-                  {retryAfter && Date.now() < retryAfter && (
-                    <p className="text-[12px] text-red-300 mt-2">
-                      Retry available in {Math.ceil((retryAfter - Date.now()) / 1000)} seconds
-                    </p>
-                  )}
-                </div>
-              )}
+            <div className="max-w-[85%] rounded-[16px] overflow-hidden border border-[rgba(255,255,255,0.08)]">
+              <img src={result.renderImage} alt="Generated 3D render" className="w-full" />
             </div>
           </div>
-        </>
-      ) : isGenerating ? (
-        <>
-          <ChatMessage
-            type="ai"
-            content={`**Step 15 — Analyze Project**
+        )}
 
-Analyzing your project using AI...`}
-          />
+        {/* Products */}
+        {result.products.length > 0 && (
           <div className="flex justify-start">
             <div className="max-w-[85%] rounded-[16px] px-5 py-5 bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.08)]">
-              {error ? (
-                <div className="space-y-4">
-                  <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/20">
-                    <p className="text-[14px] text-red-400">{error}</p>
-                    {retryAfter && Date.now() < retryAfter && (
-                      <p className="text-[12px] text-red-300 mt-2">
-                        Retry available in {Math.ceil((retryAfter - Date.now()) / 1000)} seconds
-                      </p>
-                    )}
-                  </div>
-                  <Button
-                    onClick={generateRender}
-                    disabled={isGenerating || isGlobalGenerating || (retryAfter !== null && Date.now() < retryAfter)}
-                    className={cn(
-                      "w-full bg-gradient-to-br from-[#3B82F6] to-[#2563EB]",
-                      "text-white border-0",
-                      "h-[44px] text-[14px] font-medium rounded-[12px]",
-                      (isGenerating || isGlobalGenerating || (retryAfter !== null && Date.now() < retryAfter)) && "opacity-50 cursor-not-allowed"
-                    )}
-                  >
-                    {retryAfter && Date.now() < retryAfter ? (
-                      `Wait ${Math.ceil((retryAfter - Date.now()) / 1000)}s`
-                    ) : (
-                      "Try Again"
-                    )}
-                  </Button>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {GENERATION_STEPS.map((step, index) => (
-                    <div key={index} className="flex items-center gap-3">
-                      {index < currentStep ? (
-                        <Check className="w-5 h-5 text-[#4CAF50] flex-shrink-0" />
-                      ) : index === currentStep ? (
-                        <Loader2 className="w-5 h-5 text-[#3B82F6] animate-spin flex-shrink-0" />
-                      ) : (
-                        <div className="w-5 h-5 rounded-full border-2 border-[rgba(255,255,255,0.20)] flex-shrink-0" />
-                      )}
-                      <span
-                        className={cn(
-                          "text-[14px]",
-                          index < currentStep
-                            ? "text-[rgba(255,255,255,0.60)]"
-                            : index === currentStep
-                            ? "text-white"
-                            : "text-[rgba(255,255,255,0.40)]"
-                        )}
-                      >
-                        {step}
-                      </span>
+              <div className="text-[14px] font-medium text-white mb-4">Izbrani produkti:</div>
+              <div className="space-y-3 max-h-[400px] overflow-y-auto">
+                {result.products.map((product, idx) => (
+                  <div key={idx} className="pb-3 border-b border-[rgba(255,255,255,0.08)] last:border-0">
+                    <div className="text-[13px] font-medium text-white mb-1">{product.name}</div>
+                    <div className="text-[11px] text-[rgba(255,255,255,0.60)] mb-1">
+                      {product.store} • {product.price}
                     </div>
-                  ))}
-                </div>
-              )}
+                    <a
+                      href={product.link}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[11px] text-blue-400 hover:underline break-all"
+                    >
+                      {product.link}
+                    </a>
+                    <div className="text-[11px] text-[rgba(255,255,255,0.50)] mt-1">
+                      {product.justification}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
-        </>
-      ) : (
-        <>
-          <ChatMessage
-            type="ai"
-            content={`**Project Analysis Complete**
+        )}
 
-Your project has been analyzed! Here's what I found.`}
-          />
-          <div className="w-full">
-            <div className="w-full rounded-[16px] px-5 py-5 bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.08)] space-y-6">
-              {/* AI Summary - User View */}
-              {analysisResult?.summary && (
-                <div className="w-full space-y-4">
-                  <FormattedSummary content={analysisResult.summary} />
-                </div>
-              )}
+        <div className="flex justify-start">
+          <div className="max-w-[85%] rounded-[16px] px-5 py-5 bg-green-500/10 border border-green-500/30">
+            <div className="flex items-center gap-3 text-green-400">
+              <Check className="w-5 h-5" />
+              <span className="text-[14px]">Generiranje uspešno končano!</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
-              {/* Store Map */}
-              {analysisResult?.json?.store_locations && analysisResult.json.store_locations.length > 0 && (
-                <div className="w-full">
-                  <StoreMap 
-                    stores={analysisResult.json.store_locations}
-                    userLocation={projectData.location}
-                  />
-                </div>
-              )}
+  return (
+    <div className="space-y-6">
+      <ChatMessage
+        type="ai"
+        content={`**Generiranje 3D koncepta**
 
-              {!analysisResult && (
-                <div className="text-center py-8">
-                  <p className="text-[14px] text-[rgba(255,255,255,0.60)]">
-                    No analysis results available.
-                  </p>
-                </div>
-              )}
-
-              {/* Continue Button */}
-              <Button
-                onClick={onComplete}
-                className={cn(
-                  "w-full bg-gradient-to-br from-[#3B82F6] to-[#2563EB]",
-                  "text-white border-0",
-                  "shadow-[0_4px_16px_rgba(59,130,246,0.25)]",
-                  "hover:from-[#2563EB] hover:to-[#1D4ED8]",
-                  "h-[44px] text-[14px] font-medium rounded-[12px]",
-                  "transition-all duration-200"
-                )}
+Procesiram vaše preference in generiram 3D render, seznam produktov in lokacije trgovin...`}
+      />
+      <div className="flex justify-start">
+        <div className="max-w-[85%] rounded-[16px] px-5 py-5 bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.08)]">
+          <div className="space-y-3">
+            {GENERATION_STEPS.map((step, idx) => (
+              <div
+                key={idx}
+                className={`flex items-center gap-3 text-[13px] ${
+                  idx < currentStepIndex
+                    ? "text-green-400"
+                    : idx === currentStepIndex
+                    ? "text-blue-400"
+                    : "text-[rgba(255,255,255,0.40)]"
+                }`}
               >
-                Continue to Project
-              </Button>
-            </div>
+                {idx < currentStepIndex ? (
+                  <Check className="w-4 h-4" />
+                ) : idx === currentStepIndex ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <div className="w-4 h-4 rounded-full border-2 border-[rgba(255,255,255,0.20)]" />
+                )}
+                <span>{step}</span>
+              </div>
+            ))}
           </div>
-        </>
-      )}
+        </div>
+      </div>
     </div>
   );
 };

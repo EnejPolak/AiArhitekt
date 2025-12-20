@@ -159,30 +159,21 @@ export const OnboardingFlow: React.FC = () => {
     ]);
 
     try {
-      // Call API route
-      const res = await fetch("/api/ask", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: message }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to get AI response");
-      }
+      // TODO: Implement API call
+      throw new Error("API not implemented yet");
 
       // Replace loading message with actual response
-      setMessages((prev) => {
-        const filtered = prev.filter((msg, idx) => {
-          // Remove the loading message
-          return !(idx === prev.length - 1 && msg.content === "Thinking...");
-        });
-        return [
-          ...filtered,
-          { type: "ai" as const, content: data.reply, timestamp: new Date() },
-        ];
-      });
+      // Note: This code is unreachable until API is implemented
+      // setMessages((prev) => {
+      //   const filtered = prev.filter((msg, idx) => {
+      //     // Remove the loading message
+      //     return !(idx === prev.length - 1 && msg.content === "Thinking...");
+      //   });
+      //   return [
+      //     ...filtered,
+      //     { type: "ai" as const, content: data.reply, timestamp: new Date() },
+      //   ];
+      // });
     } catch (error: any) {
       // Replace loading message with error
       setMessages((prev) => {
