@@ -40,7 +40,7 @@ export const Step7DesignConceptGeneration: React.FC<Step7DesignConceptGeneration
           "floorplan, blueprint, sketch, technical drawing, black and white, grayscale, monochrome, line art, edges, outlines, " +
           "blur, blurry, soft focus, haze, fog, cinematic, film grain, vignette, text, watermark, logo, people, clutter";
 
-        const response = await fetch("/api/test-render", {
+        const response = await fetch("/api/render", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",

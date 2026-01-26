@@ -1,8 +1,8 @@
 # AI Architect
 
-## Test Render (OpenAI-only)
+## Render API (OpenAI-only)
 
-`/test-render` uses **OpenAI Images API** (`gpt-image-1`) via the server route `POST /api/test-render`.
+This project uses **OpenAI Images API** (`gpt-image-1`) via the server route `POST /api/render`.
 
 **Note:** `gpt-image-1` may require **Organization Verification** in your OpenAI account. If you see a `403` error about verification, verify your org in the OpenAI dashboard and wait up to ~15 minutes for access to propagate.
 

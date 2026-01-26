@@ -147,7 +147,7 @@ export const Step6DesignGeneration: React.FC<Step6DesignGenerationProps> = ({
         const prompt = String(promptData?.prompt || "");
         const negativePrompt = String(promptData?.negativePrompt || "");
 
-        const response = await fetch("/api/test-render", {
+        const response = await fetch("/api/render", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

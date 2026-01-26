@@ -6,8 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint .",
-    "test:complete": "node test-complete-flow.js"
+    "lint": "eslint ."
   },
   "dependencies": {
     "@types/leaflet": "^1.9.21",

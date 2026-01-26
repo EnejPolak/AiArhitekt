@@ -9,9 +9,14 @@ import { Step4StyleSelection } from "./steps/Step4StyleSelection";
 import { Step5BudgetSignal } from "./steps/Step5BudgetSignal";
 import { Step6DesignGeneration } from "./steps/Step6DesignGeneration";
 import { Step6DesignPreferences, type RoomDesignPreferences } from "./steps/Step6DesignPreferences";
+import { Step6bLocation } from "./steps/Step6bLocation";
 import { Step7FinalDesignSelection } from "./steps/Step7FinalDesignSelection";
 import { Step8CostEstimate } from "./steps/Step8CostEstimate";
-import { Step9MaterialSuggestions } from "./steps/Step9MaterialSuggestions";
+import { Step8bBudgetSplit } from "./steps/Step8bBudgetSplit";
+import { Step9aStoreDiscovery } from "./steps/Step9aStoreDiscovery";
+import { Step9bProductSourcing } from "./steps/Step9bProductSourcing";
+import { Step9cShoppingList } from "./steps/Step9cShoppingList";
+import { Step9dContractors } from "./steps/Step9dContractors";
 import { Step10FinalReport } from "./steps/Step10FinalReport";
 
 export interface RoomRenovationData {
@@ -34,6 +39,50 @@ export interface RoomRenovationData {
     productType: string;
     brandOrStore: string;
   }> | null;
+  // New fields for local + budget + real products
+  location: {
+    lat: number;
+    lng: number;
+    label: string;
+  } | null;
+  radiusKm: number;
+  budgetPlan: {
+    caps: Record<string, { max: number; qty: number }>;
+    reservedBufferRatio: number;
+    totalBudget: number;
+  } | null;
+  localStores: Array<{
+    name: string;
+    address: string;
+    website: string | null;
+    placeId: string;
+    categoriesHint: string[];
+  }> | null;
+  productCandidates: Record<string, Array<{
+    name: string;
+    price: number;
+    url: string;
+    imageUrl: string | null;
+    store: string;
+  }>> | null;
+  shoppingList: Array<{
+    name: string;
+    price: number;
+    url: string;
+    imageUrl: string | null;
+    store: string;
+    category: string;
+    qty: number;
+  }> | null;
+  contractors: Record<string, Array<{
+    name: string;
+    address: string;
+    phone: string | null;
+    website: string | null;
+    rating: number | null;
+    reviewsCount: number | null;
+    placeId: string;
+  }>> | null;
 }
 
 export interface ConversationEntry {
@@ -76,6 +125,13 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
     selectedDesign: null,
     costEstimate: null,
     materialSuggestions: null,
+    location: null,
+    radiusKm: 50,
+    budgetPlan: null,
+    localStores: null,
+    productCandidates: null,
+    shoppingList: null,
+    contractors: null,
   });
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
   const scrollIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
@@ -198,7 +254,7 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
   };
 
   const nextStep = () => {
-    setCurrentStep((prev) => Math.min(prev + 1, 11));
+    setCurrentStep((prev) => Math.min(prev + 1, 16));
   };
 
   // Cleanup typing timers on unmount
@@ -248,7 +304,13 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
       4: "What style would you like this room to have?",
       5: "To guide the design choices, what budget level should I aim for?",
       6: "Great. Tell me your preferences (colors, floor, heating, key furniture) so I don’t guess.",
-      11: "Your renovation project is ready.",
+      7: "To find products in local stores near you, share your location.",
+      11: "I'll allocate your budget into category caps so we don't overspend.",
+      12: "Finding local stores within 50 km that match your needs…",
+      13: "Now I'll pull real products (price + link + image) from local stores, staying within your category caps.",
+      14: "Building a final shopping list that stays within your total budget…",
+      15: "Do you want me to find local contractors (painters, flooring, assembly) within 50 km?",
+      16: "Your renovation project is ready.",
     };
 
     if (stepMessages[currentStep] && !stepMessagesRef.current.has(currentStep)) {
@@ -373,6 +435,18 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
         );
       case 7:
         return (
+          <Step6bLocation
+            location={data.location}
+            radiusKm={data.radiusKm}
+            onLocationSet={(location, radiusKm) => {
+              addUserMessage(`Location: ${location.label} (${radiusKm} km radius)`);
+              updateData({ location, radiusKm });
+              nextStep();
+            }}
+          />
+        );
+      case 8:
+        return (
           <Step6DesignGeneration
             roomType={data.roomType!}
             photos={data.photos}
@@ -388,7 +462,7 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
             }}
           />
         );
-      case 8:
+      case 9:
         return (
           <Step7FinalDesignSelection
             designs={data.generatedDesigns}
@@ -412,7 +486,7 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
             }}
           />
         );
-      case 9:
+      case 10:
         return (
           <Step8CostEstimate
             roomType={data.roomType!}
@@ -482,32 +556,50 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
             }}
           />
         );
-      case 10:
+      case 11:
         return (
-          <Step9MaterialSuggestions
+          <Step8bBudgetSplit
             roomType={data.roomType!}
-            style={data.selectedStyles[0]}
-            onSuggestionsComplete={(suggestions) => {
-              updateData({ materialSuggestions: suggestions });
-              // Add material suggestions to conversation
+            budgetLevel={data.budgetLevel!}
+            totalBudget={data.costEstimate!.total}
+            preferences={data.preferences}
+            onBudgetPlanComplete={(plan) => {
+              updateData({ budgetPlan: plan });
+              // Add budget plan to conversation
+              const formatCurrency = (amount: number) =>
+                new Intl.NumberFormat("sl-SI", {
+                  style: "currency",
+                  currency: "EUR",
+                  minimumFractionDigits: 0,
+                }).format(amount);
+              
               setConversation((prev) => [
                 ...prev,
                 {
-                  id: `step9-materials-${Date.now()}-${Math.random()}`,
+                  id: `step11-budget-plan-${Date.now()}-${Math.random()}`,
                   type: "ai",
                   content: (
                     <div>
                       <div className="mb-4">
-                        These materials match your design and are commonly available locally:
+                        I've allocated your budget into category caps:
                       </div>
                       <div className="space-y-2 mt-4">
-                        {suggestions.map((s, idx) => (
-                          <div key={idx} className="text-[14px]">
-                            <span className="font-medium text-white">{s.category}:</span>{" "}
-                            <span className="text-[rgba(255,255,255,0.85)]">{s.productType}</span>{" "}
-                            <span className="text-[rgba(255,255,255,0.60)]">({s.brandOrStore})</span>
+                        {Object.entries(plan.caps).map(([category, cap]) => (
+                          <div key={category} className="flex justify-between text-[14px]">
+                            <span className="text-[rgba(255,255,255,0.85)]">{category}:</span>
+                            <span className="text-white">
+                              {formatCurrency(cap.max)} (qty: {cap.qty})
+                            </span>
                           </div>
                         ))}
+                        <div className="pt-2 border-t border-[rgba(255,255,255,0.1)] mt-2">
+                          <div className="flex justify-between text-[14px]">
+                            <span className="text-[rgba(255,255,255,0.85)]">Total budget:</span>
+                            <span className="text-white font-medium">
+                              {formatCurrency(plan.totalBudget)}
+                            </span>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   ),
@@ -518,7 +610,133 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
             }}
           />
         );
-      case 11:
+      case 12:
+        return (
+          <Step9aStoreDiscovery
+            location={data.location!}
+            radiusKm={data.radiusKm}
+            roomType={data.roomType!}
+            onStoresFound={(stores) => {
+              updateData({ localStores: stores });
+              addAIMessage(`Found ${stores.length} local stores within ${data.radiusKm} km.`);
+              nextStep();
+            }}
+          />
+        );
+      case 13:
+        return (
+          <Step9bProductSourcing
+            roomType={data.roomType!}
+            selectedDesign={data.selectedDesign}
+            preferences={data.preferences}
+            budgetPlan={data.budgetPlan!}
+            localStores={data.localStores!}
+            onProductsFound={(candidates) => {
+              updateData({ productCandidates: candidates });
+              const totalCandidates = Object.values(candidates).reduce((sum, arr) => sum + arr.length, 0);
+              addAIMessage(`Found ${totalCandidates} product candidates across all categories.`);
+              nextStep();
+            }}
+          />
+        );
+      case 14:
+        return (
+          <Step9cShoppingList
+            productCandidates={data.productCandidates!}
+            budgetPlan={data.budgetPlan!}
+            onShoppingListComplete={(shoppingList) => {
+              updateData({ shoppingList });
+              // Add shopping list to conversation
+              const formatCurrency = (amount: number) =>
+                new Intl.NumberFormat("sl-SI", {
+                  style: "currency",
+                  currency: "EUR",
+                  minimumFractionDigits: 0,
+                }).format(amount);
+              
+              const total = shoppingList.reduce((sum, item) => sum + item.price * item.qty, 0);
+              
+              setConversation((prev) => [
+                ...prev,
+                {
+                  id: `step14-shopping-list-${Date.now()}-${Math.random()}`,
+                  type: "ai",
+                  content: (
+                    <div>
+                      <div className="mb-4">
+                        Final shopping list ({shoppingList.length} items):
+                      </div>
+                      <div className="space-y-3 mt-4">
+                        {shoppingList.map((item, idx) => (
+                          <div key={idx} className="border border-[rgba(255,255,255,0.10)] rounded-lg p-3">
+                            <div className="flex items-start gap-3">
+                              {item.imageUrl && (
+                                <img
+                                  src={item.imageUrl}
+                                  alt={item.name}
+                                  className="w-16 h-16 object-cover rounded"
+                                />
+                              )}
+                              <div className="flex-1">
+                                <div className="text-[14px] font-medium text-white">{item.name}</div>
+                                <div className="text-[12px] text-[rgba(255,255,255,0.60)] mt-1">
+                                  {item.store}
+                                </div>
+                                <div className="flex justify-between items-center mt-2">
+                                  <span className="text-[14px] text-white font-medium">
+                                    {formatCurrency(item.price)}
+                                  </span>
+                                  <a
+                                    href={item.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-[12px] text-[#3B82F6] hover:underline"
+                                  >
+                                    View product →
+                                  </a>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                        <div className="pt-3 border-t border-[rgba(255,255,255,0.1)] mt-3">
+                          <div className="flex justify-between text-[16px] font-medium">
+                            <span className="text-white">Total:</span>
+                            <span className="text-white">{formatCurrency(total)}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ),
+                  timestamp: new Date(),
+                },
+              ]);
+              nextStep();
+            }}
+          />
+        );
+      case 15:
+        return (
+          <Step9dContractors
+            location={data.location!}
+            radiusKm={data.radiusKm}
+            roomType={data.roomType!}
+            preferences={data.preferences}
+            onContractorsFound={(contractors) => {
+              updateData({ contractors });
+              const totalContractors = Object.values(contractors).reduce((sum, arr) => sum + arr.length, 0);
+              if (totalContractors > 0) {
+                addAIMessage(`Found ${totalContractors} local contractors.`);
+              }
+              nextStep();
+            }}
+            onSkip={() => {
+              updateData({ contractors: {} });
+              nextStep();
+            }}
+          />
+        );
+      case 16:
         return (
           <Step10FinalReport
             projectId={projectId}
