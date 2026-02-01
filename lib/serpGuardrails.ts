@@ -5,10 +5,12 @@
 import { promises as fs } from "fs";
 import path from "path";
 import { TTLCache } from "./cache";
+import { serpCacheKey } from "./serp/domains";
 
 const DAILY_CAP = 50;
 const RATE_LIMIT_MS = 1000; // 1 request per second
 const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+const SERP_CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours per query+allowlist
 
 interface DailyUsage {
   date: string; // YYYY-MM-DD
@@ -20,10 +22,14 @@ interface SerpResult {
     title: string;
     link: string;
     snippet: string;
+    price?: string;
+    image?: string;
   }>;
 }
 
 const serpCache = new TTLCache<SerpResult>(CACHE_TTL);
+/** Cache per query+allowlist (6h) for SERP search route */
+const serpQueryCache = new TTLCache<SerpResult>(SERP_CACHE_TTL);
 let lastRequestTime = 0;
 let dailyUsage: DailyUsage | null = null;
 const USAGE_FILE = path.join(process.cwd(), "tmp", "serp-usage.json");
@@ -123,17 +129,31 @@ export async function waitForRateLimit(): Promise<void> {
 }
 
 /**
- * Get cached SERP result
+ * Get cached SERP result (legacy key = query only)
  */
 export function getCachedResult(query: string): SerpResult | null {
   return serpCache.get(query) || null;
 }
 
 /**
- * Cache SERP result
+ * Cache SERP result (legacy)
  */
 export function cacheResult(query: string, result: SerpResult): void {
   serpCache.set(query, result, CACHE_TTL);
+}
+
+/**
+ * Get cached SERP result by query + allowlist key (6h TTL)
+ */
+export function getSerpCachedByKey(cacheKey: string): SerpResult | null {
+  return serpQueryCache.get(cacheKey) || null;
+}
+
+/**
+ * Cache SERP result by query + allowlist key (6h TTL)
+ */
+export function setSerpCachedByKey(cacheKey: string, result: SerpResult): void {
+  serpQueryCache.set(cacheKey, result, SERP_CACHE_TTL);
 }
 
 /**

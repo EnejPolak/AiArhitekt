@@ -1,31 +1,37 @@
 /**
  * SERP provider client
- * Fetches results from SerpAPI
+ * Fetches results from SerpAPI; optional domain allowlist filters results
  */
 
+import { normalizeDomain } from "./domains";
 import type { SerpOrganicResult } from "./pickBest";
 
+export interface FetchSerpOptions {
+  /** When set, only results from these domains are returned */
+  allowedDomains?: string[];
+}
+
 /**
- * Fetch SERP results from SerpAPI with domain fallback
+ * Fetch SERP results from SerpAPI; optionally filter by allowedDomains
  */
-export async function fetchSerp(query: string): Promise<SerpOrganicResult[]> {
+export async function fetchSerp(
+  query: string,
+  options: FetchSerpOptions = {}
+): Promise<SerpOrganicResult[]> {
   if (!process.env.SERPAPI_KEY) {
     throw new Error("SERPAPI_KEY not configured");
   }
 
-  // Check if query uses lesnina.si (unreliable) and needs fallback
-  const hasLesninaSi = /site:lesnina\.si/i.test(query);
-  
-  // Try primary query
-  let organic = await fetchSerpInternal(query);
-  
-  // If query uses lesnina.si and got 0 results, retry with xxxlesnina.si
-  if (hasLesninaSi && organic.length === 0) {
-    const fallbackQuery = query.replace(/site:lesnina\.si/gi, "site:xxxlesnina.si");
-    organic = await fetchSerpInternal(fallbackQuery);
+  const results = await fetchSerpInternal(query);
+  const { allowedDomains } = options;
+  if (!allowedDomains || allowedDomains.length === 0) {
+    return results;
   }
-  
-  return organic;
+  const allowedSet = new Set(allowedDomains.map(normalizeDomain).filter(Boolean));
+  return results.filter((r) => {
+    const d = normalizeDomain(r.link);
+    return d != null && allowedSet.has(d);
+  });
 }
 
 /**
@@ -51,12 +57,13 @@ async function fetchSerpInternal(query: string): Promise<SerpOrganicResult[]> {
 
     const data = await response.json();
 
-    // Parse organic results
     const organic: SerpOrganicResult[] = (data.organic_results || [])
       .map((item: any) => ({
         title: item.title || "",
         link: item.link || "",
         snippet: item.snippet || "",
+        price: item.price ?? undefined,
+        image: item.thumbnail ?? item.image ?? undefined,
       }))
       .filter((item: SerpOrganicResult) => item.link.length > 0);
 

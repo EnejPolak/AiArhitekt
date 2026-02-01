@@ -10,30 +10,28 @@ interface GeocodeResult {
   status?: number;
 }
 
-interface PlaceStore {
-  placeId: string;
-  name: string;
-  vicinity: string;
-  rating: number | null;
-  userRatingsTotal: number | null;
-  lat: number;
-  lng: number;
-  googleMapsUrl: string;
-}
-
-interface PlacesResult {
-  stores?: PlaceStore[];
-  error?: string;
-  status?: number;
+interface SerpPicked {
+  title: string;
+  url: string;
+  price: number | null;
+  currency: "EUR" | null;
+  image: string | null;
+  domain: string;
+  confidence: number;
+  reasons: string[];
 }
 
 interface SerpResult {
   dryRun?: boolean;
-  plannedQueries?: string[];
+  plannedQueries?: Array<{ item: string; queries: string[] }>;
   executedCount?: number;
   dailyUsed?: number;
   dailyRemaining?: number;
-  resultsByQuery?: Record<string, { organic: Array<{ title: string; link: string; snippet: string }> }>;
+  results?: Array<{
+    item: string;
+    picked: SerpPicked | null;
+    topCandidates?: Array<{ title: string; url: string; snippet: string; score: number }>;
+  }>;
   error?: string;
   status?: number;
 }
@@ -45,28 +43,36 @@ export default function APIDebugPage() {
   const [geocodeLoading, setGeocodeLoading] = React.useState(false);
   const [geocodeTime, setGeocodeTime] = React.useState<number | null>(null);
 
-  // Places state
-  const [placesLat, setPlacesLat] = React.useState("");
-  const [placesLng, setPlacesLng] = React.useState("");
-  const [placesRadiusKm, setPlacesRadiusKm] = React.useState("10");
-  const [placesKeyword, setPlacesKeyword] = React.useState("pohištvo");
-  const [placesResult, setPlacesResult] = React.useState<PlacesResult | null>(null);
-  const [placesLoading, setPlacesLoading] = React.useState(false);
-  const [placesTime, setPlacesTime] = React.useState<number | null>(null);
-
   // SERP state
-  const [serpQueries, setSerpQueries] = React.useState("xxxlesnina bež stol za kuhinjo\nharveynorman jedilni stol\nmömax miza in stoli\nlesnina kuhinjska miza 120cm\nbauhaus barvna stena\nmerkur talna obloga");
-  const [serpMaxRequests, setSerpMaxRequests] = React.useState("4");
+  const [serpItems, setSerpItems] = React.useState(
+    "Beige upholstered dining chair, black legs, max €120\nMatte black kitchen faucet, single lever, max €150"
+  );
+  const [serpMaxRequests, setSerpMaxRequests] = React.useState("6");
   const [serpDryRun, setSerpDryRun] = React.useState(false);
   const [serpResult, setSerpResult] = React.useState<SerpResult | null>(null);
   const [serpLoading, setSerpLoading] = React.useState(false);
   const [serpTime, setSerpTime] = React.useState<number | null>(null);
 
-  // Use last geocode result for places
+  // D) Places state (retailer discovery: lat/lng from A, stores + domains)
+  const [placesSearchLat, setPlacesSearchLat] = React.useState("");
+  const [placesSearchLng, setPlacesSearchLng] = React.useState("");
+  const [placesSearchRadiusKm, setPlacesSearchRadiusKm] = React.useState("10");
+  const [placesSearchMode, setPlacesSearchMode] = React.useState<"category" | "brand">("category");
+  const [placesSearchBrandKeywords, setPlacesSearchBrandKeywords] = React.useState("Merkur, Lesnina, JYSK");
+  const [placesSearchDryRun, setPlacesSearchDryRun] = React.useState(false);
+  const [placesSearchOnlyWithWebsite, setPlacesSearchOnlyWithWebsite] = React.useState(true);
+  const [placesSearchResult, setPlacesSearchResult] = React.useState<any>(null);
+  const [placesSearchLoading, setPlacesSearchLoading] = React.useState(false);
+  const [placesSearchTime, setPlacesSearchTime] = React.useState<number | null>(null);
+  const [allowlistDomainsStores, setAllowlistDomainsStores] = React.useState<string[]>([]);
+  const [allowlistDomainsContractors, setAllowlistDomainsContractors] = React.useState<string[]>([]);
+  const [allowedDomains, setAllowedDomains] = React.useState<string[]>([]);
+
+  // A done → pre-fill D with lat/lng
   React.useEffect(() => {
-    if (geocodeResult?.lat && geocodeResult?.lng) {
-      setPlacesLat(geocodeResult.lat.toString());
-      setPlacesLng(geocodeResult.lng.toString());
+    if (geocodeResult?.lat != null && geocodeResult?.lng != null) {
+      setPlacesSearchLat(String(geocodeResult.lat));
+      setPlacesSearchLng(String(geocodeResult.lng));
     }
   }, [geocodeResult]);
 
@@ -97,54 +103,19 @@ export default function APIDebugPage() {
     }
   };
 
-  const handlePlaces = async () => {
-    const lat = parseFloat(placesLat);
-    const lng = parseFloat(placesLng);
+  const handleSerp = async () => {
+    const items = serpItems
+      .split("\n")
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
 
-    if (isNaN(lat) || isNaN(lng)) {
-      alert("Please enter valid lat and lng");
+    if (items.length === 0) {
+      alert("Please enter at least one item spec");
       return;
     }
 
-    setPlacesLoading(true);
-    setPlacesResult(null);
-    setPlacesTime(null);
-
-    const startTime = Date.now();
-
-    try {
-      const params = new URLSearchParams({
-        lat: lat.toString(),
-        lng: lng.toString(),
-        radiusKm: placesRadiusKm,
-      });
-      if (placesKeyword.trim()) {
-        params.append("keyword", placesKeyword.trim());
-      }
-
-      const response = await fetch(`/api/places-stores?${params.toString()}`);
-      const data = await response.json();
-      const elapsed = Date.now() - startTime;
-
-      setPlacesResult({ ...data, status: response.status });
-      setPlacesTime(elapsed);
-    } catch (error: any) {
-      const elapsed = Date.now() - startTime;
-      setPlacesResult({ error: error.message, status: 500 });
-      setPlacesTime(elapsed);
-    } finally {
-      setPlacesLoading(false);
-    }
-  };
-
-  const handleSerp = async () => {
-    const queries = serpQueries
-      .split("\n")
-      .map((q) => q.trim())
-      .filter((q) => q.length > 0);
-
-    if (queries.length === 0) {
-      alert("Please enter at least one query");
+    if (!serpDryRun && allowedDomains.length === 0) {
+      alert("No store domains provided. Run D) first.");
       return;
     }
 
@@ -159,9 +130,10 @@ export default function APIDebugPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          queries,
-          maxRequests: parseInt(serpMaxRequests) || 8,
+          items,
+          maxRequests: parseInt(serpMaxRequests) || 6,
           dryRun: serpDryRun,
+          allowlistDomains: allowedDomains.length > 0 ? allowedDomains : undefined,
         }),
       });
       const data = await response.json();
@@ -178,9 +150,88 @@ export default function APIDebugPage() {
     }
   };
 
-  const setPresetKeyword = (keyword: string) => {
-    setPlacesKeyword(keyword);
+  const handlePlacesSearch = async () => {
+    const latStr = placesSearchLat.trim();
+    const lngStr = placesSearchLng.trim();
+
+    if (!latStr || !lngStr) {
+      alert("Please enter valid lat and lng");
+      return;
+    }
+
+    const lat = parseFloat(latStr);
+    const lng = parseFloat(lngStr);
+
+    if (isNaN(lat) || isNaN(lng)) {
+      alert("Please enter valid numeric lat and lng");
+      return;
+    }
+
+    // Validate range
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      alert("Latitude must be between -90 and 90, Longitude between -180 and 180");
+      return;
+    }
+
+    setPlacesSearchLoading(true);
+    setPlacesSearchResult(null);
+    setPlacesSearchTime(null);
+    setAllowlistDomainsStores([]);
+    setAllowlistDomainsContractors([]);
+    setAllowedDomains([]);
+
+    const startTime = Date.now();
+
+    try {
+      const body: any = {
+        lat,
+        lng,
+        radiusKm: parseFloat(placesSearchRadiusKm) || 10,
+        mode: placesSearchMode,
+        dryRun: placesSearchDryRun,
+        onlyWithWebsite: placesSearchOnlyWithWebsite,
+      };
+
+      if (placesSearchMode === "brand") {
+        const brandKeywords = placesSearchBrandKeywords
+          .split(",")
+          .map((b) => b.trim())
+          .filter((b) => b.length > 0);
+        if (brandKeywords.length > 0) {
+          body.brandKeywords = brandKeywords;
+        }
+      }
+
+      const response = await fetch("/api/places/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await response.json();
+      const elapsed = Date.now() - startTime;
+
+      setPlacesSearchResult({ ...data, status: response.status });
+      setPlacesSearchTime(elapsed);
+
+      const storeDomains: string[] = data.allowlistDomainsStores ?? [];
+      const contractorDomains: string[] = data.allowlistDomainsContractors ?? [];
+      setAllowlistDomainsStores(storeDomains);
+      setAllowlistDomainsContractors(contractorDomains);
+      setAllowedDomains(storeDomains);
+    } catch (error: any) {
+      const elapsed = Date.now() - startTime;
+      setPlacesSearchResult({ error: error.message, status: 500 });
+      setPlacesSearchTime(elapsed);
+      setAllowlistDomainsStores([]);
+      setAllowlistDomainsContractors([]);
+      setAllowedDomains([]);
+    } finally {
+      setPlacesSearchLoading(false);
+    }
   };
+
+  const dEnabled = geocodeResult?.lat != null && geocodeResult?.lng != null;
+  const cEnabled = allowedDomains.length > 0;
 
   return (
     <div className="min-h-screen bg-[#0D0D0F] text-white p-8">
@@ -233,19 +284,24 @@ export default function APIDebugPage() {
           </div>
         </section>
 
-        {/* Places Section */}
+        {/* D) Places (discover stores + domains) — enabled after A has lat/lng */}
         <section className="bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.08)] rounded-lg p-6">
-          <h2 className="text-xl font-semibold mb-4">B) Places Test</h2>
+          <h2 className="text-xl font-semibold mb-4">D) Places (discover stores + domains)</h2>
+          {!dEnabled && (
+            <p className="text-sm text-[rgba(255,255,255,0.6)] mb-4">
+              Run A) Geocode first to get lat/lng.
+            </p>
+          )}
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium mb-2">Latitude</label>
                 <input
                   type="number"
-                  value={placesLat}
-                  onChange={(e) => setPlacesLat(e.target.value)}
+                  value={placesSearchLat}
+                  onChange={(e) => setPlacesSearchLat(e.target.value)}
                   step="any"
-                  placeholder="46.0569"
+                  placeholder="e.g. 46.0569 (from A)"
                   className="w-full px-4 py-2 rounded-lg bg-[rgba(255,255,255,0.02)] border border-[rgba(255,255,255,0.08)] text-white focus:outline-none focus:border-[#3B82F6]"
                 />
               </div>
@@ -253,10 +309,10 @@ export default function APIDebugPage() {
                 <label className="block text-sm font-medium mb-2">Longitude</label>
                 <input
                   type="number"
-                  value={placesLng}
-                  onChange={(e) => setPlacesLng(e.target.value)}
+                  value={placesSearchLng}
+                  onChange={(e) => setPlacesSearchLng(e.target.value)}
                   step="any"
-                  placeholder="14.5058"
+                  placeholder="e.g. 14.5058 (from A)"
                   className="w-full px-4 py-2 rounded-lg bg-[rgba(255,255,255,0.02)] border border-[rgba(255,255,255,0.08)] text-white focus:outline-none focus:border-[#3B82F6]"
                 />
               </div>
@@ -266,95 +322,188 @@ export default function APIDebugPage() {
                 <label className="block text-sm font-medium mb-2">Radius (km, 1-50)</label>
                 <input
                   type="number"
-                  value={placesRadiusKm}
-                  onChange={(e) => setPlacesRadiusKm(e.target.value)}
+                  value={placesSearchRadiusKm}
+                  onChange={(e) => setPlacesSearchRadiusKm(e.target.value)}
                   min="1"
                   max="50"
                   className="w-full px-4 py-2 rounded-lg bg-[rgba(255,255,255,0.02)] border border-[rgba(255,255,255,0.08)] text-white focus:outline-none focus:border-[#3B82F6]"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium mb-2">Keyword (optional)</label>
+                <label className="block text-sm font-medium mb-2">Mode</label>
+                <select
+                  value={placesSearchMode}
+                  onChange={(e) => setPlacesSearchMode(e.target.value as "category" | "brand")}
+                  className="w-full px-4 py-2 rounded-lg bg-[rgba(255,255,255,0.02)] border border-[rgba(255,255,255,0.08)] text-white focus:outline-none focus:border-[#3B82F6]"
+                >
+                  <option value="category">Category (pohištvo, keramika, železnina)</option>
+                  <option value="brand">Brand (custom keywords)</option>
+                </select>
+              </div>
+            </div>
+            {placesSearchMode === "brand" && (
+              <div>
+                <label className="block text-sm font-medium mb-2">Brand Keywords (comma-separated)</label>
                 <input
                   type="text"
-                  value={placesKeyword}
-                  onChange={(e) => setPlacesKeyword(e.target.value)}
-                  placeholder="furniture"
+                  value={placesSearchBrandKeywords}
+                  onChange={(e) => setPlacesSearchBrandKeywords(e.target.value)}
+                  placeholder="Merkur, Lesnina, JYSK"
                   className="w-full px-4 py-2 rounded-lg bg-[rgba(255,255,255,0.02)] border border-[rgba(255,255,255,0.08)] text-white focus:outline-none focus:border-[#3B82F6]"
                 />
               </div>
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-2">Quick Presets (Slovenian stores)</label>
-              <div className="flex flex-wrap gap-2">
-                {["mömax", "lesnina", "merkur", "bauhaus", "harveynorman"].map((store) => (
-                  <button
-                    key={store}
-                    onClick={() => setPresetKeyword(store)}
-                    className="px-3 py-1 rounded bg-[rgba(255,255,255,0.05)] hover:bg-[rgba(255,255,255,0.10)] transition-colors text-sm"
-                  >
-                    {store}
-                  </button>
-                ))}
-              </div>
+            )}
+            <div className="flex flex-wrap gap-4">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={placesSearchDryRun}
+                  onChange={(e) => setPlacesSearchDryRun(e.target.checked)}
+                  className="accent-[#3B82F6]"
+                />
+                <span className="text-sm">Dry Run (no API calls)</span>
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={placesSearchOnlyWithWebsite}
+                  onChange={(e) => setPlacesSearchOnlyWithWebsite(e.target.checked)}
+                  className="accent-[#3B82F6]"
+                />
+                <span className="text-sm">Only with website</span>
+              </label>
             </div>
             <button
-              onClick={handlePlaces}
-              disabled={placesLoading}
-              className="w-full px-6 py-2 rounded-lg bg-[#3B82F6] text-white font-medium hover:bg-[#2563EB] transition-colors disabled:opacity-50"
+              onClick={handlePlacesSearch}
+              disabled={!dEnabled || placesSearchLoading}
+              className="w-full px-6 py-2 rounded-lg bg-[#3B82F6] text-white font-medium hover:bg-[#2563EB] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {placesLoading ? "Loading..." : "Search Places"}
+              {placesSearchLoading ? "Loading..." : "Search Places (D)"}
             </button>
-            {placesResult && (
+            {placesSearchResult && (
               <div>
-                <div className="flex items-center gap-2 mb-2">
+                <div className="flex flex-wrap items-center gap-2 mb-2">
                   <span className="text-sm text-[rgba(255,255,255,0.60)]">
-                    Status: {placesResult.status}
+                    Status: {placesSearchResult.status}
                   </span>
-                  {placesTime !== null && (
+                  {placesSearchTime != null && (
                     <span className="text-sm text-[rgba(255,255,255,0.60)]">
-                      · {placesTime}ms
+                      · {placesSearchTime}ms
                     </span>
                   )}
-                  {placesResult.stores && (
+                  {placesSearchResult.stores?.length != null && (
                     <span className="text-sm text-[rgba(255,255,255,0.60)]">
-                      · {placesResult.stores.length} results
+                      · Stores: {placesSearchResult.stores.length}
+                    </span>
+                  )}
+                  {placesSearchResult.contractors?.length != null && (
+                    <span className="text-sm text-[rgba(255,255,255,0.60)]">
+                      · Contractors: {placesSearchResult.contractors.length}
+                    </span>
+                  )}
+                  {allowlistDomainsStores.length > 0 && (
+                    <span className="text-sm text-[rgba(255,255,255,0.60)]">
+                      · Domains (stores): {allowlistDomainsStores.length}
+                    </span>
+                  )}
+                  {allowlistDomainsContractors.length > 0 && (
+                    <span className="text-sm text-[rgba(255,255,255,0.60)]">
+                      · Domains (contractors): {allowlistDomainsContractors.length}
                     </span>
                   )}
                 </div>
-                <pre className="bg-[rgba(0,0,0,0.3)] p-4 rounded-lg overflow-auto text-sm max-h-96">
-                  {JSON.stringify(placesResult, null, 2)}
+
+                {allowlistDomainsStores.length > 0 && (
+                  <div className="mb-3 p-3 bg-[rgba(0,0,0,0.2)] rounded-lg">
+                    <div className="text-sm font-medium mb-2">Extracted domains for C) stores (product search)</div>
+                    <div className="flex flex-wrap gap-2 text-sm text-[rgba(255,255,255,0.8)]">
+                      {allowlistDomainsStores.map((d) => (
+                        <span key={d} className="px-2 py-1 rounded bg-[rgba(255,255,255,0.06)]">
+                          {d}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {allowlistDomainsContractors.length > 0 && (
+                  <div className="mb-3 p-3 bg-[rgba(0,0,0,0.2)] rounded-lg">
+                    <div className="text-sm font-medium mb-2">Extracted domains for C) contractors (service search)</div>
+                    <div className="flex flex-wrap gap-2 text-sm text-[rgba(255,255,255,0.8)]">
+                      {allowlistDomainsContractors.map((d) => (
+                        <span key={d} className="px-2 py-1 rounded bg-[rgba(255,255,255,0.06)]">
+                          {d}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {placesSearchResult.stores?.length > 0 && (
+                  <div className="mb-3 p-3 bg-[rgba(0,0,0,0.2)] rounded-lg max-h-48 overflow-auto">
+                    <div className="text-sm font-medium mb-2">Stores (Retail)</div>
+                    <ul className="text-sm space-y-1 text-[rgba(255,255,255,0.8)]">
+                      {placesSearchResult.stores.slice(0, 15).map((s: any) => (
+                        <li key={s.place_id ?? s.name}>
+                          {s.name}
+                          {s.rating != null && ` · ${s.rating}`}
+                          {s.websiteDomain && ` · ${s.websiteDomain}`}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {placesSearchResult.contractors?.length > 0 && (
+                  <div className="mb-3 p-3 bg-[rgba(0,0,0,0.2)] rounded-lg max-h-48 overflow-auto">
+                    <div className="text-sm font-medium mb-2">Contractors (Services)</div>
+                    <ul className="text-sm space-y-1 text-[rgba(255,255,255,0.8)]">
+                      {placesSearchResult.contractors.slice(0, 15).map((c: any) => (
+                        <li key={c.place_id ?? c.name}>
+                          {c.name}
+                          {c.rating != null && ` · ${c.rating}`}
+                          {c.websiteDomain && ` · ${c.websiteDomain}`}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                <pre className="bg-[rgba(0,0,0,0.3)] p-4 rounded-lg overflow-auto text-sm max-h-64">
+                  {JSON.stringify(placesSearchResult, null, 2)}
                 </pre>
               </div>
             )}
           </div>
         </section>
 
-        {/* SERP Section */}
+        {/* C) SERP (search products using domains) — enabled after D has allowlist */}
         <section className="bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.08)] rounded-lg p-6">
-          <h2 className="text-xl font-semibold mb-4">C) SERP Test</h2>
+          <h2 className="text-xl font-semibold mb-4">C) SERP (search products using domains)</h2>
+          {!cEnabled && !serpDryRun && (
+            <p className="text-sm text-amber-400/90 mb-4">
+              Run D) Places first to get store domains (allowlist). Or enable Dry Run to plan queries only.
+            </p>
+          )}
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium mb-2">
-                Queries (one per line)
+                Item specs (one per line)
               </label>
               <textarea
-                value={serpQueries}
-                onChange={(e) => setSerpQueries(e.target.value)}
+                value={serpItems}
+                onChange={(e) => setSerpItems(e.target.value)}
                 rows={6}
-                placeholder="mömax furniture&#10;lesnina kitchen"
+                placeholder="Beige upholstered dining chair, black legs, max €120"
                 className="w-full px-4 py-2 rounded-lg bg-[rgba(255,255,255,0.02)] border border-[rgba(255,255,255,0.08)] text-white focus:outline-none focus:border-[#3B82F6] resize-none font-mono text-sm"
               />
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium mb-2">Max Requests (1-10)</label>
+                <label className="block text-sm font-medium mb-2">Max Requests (1-20)</label>
                 <input
                   type="number"
                   value={serpMaxRequests}
                   onChange={(e) => setSerpMaxRequests(e.target.value)}
                   min="1"
-                  max="10"
+                  max="20"
                   className="w-full px-4 py-2 rounded-lg bg-[rgba(255,255,255,0.02)] border border-[rgba(255,255,255,0.08)] text-white focus:outline-none focus:border-[#3B82F6]"
                 />
               </div>
@@ -367,16 +516,16 @@ export default function APIDebugPage() {
                     onChange={(e) => setSerpDryRun(e.target.checked)}
                     className="accent-[#3B82F6]"
                   />
-                  <span className="text-sm">Dry Run (default: true)</span>
+                  <span className="text-sm">Dry Run (no external calls)</span>
                 </label>
               </div>
             </div>
             <button
               onClick={handleSerp}
-              disabled={serpLoading}
-              className="w-full px-6 py-2 rounded-lg bg-[#3B82F6] text-white font-medium hover:bg-[#2563EB] transition-colors disabled:opacity-50"
+              disabled={serpLoading || (!cEnabled && !serpDryRun)}
+              className="w-full px-6 py-2 rounded-lg bg-[#3B82F6] text-white font-medium hover:bg-[#2563EB] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {serpLoading ? "Loading..." : "Search SERP"}
+              {serpLoading ? "Loading..." : !cEnabled && !serpDryRun ? "Run D) Places first" : "Search SERP (C)"}
             </button>
             {serpResult && (
               <div>
@@ -395,6 +544,44 @@ export default function APIDebugPage() {
                     </span>
                   )}
                 </div>
+                {serpResult.results && serpResult.results.length > 0 && (
+                  <div className="mb-4 space-y-3">
+                    {serpResult.results.map((r) => (
+                      <div
+                        key={r.item}
+                        className="bg-[rgba(0,0,0,0.2)] border border-[rgba(255,255,255,0.06)] rounded-lg p-3"
+                      >
+                        <div className="text-xs text-[rgba(255,255,255,0.5)] mb-1">Item: {r.item}</div>
+                        {r.picked ? (
+                          <div className="text-sm">
+                            <a
+                              href={r.picked.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[#3B82F6] hover:underline font-medium"
+                            >
+                              {r.picked.title}
+                            </a>
+                            {r.picked.domain && (
+                              <span className="text-[rgba(255,255,255,0.5)] ml-2">
+                                ({r.picked.domain})
+                              </span>
+                            )}
+                            {r.picked.price != null && (
+                              <span className="ml-2 text-[rgba(255,255,255,0.8)]">
+                                {r.picked.currency ? `${r.picked.price} ${r.picked.currency}` : r.picked.price}
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="text-sm text-[rgba(255,255,255,0.6)]">
+                            No product match found
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <pre className="bg-[rgba(0,0,0,0.3)] p-4 rounded-lg overflow-auto text-sm max-h-96">
                   {JSON.stringify(serpResult, null, 2)}
                 </pre>

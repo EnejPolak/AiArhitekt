@@ -37,3 +37,30 @@ This project uses **OpenAI Images API** (`gpt-image-1`) via the server route `PO
 }
 ```
 
+---
+
+## Places API (store discovery)
+
+Store discovery uses **Google Places API** (Nearby Search + optional Details) via `POST /api/places/search`.
+
+### Cost control
+
+- **Request cap:** Max 6 requests per search (3 category keywords + up to 2 fallback, or up to 5 brand keywords).
+- **Radius:** `radiusKm` is clamped to 1–50 km; results are post-filtered by Haversine distance so only places within the radius are returned.
+- **Caching:** Search results cached 14 days, place details 30 days (by rounded lat/lng + keyword + language).
+- **Validation:** Invalid or out-of-range `lat`/`lng` return 400.
+
+### Request
+
+```json
+{
+  "lat": 46.36,
+  "lng": 15.11,
+  "radiusKm": 50,
+  "mode": "category",
+  "dryRun": false
+}
+```
+
+`mode`: `"category"` (pohištvo / keramika / železnina) or `"brand"` (requires `brandKeywords`). Response includes `meta` (e.g. `requestsMade`, `filteredOutCount`, `usedLocation`) and `places` with `distanceMeters` / `distanceKm`.
+
