@@ -6,6 +6,9 @@
 import { TTLCache } from "@/lib/cache";
 import { haversineDistanceMeters } from "@/lib/geo/haversine";
 import { checkProductCatalogSignal, type CatalogProbe, type CatalogCheckResult, type CatalogSignalResult } from "@/lib/places/catalogSignal";
+import { normalizeDomainToRoot, isRejectedDomain as isRejectedDomainUtil } from "@/lib/places/domainUtils";
+import { normalizeDomainToRoot as normalizeDomainToRootForAllowlist } from "@/lib/serp/domains";
+import { placeTypesToTaxonomyCategories } from "@/lib/serp/taxonomy";
 
 // Types
 export interface Place {
@@ -50,7 +53,7 @@ export interface SearchParams {
   mode?: "category" | "brand";
   brandKeywords?: string[];
   dryRun?: boolean;
-  /** If true (default), fetch details and return only places that have a website */
+  /** If true (default), only include places with website in domain allowlists; stores/contractors lists still show all (with/without website). */
   onlyWithWebsite?: boolean;
   /** If true, include debug.candidates and debug.discarded in response */
   debug?: boolean;
@@ -62,6 +65,8 @@ export interface SearchMeta {
   cacheHits: number;
   fallbacksUsed: number;
   plannedQueries: string[];
+  /** Second-pass store discovery: Places types (dry run shows without API calls) */
+  plannedTypes?: string[];
   executionNotes?: string[];
   usedLocation?: { lat: number; lng: number };
   filteredOutCount?: number;
@@ -143,14 +148,21 @@ export interface SearchResult {
   stores: PlaceResult[];
   /** Service providers only (contractors/trades). */
   contractors: PlaceResult[];
-  /** Unique normalized domains from stores only – for C) product SERP. */
+  /** Unique normalized domains: stores (product search), contractors (service search). */
+  domains: { stores: string[]; contractors: string[] };
+  /** Alias for C) product SERP. */
   allowlistDomainsStores: string[];
-  /** Unique normalized domains from contractors only – for C) service SERP. */
+  /** Alias for C) service SERP. */
   allowlistDomainsContractors: string[];
+  /** Domain → taxonomy categories for category-based SERP routing (from store Place.types). */
+  domainCategoryMapStores?: Record<string, string[]>;
   status: number;
-  /** Only when debug=true: rejection reasons and classification signals. */
+  /** Only when debug=true. */
   debug?: {
-    rejectionReasons: Array<{ name: string; place_id?: string; reason: string }>;
+    rejectionReasons?: Array<{ name: string; place_id?: string; reason: string }>;
+    storesDropped?: Array<{ name: string; place_id?: string; reason: string }>;
+    contractorsDropped?: Array<{ name: string; place_id?: string; reason: string }>;
+    scoringNotes?: string[];
     classificationSignals?: Array<{ name: string; storeScore: number; contractorScore: number; serviceHintScore: number; bucket?: string; rejected?: boolean }>;
     candidates?: StoreOrServicePlace[];
     discarded?: DiscardedPlace[];
@@ -158,17 +170,59 @@ export interface SearchResult {
 }
 
 // Constants
-const MAX_REQUESTS_PER_SEARCH = 6;
 const MAX_CONCURRENCY = 2;
 const REQUESTS_PER_SECOND = 3;
 const REQUEST_TIMEOUT_MS = 6000;
 const CACHE_TTL_SEARCH = 14 * 24 * 60 * 60 * 1000; // 14 days
 const CACHE_TTL_DETAILS = 30 * 24 * 60 * 60 * 1000; // 30 days
-const MAX_PLACES = 40;
-const MAX_DETAILS_PER_SEARCH = 60;
+/** Max places after merge + distance filter (before details); increased for multi-pass. */
+const MAX_PLACES = 100;
+const MAX_DETAILS_PER_SEARCH = 80;
 const DETAILS_CONCURRENCY = 3;
+const MAX_DOMAINS_PER_LIST = 10;
+/** Cap stores and contractors arrays each to this many places. */
+const MAX_PLACES_OUTPUT = 20;
 
-// Category keywords (Slovenian-first)
+/** Multi-pass store discovery: category keywords (Slovenian), NOT store names. All required retail categories. */
+const STORE_CATEGORY_KEYWORDS = [
+  // hardware/DIY
+  "gradbeni center železnina",
+  "orodje železnina gradbeni",
+  // bathroom/tiles
+  "tla keramika ploščice kopalnica",
+  "keramika ploščice sanitarna oprema",
+  // flooring
+  "laminat vinil parket talne obloge",
+  // paint & walls
+  "barve stene maloprodaja",
+  "notranje barve premaz lazura stene",
+  // furniture
+  "pohištvo omare postelje police",
+  "mize stoli sedežne vzmetnice nočne omarice",
+  // lighting
+  "svetila elektrika luči",
+  "stropne luči LED paneli razsvetljava",
+  // decor/textiles
+  "tekstil dekoracija zavese",
+];
+
+/** Second-pass: Places API types for big-box retailers (one type per request). Exclude electronics_store (noise), department_store (we penalise it). */
+const STORE_TYPES_FOR_SEARCH: string[] = [
+  "hardware_store",
+  "home_goods_store",
+  "furniture_store",
+  "lighting_store",
+];
+
+/** Contractor discovery: all required trades (Slovenian). Multiple queries for full coverage. */
+const CONTRACTORS_QUERY_KEYWORDS = [
+  "pleskar električar vodovodar keramičar polagalec ploščic",
+  "monter pohištva sestavljalec pohištva montaža adaptacije renovacije",
+  "polagalec talnih oblog parketar talne obloge",
+  "suhomontažer mizar",
+];
+
+// Category keywords (Slovenian-first) – used when mode is brand for fallback
 const CATEGORY_KEYWORDS = {
   furniture: { sl: "pohištvo", en: "furniture store" },
   tiles_bathroom: { sl: "keramika", en: "tile store" },
@@ -193,14 +247,12 @@ const BRAND_KEYWORDS = [
 
 // === GLOBAL STORE/SERVICE CLASSIFIER (language/country agnostic) ===
 
-/** Google Place types that indicate a retail store (SERP-friendly) */
+/** Google Place types that indicate a retail store (SERP-friendly). Exclude "store" (too broad) and "shopping_mall" (location, not store). */
 const STORE_TYPES = [
   "furniture_store",
   "hardware_store",
   "home_goods_store",
-  "store",
   "lighting_store",
-  "shopping_mall",
 ] as const;
 
 /** Types that indicate non-store retail (supermarkets, department stores) */
@@ -225,6 +277,88 @@ const SERVICE_TYPES = [
   "real_estate_agency",
   "home_builder",
 ] as const;
+
+/** Slovenian (and common) name/category keywords that imply CONTRACTOR (service). Never put in stores. */
+const CONTRACTOR_NAME_KEYWORDS_SL = [
+  "montaža",
+  "montaza",
+  "pleskar",
+  "električar",
+  "elektricar",
+  "vodovod",
+  "vodovodar",
+  "keramičar",
+  "keramicar",
+  "parket",
+  "instalacije",
+  "servis",
+  "pleskanje",
+  "povpraševanje",
+  "cenik",
+  "storitve",
+  "namestitev",
+  "popravilo",
+  "gradbeništvo",
+  "adaptacije",
+  "renovacij",
+];
+
+/** Domain substrings that imply service provider (contractor). If domain contains any → contractor. */
+const SERVICE_DOMAIN_PATTERNS = [
+  "kamnosestvo",
+  "pleskar",
+  "vodovodar",
+  "mizarstvo",
+  "storitve",
+  "montaza",
+  "montaža",
+  "instalacije",
+  "italko",
+  "lesarstvo",
+  "keramicar",
+  "keramičar",
+  "elektricar",
+  "električar",
+  "inštalacije",
+  "obrt",
+  "gradbeništvo",
+];
+
+/**
+ * True if websiteDomain matches service-domain heuristics (treat as contractor).
+ */
+export function isServiceDomainByHeuristic(websiteDomain: string): boolean {
+  if (!websiteDomain || !String(websiteDomain).trim()) return false;
+  const d = String(websiteDomain).toLowerCase().replace(/^www\./, "").trim();
+  return SERVICE_DOMAIN_PATTERNS.some((p) => d.includes(p));
+}
+
+/**
+ * Classify a place into exactly one bucket (store or contractor) or null (ambiguous).
+ * Based on Place types + name keywords + optional websiteDomain heuristics.
+ * If both store and contractor match, prefer contractor (safer).
+ * Exported for tests (Slovenian classification).
+ */
+export function classifyPlaceBucket(
+  types: string[],
+  name: string,
+  websiteDomain?: string | null
+): "store" | "contractor" | null {
+  const t = types.map((x) => x.toLowerCase());
+  const n = (name ?? "").toLowerCase();
+  const hasStoreType = t.some((x) => STORE_TYPES.includes(x as any));
+  const hasServiceType = t.some((x) => SERVICE_TYPES.includes(x as any));
+  const nameMatchesContractor = CONTRACTOR_NAME_KEYWORDS_SL.some((kw) => n.includes(kw.toLowerCase()));
+  const domainMatchesService = websiteDomain ? isServiceDomainByHeuristic(websiteDomain) : false;
+
+  if (domainMatchesService || nameMatchesContractor || hasServiceType) {
+    return "contractor";
+  }
+  if (hasStoreType && !nameMatchesContractor) {
+    return "store";
+  }
+  return null;
+}
 
 /** Social domains – not official store sites */
 const SOCIAL_DOMAINS = [
@@ -265,13 +399,9 @@ const DIRECTORY_AGGREGATOR_DOMAINS = [
   "thomsonlocal.com",
 ];
 
-/** Domains that are always rejected (social + directory/aggregator). */
+/** Use shared reject list from domainUtils. */
 function isRejectedDomain(domain: string): boolean {
-  if (!domain || !domain.trim()) return true;
-  const d = domain.toLowerCase().replace(/^www\./, "").trim();
-  if (SOCIAL_DOMAINS.some((s) => d === s || d.endsWith("." + s))) return true;
-  if (DIRECTORY_AGGREGATOR_DOMAINS.some((s) => d === s || d.includes(s))) return true;
-  return false;
+  return isRejectedDomainUtil(domain);
 }
 
 /**
@@ -288,6 +418,7 @@ export function classifyWebsiteQuality(domain: string): "social" | "directory" |
 
 /**
  * Compute store score ∈ [0..1] from Google types + rating/reviews (global, no keywords).
+ * Strong store types +0.7; weak "store"/"shopping_mall" +0.15/+0.1 only.
  */
 export function computeStoreScore(
   types: string[],
@@ -298,8 +429,10 @@ export function computeStoreScore(
   let score = 0;
 
   if (t.some((x) => STORE_TYPES.includes(x as any))) score += 0.7;
+  if (t.includes("store")) score += 0.15;
+  if (t.includes("shopping_mall")) score += 0.1;
   if (t.some((x) => RETAIL_NEGATIVE_TYPES.includes(x as any))) score -= 0.9;
-  if (t.includes("shopping_mall") && !t.some((x) => STORE_TYPES.includes(x as any))) score -= 0.3;
+  if (t.includes("shopping_mall") && !t.some((x) => STORE_TYPES.includes(x as any))) score -= 0.2;
 
   const reviews = user_ratings_total ?? 0;
   if (reviews > 0) score += Math.min(0.2, Math.log10(reviews + 1) / 15);
@@ -331,7 +464,10 @@ export function computeServiceScore(
 }
 
 /** URL path segments that suggest a service business (not retail catalog) */
-const SERVICE_URL_PATTERNS = ["/services", "/booking", "/contact", "/pricing", "/cenik", "/storitve"];
+const SERVICE_URL_PATTERNS = ["/services", "/booking", "/contact", "/pricing", "/cenik", "/storitve", "/povpraševanje", "/montaža", "/pleskanje", "/kontakt"];
+
+/** Path/URL patterns that suggest ecommerce/catalog (stores). */
+const CATALOG_PATH_PATTERNS = ["/p/", "/product", "/izdelek", "/shop", "/kategorija", "cart", "cena", "/trgovina", "/artikel"];
 
 /**
  * Multilingual seed keywords for service providers (installation, assembly, repair, contractor, etc.).
@@ -451,15 +587,56 @@ export function applyServiceBoosts(
 }
 
 /**
- * Extract hostname/domain from a full URL for site: queries.
- * Normalized: strip www., lowercase, no path or tracking params.
+ * Extract root domain from URL for site: queries (uses domainUtils).
  */
 export function extractDomain(websiteUrl: string): string {
+  return normalizeDomainToRoot(websiteUrl);
+}
+
+/** Generic name tokens to ignore when matching domain (avoid false positives). */
+const GENERIC_NAME_TOKENS = new Set([
+  "center", "centre", "trgovina", "d.o.o", "doo", "outlet", "salon", "poslovalnica",
+  "trgovski", "dipo", "d.o.o.", "s.p", "sp", "storitve", "slovenija", "ljubljana",
+  "celje", "maribor", "kranj", "koper", "novo", "mesto", "group", "plus",
+]);
+
+/** True if domain looks like the business: at least one brand-like name token (length ≥4, not generic) appears in domain. */
+function isOfficialDomain(domain: string, businessName: string): boolean {
+  if (!domain || !businessName) return false;
+  const d = domain.toLowerCase().replace(/^www\./, "");
+  const tokens = businessName
+    .toLowerCase()
+    .replace(/[^\w\sčćžšđ]/g, " ")
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 2 && !GENERIC_NAME_TOKENS.has(t));
+  if (tokens.length === 0) return false;
+  const brandLike = tokens.filter((t) => t.length >= 4);
+  const toMatch = brandLike.length > 0 ? brandLike : tokens;
+  return toMatch.some((t) => d.includes(t));
+}
+
+/** True if URL path suggests ecommerce/catalog (stores). */
+function hasCatalogPathSignal(url: string): boolean {
   try {
-    const u = new URL(websiteUrl.startsWith("http") ? websiteUrl : `https://${websiteUrl}`);
-    return u.hostname.replace(/^www\./, "").toLowerCase();
+    const path = new URL(url.startsWith("http") ? url : `https://${url}`).pathname.toLowerCase();
+    return CATALOG_PATH_PATTERNS.some((p) => path.includes(p) || url.toLowerCase().includes(p));
   } catch {
-    return "";
+    return false;
+  }
+}
+
+/** True if URL path suggests services (contractors). */
+function hasServicePathSignal(url: string): boolean {
+  try {
+    const path = new URL(url.startsWith("http") ? url : `https://${url}`).pathname.toLowerCase();
+    const lower = url.toLowerCase();
+    return (
+      SERVICE_URL_PATTERNS.some((p) => path.includes(p) || lower.includes(p)) ||
+      ["storitve", "povpraševanje", "kontakt", "cenik", "montaža", "pleskanje"].some((k) => path.includes(k) || lower.includes(k))
+    );
+  } catch {
+    return false;
   }
 }
 
@@ -469,7 +646,6 @@ const detailsCache = new TTLCache<PlaceDetails>(CACHE_TTL_DETAILS);
 
 // Throttling state
 let lastRequestTime = 0;
-const requestQueue: Array<() => Promise<void>> = [];
 let activeRequests = 0;
 
 /**
@@ -480,7 +656,7 @@ function roundCoordinate(coord: number): number {
 }
 
 /**
- * Generate cache key for search
+ * Generate cache key for keyword search
  */
 function getCacheKey(
   lat: number,
@@ -493,6 +669,20 @@ function getCacheKey(
   const roundedLat = roundCoordinate(lat);
   const roundedLng = roundCoordinate(lng);
   return `places:${roundedLat}:${roundedLng}:${radiusKm}:${keyword}:${language}:${region}`;
+}
+
+/** Cache key for type-based Nearby Search (second pass). */
+function getCacheKeyForType(
+  lat: number,
+  lng: number,
+  radiusKm: number,
+  placeType: string,
+  language: string,
+  region: string
+): string {
+  const roundedLat = roundCoordinate(lat);
+  const roundedLng = roundCoordinate(lng);
+  return `places:type:${roundedLat}:${roundedLng}:${radiusKm}:${placeType}:${language}:${region}`;
 }
 
 /**
@@ -642,41 +832,111 @@ async function fetchPlaces(
 }
 
 /**
- * Plan queries based on mode
+ * Fetch places by Google Place type (second pass: big-box retailers).
+ * Uses Nearby Search with type= parameter (no keyword).
  */
-function planQueries(params: SearchParams): {
-  queries: Array<{ keyword: string; language: string; category?: string }>;
-  fallbackQueries: Array<{ keyword: string; language: string; category?: string }>;
+async function fetchPlacesByType(
+  placeType: string,
+  lat: number,
+  lng: number,
+  radiusMeters: number,
+  language: string = "sl",
+  region: string = "si"
+): Promise<Place[]> {
+  if (!process.env.GOOGLE_MAPS_API_KEY) {
+    throw new Error("GOOGLE_MAPS_API_KEY not configured");
+  }
+
+  const cacheKey = getCacheKeyForType(lat, lng, radiusMeters / 1000, placeType, language, region);
+  const cached = searchCache.get(cacheKey);
+  if (cached) return cached;
+
+  const location = `${lat},${lng}`;
+  const url = `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${location}&radius=${radiusMeters}&type=${encodeURIComponent(placeType)}&language=${language}&region=${region}&key=${process.env.GOOGLE_MAPS_API_KEY}`;
+
+  let retries = 0;
+  const maxRetries = 2;
+
+  while (retries <= maxRetries) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+      const response = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeout);
+
+      if (!response.ok) throw new Error(`Google Places API error: ${response.status}`);
+      const data = await response.json();
+
+      if (data.status === "OVER_QUERY_LIMIT" || response.status === 429) {
+        if (retries < maxRetries) {
+          await new Promise((r) => setTimeout(r, Math.pow(2, retries) * 1000));
+          retries++;
+          continue;
+        }
+        throw new Error("Google Places API rate limit exceeded");
+      }
+
+      if (data.status === "ZERO_RESULTS") {
+        searchCache.set(cacheKey, []);
+        return [];
+      }
+      if (data.status !== "OK") throw new Error(`Google Places API error: ${data.status}`);
+
+      const places: Place[] = (data.results || []).map((result: any) => ({
+        place_id: result.place_id,
+        name: result.name,
+        types: result.types || [],
+        vicinity: result.vicinity,
+        formatted_address: result.formatted_address,
+        location: {
+          lat: result.geometry.location.lat,
+          lng: result.geometry.location.lng,
+        },
+        rating: result.rating,
+        user_ratings_total: result.user_ratings_total,
+        opening_hours: result.opening_hours ? { open_now: result.opening_hours.open_now } : undefined,
+        googleMapsUrl: `https://www.google.com/maps/place/?q=place_id:${result.place_id}`,
+        sourceKeywords: [],
+        categoriesMatched: [placeType],
+      }));
+      searchCache.set(cacheKey, places);
+      return places;
+    } catch (error: any) {
+      if (error.name === "AbortError") throw new Error("Google Places API request timeout");
+      if (retries < maxRetries) {
+        await new Promise((r) => setTimeout(r, Math.pow(2, retries) * 1000));
+        retries++;
+        continue;
+      }
+      throw error;
+    }
+  }
+  return [];
+}
+
+/**
+ * Plan multi-pass discovery: store category keywords + store types + contractors.
+ * Stores: multiple keyword-based searches per category, then type-based pass.
+ * Contractors: single keyword search.
+ */
+function planMultiPassStoresAndContractors(params: SearchParams): {
+  storesKeywordQueries: Array<{ keyword: string; language: string }>;
+  storesTypeQueries: Array<{ type: string }>;
+  contractorsQueries: Array<{ keyword: string; language: string }>;
 } {
-  const queries: Array<{ keyword: string; language: string; category?: string }> = [];
-  const fallbackQueries: Array<{ keyword: string; language: string; category?: string }> = [];
-
   if (params.mode === "brand" && params.brandKeywords && params.brandKeywords.length > 0) {
-    // Brand mode: up to 5 brand queries
-    const brandQueries = params.brandKeywords.slice(0, 5).map((brand) => ({
-      keyword: brand,
-      language: "sl",
-    }));
-    queries.push(...brandQueries);
-  } else {
-    // Category mode: 3 Slovenian queries
-    queries.push(
-      { keyword: CATEGORY_KEYWORDS.furniture.sl, language: "sl", category: "furniture" },
-      { keyword: CATEGORY_KEYWORDS.tiles_bathroom.sl, language: "sl", category: "tiles_bathroom" },
-      { keyword: CATEGORY_KEYWORDS.hardware.sl, language: "sl", category: "hardware" }
-    );
+    const kw = params.brandKeywords.slice(0, 2).join(" ");
+    return {
+      storesKeywordQueries: [{ keyword: kw, language: "sl" }],
+      storesTypeQueries: STORE_TYPES_FOR_SEARCH.map((t) => ({ type: t })),
+      contractorsQueries: CONTRACTORS_QUERY_KEYWORDS.map((keyword) => ({ keyword, language: "sl" })),
+    };
   }
-
-  // Plan fallback queries (English) - max 2 total
-  if (params.mode !== "brand") {
-    fallbackQueries.push(
-      { keyword: CATEGORY_KEYWORDS.furniture.en, language: "en", category: "furniture" },
-      { keyword: CATEGORY_KEYWORDS.tiles_bathroom.en, language: "en", category: "tiles_bathroom" },
-      { keyword: CATEGORY_KEYWORDS.hardware.en, language: "en", category: "hardware" }
-    );
-  }
-
-  return { queries, fallbackQueries };
+  return {
+    storesKeywordQueries: STORE_CATEGORY_KEYWORDS.map((keyword) => ({ keyword, language: "sl" })),
+    storesTypeQueries: STORE_TYPES_FOR_SEARCH.map((t) => ({ type: t })),
+    contractorsQueries: CONTRACTORS_QUERY_KEYWORDS.map((keyword) => ({ keyword, language: "sl" })),
+  };
 }
 
 /**
@@ -737,18 +997,20 @@ function rankPlaces(places: Place[]): Place[] {
 }
 
 /**
- * Search places with cost control
+ * Search places with cost control (multi-pass: store category keywords + types + contractors).
  */
 export async function searchPlaces(params: SearchParams): Promise<SearchResult> {
   const { lat, lng, radiusKm, dryRun = false } = params;
 
-  // Validate radius
   const clampedRadiusKm = Math.max(1, Math.min(50, radiusKm));
   const radiusMeters = Math.round(clampedRadiusKm * 1000);
 
-  // Plan queries
-  const { queries, fallbackQueries } = planQueries(params);
-  const plannedQueries = queries.map((q) => `${q.keyword} (${q.language})`);
+  const { storesKeywordQueries, storesTypeQueries, contractorsQueries } = planMultiPassStoresAndContractors(params);
+  const plannedQueries = [
+    ...storesKeywordQueries.map((q) => `stores: ${q.keyword} (${q.language})`),
+    ...contractorsQueries.map((q) => `contractors: ${q.keyword} (${q.language})`),
+  ];
+  const plannedTypes = storesTypeQueries.map((q) => q.type);
 
   if (dryRun) {
     return {
@@ -758,6 +1020,7 @@ export async function searchPlaces(params: SearchParams): Promise<SearchResult> 
         cacheHits: 0,
         fallbacksUsed: 0,
         plannedQueries,
+        plannedTypes,
         executionNotes: ["Dry run mode - no API calls made", "API debug: D)"],
         debugVersion: "D",
         debugVersionLabel: "D)",
@@ -765,392 +1028,325 @@ export async function searchPlaces(params: SearchParams): Promise<SearchResult> 
       places: [],
       stores: [],
       contractors: [],
+      domains: { stores: [], contractors: [] },
       allowlistDomainsStores: [],
       allowlistDomainsContractors: [],
+      domainCategoryMapStores: undefined,
       status: 200,
     };
   }
 
-  // Execute Phase 1: Slovenian queries
-  const allPlaces: Array<{ place: Place; keyword: string; category?: string }> = [];
+  const allPlaces: Array<{ place: Place; intent: "store" | "contractor" }> = [];
   let requestsMade = 0;
   let cacheHits = 0;
   const executionNotes: string[] = [];
-  const categoryResults: Record<string, number> = {};
 
-  // Execute queries with concurrency control
-  const queryPromises = queries.map(async (query) => {
-    return executeWithConcurrency(async () => {
+  // Pass 1: store category keyword searches (merge, dedupe by place_id later)
+  for (const query of storesKeywordQueries) {
+    await executeWithConcurrency(async () => {
       const cacheKey = getCacheKey(lat, lng, clampedRadiusKm, query.keyword, query.language, "si");
       const cached = searchCache.get(cacheKey);
-
       if (cached) {
         cacheHits++;
-        cached.forEach((place) => {
-          allPlaces.push({ place, keyword: query.keyword, category: query.category });
-        });
-        return cached.length;
+        cached.forEach((place) => allPlaces.push({ place, intent: "store" }));
+        return;
       }
-
       requestsMade++;
       const places = await fetchPlaces(query.keyword, lat, lng, radiusMeters, query.language, "si");
-      const count = places.length;
-      categoryResults[query.category || "unknown"] = count;
-
-      places.forEach((place) => {
-        allPlaces.push({ place, keyword: query.keyword, category: query.category });
-      });
-
-      return count;
+      places.forEach((place) => allPlaces.push({ place, intent: "store" }));
     });
-  });
-
-  await Promise.all(queryPromises);
-
-  // Phase 2: English fallback (max 2 queries total; strict cap so total requests ≤ MAX_REQUESTS_PER_SEARCH)
-  let fallbacksUsed = 0;
-  const fallbackBudget = Math.min(2, MAX_REQUESTS_PER_SEARCH - requestsMade);
-
-  if (params.mode !== "brand" && fallbacksUsed < fallbackBudget) {
-    // Prioritize categories with 0 results
-    const zeroResultCategories = Object.entries(categoryResults)
-      .filter(([_, count]) => count === 0)
-      .map(([category]) => category);
-
-    // Then categories with fewest results
-    const sortedCategories = Object.entries(categoryResults)
-      .sort(([_, a], [__, b]) => a - b)
-      .map(([category]) => category);
-
-    const priorityCategories = [...zeroResultCategories, ...sortedCategories].slice(0, fallbackBudget);
-
-    for (const category of priorityCategories) {
-      if (fallbacksUsed >= fallbackBudget || requestsMade >= MAX_REQUESTS_PER_SEARCH) break;
-
-      const fallbackQuery = fallbackQueries.find((q) => q.category === category);
-      if (!fallbackQuery) continue;
-
-      await executeWithConcurrency(async () => {
-        const cacheKey = getCacheKey(lat, lng, clampedRadiusKm, fallbackQuery.keyword, fallbackQuery.language, "si");
-        const cached = searchCache.get(cacheKey);
-
-        if (cached) {
-          cacheHits++;
-          cached.forEach((place) => {
-            allPlaces.push({ place, keyword: fallbackQuery.keyword, category: fallbackQuery.category });
-          });
-          return;
-        }
-
-        requestsMade++;
-        fallbacksUsed++;
-        executionNotes.push(`Fallback query: ${fallbackQuery.keyword} (${category})`);
-
-        const places = await fetchPlaces(fallbackQuery.keyword, lat, lng, radiusMeters, fallbackQuery.language, "si");
-        places.forEach((place) => {
-          allPlaces.push({ place, keyword: fallbackQuery.keyword, category: fallbackQuery.category });
-        });
-      });
-    }
   }
 
-  // Ensure we didn't exceed the cap
-  if (requestsMade > MAX_REQUESTS_PER_SEARCH) {
-    executionNotes.push(`Warning: Exceeded max requests (${requestsMade} > ${MAX_REQUESTS_PER_SEARCH})`);
+  // Pass 2: store type-based searches (big-box retailers)
+  for (const typeQuery of storesTypeQueries) {
+    await executeWithConcurrency(async () => {
+      const cacheKey = getCacheKeyForType(lat, lng, clampedRadiusKm, typeQuery.type, "sl", "si");
+      const cached = searchCache.get(cacheKey);
+      if (cached) {
+        cacheHits++;
+        cached.forEach((place) => allPlaces.push({ place, intent: "store" }));
+        return;
+      }
+      requestsMade++;
+      const places = await fetchPlacesByType(typeQuery.type, lat, lng, radiusMeters, "sl", "si");
+      places.forEach((place) => allPlaces.push({ place, intent: "store" }));
+    });
   }
 
-  // Merge and dedupe
-  const merged = mergePlaces(allPlaces);
+  // Contractors: single keyword search
+  for (const query of contractorsQueries) {
+    await executeWithConcurrency(async () => {
+      const cacheKey = getCacheKey(lat, lng, clampedRadiusKm, query.keyword, query.language, "si");
+      const cached = searchCache.get(cacheKey);
+      if (cached) {
+        cacheHits++;
+        cached.forEach((place) => allPlaces.push({ place, intent: "contractor" }));
+        return;
+      }
+      requestsMade++;
+      const places = await fetchPlaces(query.keyword, lat, lng, radiusMeters, query.language, "si");
+      places.forEach((place) => allPlaces.push({ place, intent: "contractor" }));
+    });
+  }
 
-  // Calculate distances and filter by radius
-  const placesWithDistance = merged.map((place) => {
-    const distanceMeters = haversineDistanceMeters(
-      lat,
-      lng,
-      place.location.lat,
-      place.location.lng
-    );
+  // Dedupe by place_id: keep first (store then contractor); keep intent for classification prior
+  const placeById = new Map<string, { place: Place; intent: "store" | "contractor" }>();
+  for (const { place, intent } of allPlaces) {
+    if (!placeById.has(place.place_id)) placeById.set(place.place_id, { place, intent });
+  }
+  const mergedWithIntent = Array.from(placeById.values());
+
+  // Calculate distances and filter by radius; keep intent
+  const withDistance = mergedWithIntent.map(({ place, intent }) => {
+    const distanceMeters = haversineDistanceMeters(lat, lng, place.location.lat, place.location.lng);
     return {
-      ...place,
-      distanceMeters,
-      distanceKm: Math.round((distanceMeters / 1000) * 100) / 100, // Round to 2 decimals
+      place: {
+        ...place,
+        distanceMeters,
+        distanceKm: Math.round((distanceMeters / 1000) * 100) / 100,
+      },
+      intent,
     };
   });
 
-  // Hard filter: remove places outside radius
-  const beforeFilterCount = placesWithDistance.length;
-  const filtered = placesWithDistance.filter(
-    (place) => place.distanceMeters <= radiusMeters
-  );
-  const filteredOutCount = beforeFilterCount - filtered.length;
-
+  const beforeFilterCount = withDistance.length;
+  const filteredWithIntent = withDistance.filter(({ place }) => place.distanceMeters! <= radiusMeters);
+  const filteredOutCount = beforeFilterCount - filteredWithIntent.length;
   if (filteredOutCount > 0) {
-    executionNotes.push(
-      `Post-filter removed ${filteredOutCount} out-of-radius results`
-    );
+    executionNotes.push(`Post-filter removed ${filteredOutCount} out-of-radius results`);
   }
 
-  // Rank filtered results
-  const ranked = rankPlaces(filtered);
+  const filteredPlaces = filteredWithIntent.map(({ place }) => place);
+  const ranked = rankPlaces(filteredPlaces);
+  const intentByPlaceId = new Map(filteredWithIntent.map(({ place, intent }) => [place.place_id, intent]));
   const limited = ranked.slice(0, MAX_PLACES);
+  const limitedWithIntent = limited.map((place) => ({
+    place,
+    intent: intentByPlaceId.get(place.place_id) ?? "store",
+  }));
 
-  const candidatesFound = filtered.length;
+  const candidatesFound = filteredPlaces.length;
   let detailsFetched = 0;
-  let discardedNoWebsiteStores = 0;
-  let discardedDomainNotOfficialStores = 0;
-  let discardedLowStoreScore = 0;
-  let discardedLowServiceScore = 0;
-  let reclassifiedToServices = 0;
-
-  // Strict store/contractor pipeline: fetch details, score, reject bad domains, classify into store OR contractor only
   const onlyWithWebsite = params.onlyWithWebsite !== false;
   const debugMode = params.debug === true;
-  let stores: PlaceResult[] = [];
-  let contractors: PlaceResult[] = [];
-  const rejectionReasons: Array<{ name: string; place_id?: string; reason: string }> = [];
-  const classificationSignals: Array<{ name: string; storeScore: number; contractorScore: number; serviceHintScore: number; bucket?: string; rejected?: boolean }> = [];
-  let debugCandidates: StoreOrServicePlace[] = [];
-  let debugDiscarded: DiscardedPlace[] = [];
 
-  if (onlyWithWebsite && !dryRun && limited.length > 0) {
-    executionNotes.push("API debug: D)");
+  const storesDropped: Array<{ name: string; place_id?: string; reason: string }> = [];
+  const contractorsDropped: Array<{ name: string; place_id?: string; reason: string }> = [];
+  const scoringNotes: string[] = [];
 
-    const toEnrich = limited.slice(0, MAX_DETAILS_PER_SEARCH);
-    const enriched: StoreOrServicePlace[] = [];
+  // Enrich all (no pre-classification drop); classify after details with intent as prior
+  const toEnrich = limitedWithIntent.slice(0, MAX_DETAILS_PER_SEARCH);
+  type EnrichedPlace = Place & {
+    types: string[];
+    website?: string;
+    websiteDomain?: string;
+    distanceKm: number;
+    bucket: "store" | "contractor";
+    formatted_phone_number?: string;
+  };
+  const enriched: EnrichedPlace[] = [];
 
-    for (let i = 0; i < toEnrich.length; i += DETAILS_CONCURRENCY) {
-      const batch = toEnrich.slice(i, i + DETAILS_CONCURRENCY);
-      const detailsResults = await Promise.all(
-        batch.map((p) => getPlaceDetails(p.place_id))
-      );
-      detailsFetched += batch.length;
-      for (let j = 0; j < batch.length; j++) {
-        const place = batch[j];
-        const details = detailsResults[j];
-        const types = details?.types?.length ? details.types : place.types;
-        const website =
-          details?.website && String(details.website).trim()
-            ? String(details.website).trim()
-            : undefined;
-        const websiteDomain = website ? extractDomain(website) : undefined;
-        const websiteQuality = websiteDomain
-          ? classifyWebsiteQuality(websiteDomain)
-          : undefined;
-        const storeScore = computeStoreScore(
-          types,
-          details?.rating ?? place.rating,
-          details?.user_ratings_total ?? place.user_ratings_total
-        );
-        let serviceScore = computeServiceScore(
-          types,
-          details?.formatted_phone_number,
-          details?.opening_hours ?? place.opening_hours
-        );
-        let serviceHintScore = computeServiceHintScore(types, website, place.name);
-        const boosts = applyServiceBoosts(types, place.name, serviceHintScore, serviceScore);
-        serviceHintScore = boosts.serviceHintScore;
-        serviceScore = boosts.serviceScore;
-
-        const item: StoreOrServicePlace = {
-          ...place,
-          types,
-          website,
-          websiteDomain,
-          formatted_phone_number: details?.formatted_phone_number,
-          storeScore,
-          serviceScore,
-          serviceHintScore,
-          websiteQuality,
-        };
-        if (debugMode && boosts.reasons.length > 0) item.serviceHintReasons = boosts.reasons;
-        enriched.push(item);
-
-        if (storeScore >= 0.7 && !website) discardedNoWebsiteStores++;
-        else if (storeScore >= 0.7 && websiteQuality !== "official") discardedDomainNotOfficialStores++;
-        else if (storeScore < 0.7) discardedLowStoreScore++;
-        if (serviceScore < 0.55) discardedLowServiceScore++;
-
-        if (debugMode) {
-          classificationSignals.push({
-            name: place.name,
-            storeScore,
-            contractorScore: serviceScore,
-            serviceHintScore,
-          });
-        }
-      }
+  for (let i = 0; i < toEnrich.length; i += DETAILS_CONCURRENCY) {
+    const batch = toEnrich.slice(i, i + DETAILS_CONCURRENCY);
+    const detailsResults = await Promise.all(batch.map(({ place }) => getPlaceDetails(place.place_id)));
+    detailsFetched += batch.length;
+    for (let j = 0; j < batch.length; j++) {
+      const { place, intent } = batch[j];
+      const details = detailsResults[j];
+      const types = details?.types?.length ? details.types : place.types;
+      const website = details?.website && String(details.website).trim() ? String(details.website).trim() : undefined;
+      const websiteDomain = website ? normalizeDomainToRoot(website) : undefined;
+      const phone = details?.formatted_phone_number;
+      let bucket = classifyPlaceBucket(types, place.name, websiteDomain);
+      if (bucket === null) bucket = intent;
+      else if (bucket === "contractor") bucket = "contractor";
+      else if (bucket === "store" && intent === "contractor") bucket = "contractor";
+      enriched.push({
+        ...place,
+        types,
+        website,
+        websiteDomain,
+        distanceKm: place.distanceKm ?? 0,
+        bucket,
+        formatted_phone_number: phone,
+      });
     }
-
-    if (debugMode) debugCandidates = [...enriched];
-
-    // Hard reject: no website
-    const withWebsite = enriched.filter((p) => p.website && p.websiteDomain);
-    for (const p of enriched) {
-      if (!p.website && onlyWithWebsite) {
-        rejectionReasons.push({ name: p.name, place_id: p.place_id, reason: "no_website" });
-        if (debugMode) debugDiscarded.push({ place: p, reason: "no_website" });
-      } else if (p.websiteDomain && isRejectedDomain(p.websiteDomain)) {
-        rejectionReasons.push({ name: p.name, place_id: p.place_id, reason: "domain_directory_or_social" });
-        if (debugMode) debugDiscarded.push({ place: p, reason: "domain_directory_or_social" });
-      }
-    }
-    const notRejected = withWebsite.filter((p) => !isRejectedDomain(p.websiteDomain!));
-
-    // Strict classification: contractor if serviceHintScore >= 0.70; else store candidate if storeScore >= 0.70 and contractorScore < 0.55; else contractor if contractorScore >= 0.55; else reject (ambiguous)
-    const contractorPool = notRejected.filter((p) => (p.serviceHintScore ?? 0) >= 0.7);
-    reclassifiedToServices = contractorPool.length;
-    const storePool = notRejected.filter((p) => (p.serviceHintScore ?? 0) < 0.7 && (p.storeScore ?? 0) >= 0.7 && (p.serviceScore ?? 0) < 0.55);
-    const contractorPool2 = notRejected.filter(
-      (p) =>
-        (p.serviceHintScore ?? 0) < 0.7 &&
-        !((p.storeScore ?? 0) >= 0.7 && (p.serviceScore ?? 0) < 0.55) &&
-        (p.serviceScore ?? 0) >= 0.55
-    );
-    const ambiguous = notRejected.filter(
-      (p) =>
-        (p.serviceHintScore ?? 0) < 0.7 &&
-        !((p.storeScore ?? 0) >= 0.7 && (p.serviceScore ?? 0) < 0.55) &&
-        (p.serviceScore ?? 0) < 0.55 &&
-        (p.storeScore ?? 0) < 0.7
-    );
-    for (const p of ambiguous) {
-      rejectionReasons.push({ name: p.name, place_id: p.place_id, reason: "ambiguous_classification" });
-      if (debugMode) debugDiscarded.push({ place: p, reason: "ambiguous_classification" });
-    }
-
-    // Store bucket: official + catalogSignal === true only; de-dup by domain
-    const storeCandidates = storePool.filter(
-      (p) => p.websiteQuality === "official" && (p.storeScore ?? 0) >= 0.7
-    );
-    const MAX_CATALOG_CHECKS = 15;
-    const CATALOG_CONCURRENCY = 2;
-    const toCheck = storeCandidates.slice(0, MAX_CATALOG_CHECKS);
-    const catalogResults: CatalogCheckResult[] = [];
-    for (let i = 0; i < toCheck.length; i += CATALOG_CONCURRENCY) {
-      const batch = toCheck.slice(i, i + CATALOG_CONCURRENCY);
-      const results = await Promise.all(batch.map((p) => checkProductCatalogSignal(p.website!)));
-      catalogResults.push(...results);
-      for (let k = 0; k < batch.length; k++) {
-        const place = batch[k] as StoreOrServicePlace;
-        place.catalogSignal = results[k].signal;
-        if (debugMode && results[k].probe) place.catalogProbe = results[k].probe;
-        if (results[k].signal !== true && debugMode)
-          debugDiscarded.push({ place, reason: results[k].signal === "unknown" ? "catalog_unknown" : "no_catalog_signal" });
-      }
-    }
-    const withCatalogSignal = toCheck.filter((_, idx) => catalogResults[idx].signal === true);
-
-    const storeByDomain = new Map<string, StoreOrServicePlace>();
-    for (const p of withCatalogSignal) {
-      const d = (p.websiteDomain || extractDomain(p.website || "")).toLowerCase();
-      if (!d) continue;
-      const existing = storeByDomain.get(d);
-      if (!existing || (p.storeScore ?? 0) > (existing.storeScore ?? 0)) storeByDomain.set(d, p);
-    }
-    const storeList = Array.from(storeByDomain.values());
-
-    const contractorCandidates = [...contractorPool, ...contractorPool2].filter(
-      (p) => p.websiteQuality === "official"
-    );
-    const contractorByDomain = new Map<string, StoreOrServicePlace>();
-    for (const p of contractorCandidates) {
-      const d = (p.websiteDomain || extractDomain(p.website || "")).toLowerCase();
-      if (!d) continue;
-      const existing = contractorByDomain.get(d);
-      if (!existing || (p.serviceScore ?? 0) > (existing.serviceScore ?? 0)) contractorByDomain.set(d, p);
-    }
-    const contractorList = Array.from(contractorByDomain.values());
-
-    function toPlaceResult(p: StoreOrServicePlace, bucket: "store" | "contractor"): PlaceResult {
-      const domain = (p.websiteDomain || extractDomain(p.website || "")).toLowerCase();
-      const quality = p.websiteQuality ?? "official";
-      const isDirOrSocial = quality === "social" || quality === "directory";
-      return {
-        name: p.name,
-        place_id: p.place_id,
-        rating: p.rating,
-        user_ratings_total: p.user_ratings_total,
-        distanceKm: p.distanceKm ?? 0,
-        website: p.website ?? "",
-        websiteDomain: domain,
-        categoryBucket: bucket,
-        types: p.types ?? [],
-        qualityFlags: {
-          officialSite: quality === "official",
-          hasCatalogSignal: p.catalogSignal === true,
-          isDirectoryOrSocial: isDirOrSocial,
-          isAggregator: quality === "directory",
-        },
-      };
-    }
-
-    stores = storeList.map((p) => toPlaceResult(p, "store"));
-    contractors = contractorList.map((p) => toPlaceResult(p, "contractor"));
-
-    if (debugMode) {
-      for (const s of classificationSignals) {
-        const place = enriched.find((e) => e.name === s.name);
-        if (place) {
-          const inStores = storeList.some((x) => x.place_id === place.place_id);
-          const inContractors = contractorList.some((x) => x.place_id === place.place_id);
-          s.bucket = inStores ? "store" : inContractors ? "contractor" : undefined;
-          s.rejected = !inStores && !inContractors;
-        }
-        if (rejectionReasons.some((r) => r.name === s.name)) s.rejected = true;
-      }
-    }
-  } else if (!onlyWithWebsite && !dryRun) {
-    executionNotes.push("API debug: D)");
   }
 
-  const finalPlaces: Place[] = [];
-  if (!dryRun && !executionNotes.some((n) => n.includes("API debug: D)"))) {
-    executionNotes.push("API debug: D)");
+  // onlyWithWebsite applies only to domain allowlist; do NOT drop stores/contractors without website from lists
+  const storeEnriched = enriched.filter((p) => p.bucket === "store");
+  const contractorEnriched = enriched.filter((p) => p.bucket === "contractor");
+
+  const storeByDomain = new Map<string, typeof enriched[0]>();
+  const contractorByDomain = new Map<string, typeof enriched[0]>();
+
+  for (const p of storeEnriched) {
+    if (!p.website || !p.websiteDomain) continue; // domain allowlist: only places with website
+    if (isRejectedDomain(p.websiteDomain)) {
+      storesDropped.push({ name: p.name, place_id: p.place_id, reason: "domain_rejected" });
+      continue;
+    }
+    const official = isOfficialDomain(p.websiteDomain, p.name);
+    const catalogPath = hasCatalogPathSignal(p.website);
+    const storeScore = computeStoreScore(p.types, p.rating, p.user_ratings_total);
+    const includeDomain = official && (catalogPath || storeScore >= 0.7);
+    if (!includeDomain) {
+      storesDropped.push({ name: p.name, place_id: p.place_id, reason: official ? "no_catalog_signal" : "domain_not_official" });
+      continue;
+    }
+    const d = p.websiteDomain.toLowerCase();
+    const existing = storeByDomain.get(d);
+    if (!existing || (p.user_ratings_total ?? 0) > (existing.user_ratings_total ?? 0)) storeByDomain.set(d, p);
   }
 
-  const allowlistDomainsStores = [...new Set(stores.map((s) => s.websiteDomain).filter(Boolean))];
-  const allowlistDomainsContractors = [...new Set(contractors.map((c) => c.websiteDomain).filter(Boolean))];
-
-  let debugDistances: Array<{ name: string; distanceKm: number }> | undefined;
-  if (process.env.NODE_ENV === "development" && stores.length > 0) {
-    debugDistances = stores.slice(0, 5).map((p) => ({ name: p.name, distanceKm: p.distanceKm }));
+  for (const p of contractorEnriched) {
+    if (!p.website || !p.websiteDomain) continue;
+    if (isRejectedDomain(p.websiteDomain)) {
+      contractorsDropped.push({ name: p.name, place_id: p.place_id, reason: "domain_rejected" });
+      continue;
+    }
+    const official = isOfficialDomain(p.websiteDomain, p.name);
+    const servicePath = hasServicePathSignal(p.website);
+    const serviceType = p.types.some((t) => (SERVICE_TYPES as readonly string[]).includes(t.toLowerCase()));
+    const nameMatchesContractor = CONTRACTOR_NAME_KEYWORDS_SL.some((kw) => (p.name ?? "").toLowerCase().includes(kw));
+    const domainServiceHeuristic = isServiceDomainByHeuristic(p.websiteDomain);
+    const hasPhone = !!p.formatted_phone_number && String(p.formatted_phone_number).trim().length > 0;
+    const contractorSignal = servicePath || serviceType || nameMatchesContractor || domainServiceHeuristic || hasPhone;
+    if (!official || !contractorSignal) {
+      contractorsDropped.push({ name: p.name, place_id: p.place_id, reason: official ? "no_contractor_signal" : "domain_not_official" });
+      continue;
+    }
+    const d = p.websiteDomain.toLowerCase();
+    const existing = contractorByDomain.get(d);
+    if (!existing || (p.user_ratings_total ?? 0) > (existing.user_ratings_total ?? 0)) contractorByDomain.set(d, p);
   }
+
+  function toPlaceResult(
+    p: { name: string; place_id: string; rating?: number; user_ratings_total?: number; distanceKm: number; website?: string; websiteDomain?: string; types: string[] },
+    bucket: "store" | "contractor",
+    qualityFlags: QualityFlags
+  ): PlaceResult {
+    const web = p.website ?? "";
+    const dom = (p.websiteDomain ?? "").toLowerCase();
+    return {
+      name: p.name,
+      place_id: p.place_id,
+      rating: p.rating,
+      user_ratings_total: p.user_ratings_total,
+      distanceKm: p.distanceKm,
+      website: web,
+      websiteDomain: dom,
+      categoryBucket: bucket,
+      types: p.types,
+      qualityFlags,
+    };
+  }
+
+  // Domain allowlists: only from places with website that passed quality
+  const storeListForDomains = Array.from(storeByDomain.values());
+  const contractorListForDomains = Array.from(contractorByDomain.values());
+
+  // Sort: hasWebsite desc, rating desc, distance asc; then cap
+  const sortByQuality = <T extends { website?: string; websiteDomain?: string; rating?: number; distanceKm?: number }>(list: T[]): T[] =>
+    [...list].sort((a, b) => {
+      const aHas = !!(a.website && a.websiteDomain);
+      const bHas = !!(b.website && b.websiteDomain);
+      if (bHas !== aHas) return bHas ? 1 : -1;
+      const aR = a.rating ?? 0;
+      const bR = b.rating ?? 0;
+      if (bR !== aR) return bR - aR;
+      const aD = a.distanceKm ?? 0;
+      const bD = b.distanceKm ?? 0;
+      return aD - bD;
+    });
+
+  // Stores list: ALL storeEnriched (with or without website); exclude from domains only if no website
+  const sortedStoresAll = sortByQuality(storeEnriched).slice(0, MAX_PLACES_OUTPUT);
+  const sortedContractorsAll = sortByQuality(contractorEnriched).slice(0, MAX_PLACES_OUTPUT);
+
+  let stores: PlaceResult[] = sortedStoresAll.map((p) =>
+    toPlaceResult(p, "store", {
+      officialSite: !!(p.websiteDomain && isOfficialDomain(p.websiteDomain, p.name)),
+      hasCatalogSignal: !!(p.website && hasCatalogPathSignal(p.website)),
+      isDirectoryOrSocial: !!(p.websiteDomain && isRejectedDomain(p.websiteDomain)),
+      isAggregator: false,
+    })
+  );
+  let contractors: PlaceResult[] = sortedContractorsAll.map((p) =>
+    toPlaceResult(p, "contractor", {
+      officialSite: !!(p.websiteDomain && isOfficialDomain(p.websiteDomain, p.name)),
+      hasCatalogSignal: false,
+      isDirectoryOrSocial: !!(p.websiteDomain && isRejectedDomain(p.websiteDomain)),
+      isAggregator: false,
+    })
+  );
+
+  // Domain allowlists: root-normalized (same as SERP) so allowlist and domainCategoryMapStores keys match
+  const domainsStoresRaw = storeListForDomains
+    .map((s) => normalizeDomainToRootForAllowlist(s.websiteDomain ?? ""))
+    .filter(Boolean);
+  const domainsContractorsRaw = contractorListForDomains
+    .map((c) => normalizeDomainToRootForAllowlist(c.websiteDomain ?? ""))
+    .filter(Boolean);
+
+  let domainsStores = [...new Set(domainsStoresRaw)].slice(0, MAX_DOMAINS_PER_LIST);
+  let domainsContractors = [...new Set(domainsContractorsRaw)].slice(0, MAX_DOMAINS_PER_LIST);
+
+  const contractorSet = new Set(domainsContractors);
+  domainsStores = domainsStores.filter((d) => !contractorSet.has(d));
+
+  // domainCategoryMapStores keyed by root domain (tldts); merge categories across stores for same root
+  const domainCategoryMapStores: Record<string, string[]> = {};
+  for (const place of storeListForDomains) {
+    const d = normalizeDomainToRootForAllowlist(place.websiteDomain ?? "");
+    if (!d) continue;
+    const cats = placeTypesToTaxonomyCategories(place.types ?? []);
+    const existing = domainCategoryMapStores[d] ?? [];
+    const merged = [...new Set([...existing, ...cats])];
+    domainCategoryMapStores[d] = merged;
+  }
+
+  scoringNotes.push(`Stores: ${stores.length} places, ${domainsStores.length} domains (cap ${MAX_DOMAINS_PER_LIST})`);
+  scoringNotes.push(`Contractors: ${contractors.length} places, ${domainsContractors.length} domains (cap ${MAX_DOMAINS_PER_LIST})`);
+
+  if (!dryRun) executionNotes.push("API debug: D)");
 
   const result: SearchResult = {
     meta: {
       radiusMeters,
       requestsMade,
       cacheHits,
-      fallbacksUsed,
+      fallbacksUsed: 0,
       plannedQueries,
+      plannedTypes,
       executionNotes,
       usedLocation: { lat, lng },
       filteredOutCount,
       candidatesFound,
       detailsFetched,
       discardedOutOfRadius: filteredOutCount,
-      discardedNoWebsiteStores,
-      discardedDomainNotOfficialStores,
-      discardedLowStoreScore,
-      discardedLowServiceScore,
-      reclassifiedToServices,
+      discardedNoWebsiteStores: 0,
+      discardedDomainNotOfficialStores: 0,
+      discardedLowStoreScore: 0,
+      discardedLowServiceScore: 0,
+      reclassifiedToServices: 0,
       debugVersion: "D",
       debugVersionLabel: "D)",
-      ...(debugDistances && { debugDistances }),
     },
-    places: finalPlaces,
+    places: [],
     stores,
     contractors,
-    allowlistDomainsStores,
-    allowlistDomainsContractors,
+    domains: { stores: domainsStores, contractors: domainsContractors },
+    allowlistDomainsStores: domainsStores,
+    allowlistDomainsContractors: domainsContractors,
+    domainCategoryMapStores: Object.keys(domainCategoryMapStores).length > 0 ? domainCategoryMapStores : undefined,
     status: 200,
   };
   if (debugMode) {
     result.debug = {
-      rejectionReasons,
-      classificationSignals,
-      candidates: debugCandidates,
-      discarded: debugDiscarded,
+      storesDropped,
+      contractorsDropped,
+      scoringNotes,
     };
   }
   return result;

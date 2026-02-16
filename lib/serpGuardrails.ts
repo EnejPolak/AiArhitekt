@@ -7,7 +7,7 @@ import path from "path";
 import { TTLCache } from "./cache";
 import { serpCacheKey } from "./serp/domains";
 
-const DAILY_CAP = 50;
+const DAILY_CAP = Math.max(1, parseInt(process.env.SERP_DAILY_CAP ?? "100", 10) || 100);
 const RATE_LIMIT_MS = 1000; // 1 request per second
 const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 const SERP_CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours per query+allowlist
@@ -111,6 +111,16 @@ export async function incrementDailyUsage(): Promise<void> {
   const usage = await loadDailyUsage();
   usage.used += 1;
   await saveDailyUsage(usage);
+}
+
+/**
+ * Reset daily usage to zero for today (clears counter so remaining = DAILY_CAP again).
+ */
+export async function resetDailyUsage(): Promise<{ date: string; used: number }> {
+  const today = new Date().toISOString().split("T")[0];
+  dailyUsage = { date: today, used: 0 };
+  await saveDailyUsage(dailyUsage);
+  return { date: today, used: 0 };
 }
 
 /**

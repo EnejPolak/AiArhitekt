@@ -4,7 +4,7 @@
 
 import { promises as fs } from "fs";
 import path from "path";
-import { normalizeDomain } from "./domains";
+import { normalizeDomainToRoot } from "./domains";
 
 type DomainStat = { success: number; total: number };
 type DomainStatsFile = { domains: Record<string, DomainStat> };
@@ -33,7 +33,7 @@ async function saveStats(stats: DomainStatsFile): Promise<void> {
 }
 
 export async function recordDomainOutcome(domain: string, success: boolean): Promise<void> {
-  const d = normalizeDomain(domain);
+  const d = normalizeDomainToRoot(domain);
   if (!d) return;
   const stats = await loadStats();
   const current = stats.domains[d] ?? { success: 0, total: 0 };
@@ -44,7 +44,7 @@ export async function recordDomainOutcome(domain: string, success: boolean): Pro
 }
 
 export async function rankDomainsBySuccess(domains: string[]): Promise<string[]> {
-  const normalized = domains.map(normalizeDomain).filter(Boolean);
+  const normalized = domains.map(normalizeDomainToRoot).filter(Boolean);
   if (normalized.length === 0) return [];
   const stats = await loadStats();
   const hasAnyStats = normalized.some((d) => stats.domains[d]?.total);

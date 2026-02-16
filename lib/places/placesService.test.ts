@@ -3,7 +3,7 @@
  * Run with: npm test (if Vitest is configured) or manually verify logic
  */
 
-import { searchPlaces, getPlaceDetails, type SearchParams } from "./placesService";
+import { searchPlaces, getPlaceDetails, classifyPlaceBucket, isServiceDomainByHeuristic, type SearchParams } from "./placesService";
 
 // Mock fetch for testing
 global.fetch = jest.fn() as jest.Mock;
@@ -15,98 +15,107 @@ describe("placesService", () => {
   });
 
   describe("query planning", () => {
-    it("should plan exactly 3 category queries in category mode", async () => {
-      const params: SearchParams = {
+    it("should plan multi-pass stores (keywords + types) and contractors in category mode (dry run)", async () => {
+      const result = await searchPlaces({
         lat: 46.0569,
         lng: 14.5058,
         radiusKm: 10,
         mode: "category",
         dryRun: true,
-      };
-
-      const result = await searchPlaces(params);
+      });
 
       expect(result.meta.requestsMade).toBe(0);
-      expect(result.meta.plannedQueries).toHaveLength(3);
-      expect(result.meta.plannedQueries).toContain("pohištvo (sl)");
-      expect(result.meta.plannedQueries).toContain("keramika (sl)");
-      expect(result.meta.plannedQueries).toContain("železnina (sl)");
+      expect(result.meta.plannedQueries.length).toBeGreaterThanOrEqual(2);
+      expect(result.meta.plannedTypes).toBeDefined();
+      expect(result.meta.plannedTypes!.length).toBeGreaterThanOrEqual(1);
+      expect(result.domains).toEqual({ stores: [], contractors: [] });
     });
 
-    it("should plan brand queries in brand mode (max 5)", async () => {
+    it("should plan stores + contractors queries in brand mode", async () => {
       const params: SearchParams = {
         lat: 46.0569,
         lng: 14.5058,
         radiusKm: 10,
         mode: "brand",
-        brandKeywords: ["Merkur", "Lesnina", "JYSK", "Bauhaus", "Harvey Norman", "OBI"], // 6 brands
+        brandKeywords: ["Merkur", "Lesnina"],
         dryRun: true,
       };
 
       const result = await searchPlaces(params);
 
       expect(result.meta.requestsMade).toBe(0);
-      // Should only plan 5 queries (max for brand mode)
-      expect(result.meta.plannedQueries.length).toBeLessThanOrEqual(5);
+      expect(result.domains.stores).toEqual([]);
+      expect(result.domains.contractors).toEqual([]);
     });
 
-    it("should respect maxRequestsPerSearch cap (6)", async () => {
-      // This test verifies the cap is enforced in the implementation
-      // In real execution, maxRequestsPerSearch = 6 is hardcoded
-      const params: SearchParams = {
+    it("should make multiple Places searches (store keywords + types + contractors)", async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        json: async () => ({ status: "OK", results: [] }),
+      });
+
+      const result = await searchPlaces({
         lat: 46.0569,
         lng: 14.5058,
         radiusKm: 10,
         mode: "category",
         dryRun: false,
-      };
-
-      // Mock successful responses
-      (global.fetch as jest.Mock).mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          status: "OK",
-          results: [],
-        }),
       });
 
-      const result = await searchPlaces(params);
-
-      // Should not exceed 6 requests (3 category + max 2 fallback = 5 max)
-      expect(result.meta.requestsMade).toBeLessThanOrEqual(6);
+      expect(result.meta.requestsMade).toBeGreaterThan(0);
+      expect(result.meta.requestsMade).toBeLessThanOrEqual(20);
     });
   });
 
-  describe("fallback budgeting", () => {
-    it("should use max 2 fallback queries total", async () => {
-      const params: SearchParams = {
-        lat: 46.0569,
-        lng: 14.5058,
-        radiusKm: 10,
-        mode: "category",
-        dryRun: false,
-      };
-
-      // Mock zero results for all categories to trigger fallbacks
-      (global.fetch as jest.Mock).mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          status: "ZERO_RESULTS",
-          results: [],
-        }),
-      });
-
-      const result = await searchPlaces(params);
-
-      // Should use max 2 fallback queries
-      expect(result.meta.fallbacksUsed).toBeLessThanOrEqual(2);
+  describe("classification (Slovenian store vs contractor)", () => {
+    it("classifies retail store by type (Slovenian)", () => {
+      expect(classifyPlaceBucket(["furniture_store"], "Merkur")).toBe("store");
+      expect(classifyPlaceBucket(["hardware_store"], "Lesnina pohištvo")).toBe("store");
+      expect(classifyPlaceBucket(["home_goods_store", "store"], "JYSK Ljubljana")).toBe("store");
     });
 
-    it("should prioritize categories with 0 results for fallback", async () => {
-      // This is tested in the implementation logic
-      // Fallback queries are chosen based on:
-      // 1. Categories with 0 results
-      // 2. Categories with fewest results
+    it("classifies contractor by Slovenian name keywords", () => {
+      expect(classifyPlaceBucket([], "Pleskar Janez")).toBe("contractor");
+      expect(classifyPlaceBucket([], "Električar Ljubljana")).toBe("contractor");
+      expect(classifyPlaceBucket([], "Vodovodar inštalacije")).toBe("contractor");
+      expect(classifyPlaceBucket([], "Keramičar montaža")).toBe("contractor");
+      expect(classifyPlaceBucket([], "Servis za parket")).toBe("contractor");
+    });
+
+    it("classifies contractor by Place type", () => {
+      expect(classifyPlaceBucket(["electrician"], "Some Company")).toBe("contractor");
+      expect(classifyPlaceBucket(["plumber", "general_contractor"], "Vodovod")).toBe("contractor");
+    });
+
+    it("returns null for ambiguous (no store type, no contractor keyword)", () => {
+      expect(classifyPlaceBucket(["point_of_interest"], "Random Place")).toBe(null);
+      expect(classifyPlaceBucket([], "Neznana trgovina")).toBe(null);
+    });
+
+    it("classifies contractor when websiteDomain matches service heuristics", () => {
+      expect(classifyPlaceBucket(["furniture_store"], "Italko", "italko.si")).toBe("contractor");
+      expect(classifyPlaceBucket(["store"], "Kamnosestvo", "kamnosestvo-lj.si")).toBe("contractor");
+      expect(classifyPlaceBucket(["store"], "Lesarstvo", "lesarstvo-net.net")).toBe("contractor");
+      expect(classifyPlaceBucket(["hardware_store"], "Merkur", "merkur.si")).toBe("store");
+    });
+  });
+
+  describe("isServiceDomainByHeuristic", () => {
+    it("returns true for contractor-like domains", () => {
+      expect(isServiceDomainByHeuristic("italko.si")).toBe(true);
+      expect(isServiceDomainByHeuristic("www.kamnosestvo-lj.si")).toBe(true);
+      expect(isServiceDomainByHeuristic("lesarstvo-net.net")).toBe(true);
+      expect(isServiceDomainByHeuristic("storitve-montaza.si")).toBe(true);
+    });
+    it("returns false for retail domains", () => {
+      expect(isServiceDomainByHeuristic("merkur.si")).toBe(false);
+      expect(isServiceDomainByHeuristic("obi.si")).toBe(false);
+      expect(isServiceDomainByHeuristic("jysk.si")).toBe(false);
+    });
+  });
+
+  describe("two independent searches", () => {
+    it("returns domains.stores and domains.contractors (cap 10 each)", async () => {
       const params: SearchParams = {
         lat: 46.0569,
         lng: 14.5058,
@@ -115,34 +124,20 @@ describe("placesService", () => {
         dryRun: false,
       };
 
-      let callCount = 0;
-      (global.fetch as jest.Mock).mockImplementation(async () => {
-        callCount++;
-        // First 3 calls return zero results (trigger fallback)
-        if (callCount <= 3) {
-          return {
-            ok: true,
-            json: async () => ({
-              status: "ZERO_RESULTS",
-              results: [],
-            }),
-          };
-        }
-        // Fallback calls return some results
-        return {
-          ok: true,
-          json: async () => ({
-            status: "OK",
-            results: [{ place_id: "test", name: "Test Store" }],
-          }),
-        };
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        json: async () => ({ status: "ZERO_RESULTS", results: [] }),
       });
 
       const result = await searchPlaces(params);
 
-      // Should have used fallbacks for categories with 0 results
-      expect(result.meta.fallbacksUsed).toBeGreaterThan(0);
-      expect(result.meta.fallbacksUsed).toBeLessThanOrEqual(2);
+      expect(result.domains).toBeDefined();
+      expect(result.domains.stores).toBeInstanceOf(Array);
+      expect(result.domains.contractors).toBeInstanceOf(Array);
+      expect(result.domains.stores.length).toBeLessThanOrEqual(10);
+      expect(result.domains.contractors.length).toBeLessThanOrEqual(10);
+      expect(result.allowlistDomainsStores).toEqual(result.domains.stores);
+      expect(result.allowlistDomainsContractors).toEqual(result.domains.contractors);
     });
   });
 
@@ -210,10 +205,13 @@ describe("placesService", () => {
 
       const result = await searchPlaces(params);
 
-      // If same place appears in multiple queries, sourceKeywords should be merged
-      const place = result.places.find((p) => p.place_id === "ChIJTest123");
-      if (place) {
-        expect(place.sourceKeywords.length).toBeGreaterThan(0);
+      // No duplicate place_id across stores and contractors (each place in at most one list)
+      const storeIds = new Set(result.stores.map((p) => p.place_id));
+      const contractorIds = new Set(result.contractors.map((p) => p.place_id));
+      expect(storeIds.size).toBe(result.stores.length);
+      expect(contractorIds.size).toBe(result.contractors.length);
+      for (const id of storeIds) {
+        expect(contractorIds.has(id)).toBe(false);
       }
     });
   });

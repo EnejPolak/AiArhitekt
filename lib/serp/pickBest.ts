@@ -2,7 +2,7 @@
  * Ranking/picking module for SERP results (per item spec).
  */
 
-import { normalizeDomain } from "./domains";
+import { normalizeDomainToRoot } from "./domains";
 
 export type SerpOrganicResult = {
   title: string;
@@ -10,6 +10,31 @@ export type SerpOrganicResult = {
   snippet?: string;
   price?: string;
   image?: string;
+  /** From SerpAPI rich_snippet or other fields */
+  richSnippetPrice?: string;
+};
+
+/** Normalized price for API response (unit from enrich: item | m2 | from | set) */
+export type PriceValue = { value: number; currency: "EUR"; unit?: "item" | "m2" | "from" | "set" };
+
+/** Flags for GPT pick: avoid tool mirrors for home items */
+export type CandidateFlags = {
+  isProductLikeUrl: boolean;
+  isCategoryLikeUrl: boolean;
+  hasToolIntent: boolean;
+  hasHomeIntent: boolean;
+};
+
+/** One candidate in topCandidates list (for SERP response + GPT pick) */
+export type TopCandidateWithFlags = {
+  title: string;
+  url: string;
+  domain: string;
+  snippet?: string;
+  price?: PriceValue | null;
+  image?: string | null;
+  score: number;
+  flags: CandidateFlags;
 };
 
 export type PickedResult = {
@@ -29,6 +54,7 @@ export type RankedCandidate = {
   url: string;
   snippet?: string;
   score: number;
+  reasons?: string[];
 };
 
 export const PICK_SCORE_THRESHOLD = 25;
@@ -37,24 +63,39 @@ const GENERIC_TITLE_SNIPPETS = [
   "kuhinjski stoli",
   "jedilni stoli",
   "jedilni stoli za vsak dom",
+  "kuhinjske pipe",
+  "jedilni stoli",
+  "kategorij",
+  "izberi",
+  "pregled",
 ];
 
 const CATEGORY_PATTERNS = [
   /\/c\//i,
+  /\/search/i,
+  /\/isci/i,
   /-C\d+/i,
   /\?p=\d+/i,
+  /\?.*(search|q=|query=)/i,
   /\/kategorija\//i,
   /\/category\//i,
   /\/jedilni-stoli/i,
+  /\/kuhinjske-pipe/i,
 ];
 
 const PRODUCT_MARKERS = [
   /\/p\//i,
   /\/product\//i,
+  /\/productdetail\//i,
   /\/izdelek\//i,
   /\/artikel\//i,
   /\/item\//i,
+  /\/sku\//i,
+  /\/shop\//i,
+  /\/prodaja\//i,
   /\/\d{8,}(\b|\/|$)/,
+  /[?&]id=\d{6,}/i,
+  /-\d{6,}(\.html|\/|$)/i,
 ];
 
 const diacriticsMap: Record<string, string> = {
@@ -92,6 +133,44 @@ function hasCategorySignals(url: string): boolean {
 
 function hasProductSignals(url: string): boolean {
   return PRODUCT_MARKERS.some((pattern) => pattern.test(url));
+}
+
+/** URL/title/snippet patterns that indicate TOOL intent (telescopic mirror, magnet, etc.) — reject for home mirror/decor. */
+const TOOL_INTENT_PATTERNS = [
+  /teleskop/i,
+  /telescopic/i,
+  /magnet/i,
+  /orodje/i,
+  /tools?\//i,
+  /\/orodje\//i,
+  /inspection\s*mirror/i,
+  /mechanic/i,
+  /avto\s*servis/i,
+  /garage/i,
+];
+
+/** Title/snippet patterns that indicate HOME intent (bathroom mirror, wall, LED). */
+const HOME_INTENT_PATTERNS = [
+  /kopal/i,
+  /stensk/i,
+  /umival/i,
+  /led\b/i,
+  /bathroom/i,
+  /wall\s*mirror/i,
+  /ogledal/i,
+  /dekor/i,
+  /pohištv/i,
+  /furniture/i,
+];
+
+function hasToolIntent(url: string, title: string, snippet: string): boolean {
+  const combined = `${url} ${title} ${snippet}`.toLowerCase();
+  return TOOL_INTENT_PATTERNS.some((p) => p.test(combined));
+}
+
+function hasHomeIntent(title: string, snippet: string): boolean {
+  const combined = `${title} ${snippet}`.toLowerCase();
+  return HOME_INTENT_PATTERNS.some((p) => p.test(combined));
 }
 
 function hasPriceSignals(text: string): boolean {
@@ -174,19 +253,40 @@ export function pickBestCandidate(
   }
 
   const scored = rankCandidates(itemTokens, results);
-  const best = scored[0];
-  const topCandidates = scored.slice(0, maxCandidates).map((s) => ({
+  const topCandidates = scored.slice(0, Math.max(maxCandidates, 5)).map((s) => ({
     title: s.result.title,
     url: s.result.link,
     snippet: s.result.snippet,
     score: s.score,
+    reasons: s.reasons,
   }));
 
-  if (!best || best.score < PICK_SCORE_THRESHOLD) {
-    return { picked: null, topCandidates };
+  const best = scored[0];
+  if (!best) return { picked: null, topCandidates };
+
+  const productLike = scored.filter((s) => hasProductSignals(s.result.link));
+  const bestProduct = productLike[0];
+
+  if (bestProduct && bestProduct.score >= PICK_SCORE_THRESHOLD) {
+    const confidence = Math.max(0, Math.min(1, bestProduct.score / 100));
+    return {
+      picked: {
+        title: bestProduct.result.title,
+        url: bestProduct.result.link,
+        snippet: bestProduct.result.snippet,
+        price: bestProduct.result.price,
+        image: bestProduct.result.image,
+        domain: normalizeDomainToRoot(bestProduct.result.link),
+        score: bestProduct.score,
+        confidence,
+        reasons: bestProduct.reasons,
+      },
+      topCandidates,
+    };
   }
 
-  const confidence = Math.max(0, Math.min(1, best.score / 100));
+  // Always return best candidate as fallback (link better than null for debug).
+  const reasons = [...best.reasons, "fallback_non_product_page"];
   return {
     picked: {
       title: best.result.title,
@@ -194,11 +294,62 @@ export function pickBestCandidate(
       snippet: best.result.snippet,
       price: best.result.price,
       image: best.result.image,
-      domain: normalizeDomain(best.result.link),
+      domain: normalizeDomainToRoot(best.result.link),
       score: best.score,
-      confidence,
-      reasons: best.reasons,
+      confidence: 0.2,
+      reasons,
     },
     topCandidates,
   };
+}
+
+/** Get flags for one candidate (for GPT pick: reject tool-intent for home items). */
+export function getCandidateFlags(result: SerpOrganicResult): CandidateFlags {
+  const url = result.link || "";
+  const title = result.title || "";
+  const snippet = result.snippet || "";
+  return {
+    isProductLikeUrl: hasProductSignals(url),
+    isCategoryLikeUrl: hasCategorySignals(url),
+    hasToolIntent: hasToolIntent(url, title, snippet),
+    hasHomeIntent: hasHomeIntent(title, snippet),
+  };
+}
+
+/** Return top N candidates with score and flags (price filled by caller). Max 2 per domain for diversity. */
+export function getTopCandidatesWithFlags(
+  itemTokens: string[],
+  results: SerpOrganicResult[],
+  maxCount: number,
+  priceFn: (r: SerpOrganicResult) => { value: number; currency: "EUR"; unit?: "item" | "m2" | "from" | "set" } | null
+): TopCandidateWithFlags[] {
+  if (!results?.length) return [];
+  const scored = rankCandidates(itemTokens, results);
+  const byDomain = new Map<string, typeof scored>();
+  for (const s of scored) {
+    const d = normalizeDomainToRoot(s.result.link) || "_";
+    const list = byDomain.get(d) ?? [];
+    if (list.length < 2) list.push(s);
+    byDomain.set(d, list);
+  }
+  const diversified: typeof scored = [];
+  for (const [, list] of byDomain) {
+    diversified.push(...list);
+  }
+  diversified.sort((a, b) => b.score - a.score);
+  const top = diversified.slice(0, maxCount);
+  return top.map((s) => {
+    const domain = normalizeDomainToRoot(s.result.link);
+    const price = priceFn(s.result);
+    return {
+      title: s.result.title,
+      url: s.result.link,
+      domain: domain || "",
+      snippet: s.result.snippet,
+      price: price ?? null,
+      image: s.result.image ?? null,
+      score: s.score,
+      flags: getCandidateFlags(s.result),
+    };
+  });
 }
