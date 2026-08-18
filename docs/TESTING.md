@@ -64,6 +64,9 @@ Paid APIs are mocked (`global.fetch = vi.fn()` or injected provider functions). 
 - Projects — Zod create/rename/id/wizard validation; archive helper; error mapping does not leak SQL/policy names; local RLS integration against `127.0.0.1` only (anonymous deny-all; User A CRUD; User B isolation; no forged ownership)
 - Uploads — canonical path; magic-byte validation; local Storage RLS
 - Room analysis — structured Zod contract (no invented measurements, commerce fields stripped); provider errors mapped; local RLS; stale source invalidation; mocked provider persist/idempotency (load does not re-call OpenAI); per-project 60s cooldown; concurrent claims; legacy `/api/analyze-room` removed
+- Product discovery — deterministic item specs; no hardcoded retailers; mocked A→D→C (Geocode 1 / Places 1 / bounded SERP); persist canonical `url` as `product_url` via trusted RPC; `picked: null` unmatched; null price/image stay null; page-load/view 0 provider calls; concurrent claim; re-analysis invalidation; local RLS (anonymous / User A / User B; owner cannot insert fake selections)
+- Product references — SSRF rejects localhost/private/metadata; mocked JPEG/PNG/WebP fetch; magic-byte + size cap; SHA-256 identity; local RLS (no authenticated INSERT; User B isolation; private `project-assets`)
+- Room render — mocked `gpt-image-1.5` edits only; room bytes first then deterministic private references; prompt contract; kill switch; 120s cooldown; in-flight fingerprint dedupe; stale fingerprint; render RLS; hard-delete Storage cleanup; authenticated GRANT SELECT-only on `project_room_renders`
 
 ---
 
@@ -92,6 +95,10 @@ Playwright is still not in this phase.
 `lib/uploads/storage.rls.test.ts` covers private Storage + `project_uploads` the same way (anonymous / User A / User B / path attacks).
 
 `lib/analysis/analysis.rls.test.ts`, `analysis.flow.test.ts`, `analysis.cooldown.test.ts`, and `guard.rls.test.ts` cover `project_room_analyses` and `project_ai_request_guards` (anonymous deny-all; User A/B isolation; source-photo mismatch; mocked OpenAI call counts; concurrent claim). They refuse `supabase.co`.
+
+`lib/discovery/*.test.ts` cover item-spec conversion, no hardcoded retailers, canonical product mapping, local RLS, and mocked Geocode/Places/SERP persistence (including call counts, concurrent claim, and analysis invalidation). They refuse `supabase.co`. Trusted persist uses the local service_role JWT against `127.0.0.1` only.
+
+`lib/references/*.test.ts` cover SSRF, file validation, path shape, and local reference-asset RLS. Fetch/DNS are injected; tests do not hit live retailers.
 
 ---
 

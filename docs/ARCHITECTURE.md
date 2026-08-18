@@ -31,7 +31,7 @@ FINAL RENDER USING SELECTED PRODUCTS AS REFERENCES
 RESULT + BUYABLE PRODUCTS (price / store / link)
 ```
 
-P1.4 persists the **room photo**. P1.5 persists **structured room analysis + design requirements** from that private photo. Product discovery and the final render come later — do not invert this pipeline.
+P1.4 persists the **room photo**. P1.5 persists **structured room analysis + design requirements** from that private photo. P1.6 persists **real product/material selections** from Geocode → Places (once) → canonical SERP. P1.7a copies confirmed product images into private `project-assets` after SSRF/file validation. P1.7b generates the product-conditioned room visualization from those private bytes plus the original room photo — do not invert this pipeline.
 
 Intended feel: **premium professional architectural SaaS**, not a generic AI dashboard.
 
@@ -52,7 +52,7 @@ Intended feel: **premium professional architectural SaaS**, not a generic AI das
 | Images | `pngjs`, `pdfjs-dist` |
 | Lint/format | ESLint 9 (flat) + Prettier |
 | Runtime | Node for AI/Places/SERP routes (`export const runtime = "nodejs"`) |
-| Persistence (P1.5) | `projects` + `project_uploads` + `project_room_analyses` + private `project-uploads` bucket. See `docs/BACKEND.md`. |
+| Persistence (P1.7b) | P1.7a tables plus `project_room_renders`. Guard operation `room_render` (120s). Canonical product and render writes use `SUPABASE_SECRET_KEY` persist RPCs. See `docs/BACKEND.md`. |
 | Auth (P1.2) | Supabase email/password via `@supabase/ssr` + `@supabase/supabase-js`. Publishable key only. |
 
 **Not present in the running product yet:** object-storage buckets, job queue, shadcn CLI (`components.json`), Radix, Playwright, Storybook. Zod is used on selected API contracts.
@@ -80,6 +80,9 @@ lib/
   auth/                 # errors, redirects, session, server actions
   projects/             # schema, queries, server actions, wizard keys
   analysis/             # P1.5 structured room analysis + design requirements
+  discovery/            # P1.6 product discovery + persisted selections
+  references/           # P1.7a private product reference assets (SSRF + Storage)
+  render/               # P1.7b product-conditioned gpt-image-1.5 room render
   uploads/              # P1.4 private room-photo Storage
   env/deployment.ts     # production vs preview vs local; debug-route gating
   database.types.ts     # generated from local migrations (`npm run db:types`)
@@ -107,7 +110,7 @@ supabase/               # local CLI config + feature-phased migrations
 /app/projects/{projectId} workspace for that UUID
 ```
 
-Conversation answers stay in React memory; wizard **position** is persisted (`current_step_key` + `flow_version`). The room photo and current room analysis are persisted (P1.4 / P1.5).
+Conversation answers stay in React memory; wizard **position** is persisted (`current_step_key` + `flow_version`). The room photo, current room analysis, current product discovery/selections, confirmed product reference assets, and product-conditioned room renders are persisted (P1.4 / P1.5 / P1.6 / P1.7a / P1.7b).
 
 **Auth:** `/sign-in`, `/sign-up`, `/auth/callback`.
 
@@ -129,9 +132,9 @@ Platform:
 
 | Service | Used for |
 | --- | --- |
-| Supabase Postgres | `projects`, `project_uploads`, `project_room_analyses`; RLS is the security boundary |
+| Supabase Postgres | `projects`, `project_uploads`, `project_room_analyses`, `project_ai_request_guards`, `project_product_discoveries`, `project_product_selections`, `project_product_reference_assets`; RLS is the security boundary |
 | Supabase Auth | Email/password. `/sign-in` and `/sign-up` are live. `/app` is protected. |
-| Supabase Storage | Private `project-uploads` bucket. Paths `projects/{projectId}/uploads/{uploadId}.{ext}` (P1.4). |
+| Supabase Storage | Private `project-uploads` (room photos) and private `project-assets` (product reference copies). Paths `projects/{projectId}/...`. |
 
 External APIs (keys server-side):
 
@@ -171,7 +174,9 @@ Optional GPT       /api/orchestrator/pick-candidates | summarize | generate-item
 
 Places classifies **stores vs services** (keyword/types boost, forced-move if service-like). SERP must search **only** store domains from D. LLM must not invent products or prices.
 
-This discovery path (A → D → C) is unchanged in P1.3.1. Architecturally it belongs **before** the final render: find and select real products, then generate the visualization from those products.
+P1.6 project discovery calls the same A → D → C **service functions** (not HTTP loopback into `/api/*`). Places runs **once** per explicit **Find products** / **Refresh products**. There is no hardcoded retailer list. `MAX_PRODUCT_DISCOVERY_ITEMS = 10`. Results persist in `project_product_discoveries` + `project_product_selections` via a service_role persist RPC. Page load / viewing saved products makes zero Geocode/Places/SERP calls.
+
+The future render phase must consume confirmed persisted selections (`is_confirmed = true`) and private reference bytes in `project-assets`. It must **not** query SERP again to decide what furniture exists. Products with `has_reference_image = false` are not render-ready. Product names in a prompt are not product conditioning.
 
 ---
 
@@ -216,7 +221,7 @@ Places (`/api/places/search`) is separate and is **not** covered by this kill sw
 | Family | Routes | Role |
 | --- | --- | --- |
 | Vision / analysis | `lib/analysis/*` authenticated server action. `POST /api/analyze-room` removed. Per-project 60s DB cooldown. |
-| Render | `render`, `generate/render`, `prompt-room-render`, `mask/*` | Images |
+| Render | Canonical room final: `lib/render/*` (`gpt-image-1.5`). Legacy: `render`, `generate/render`, `prompt-room-render`, `mask/*` | Images |
 | Orchestrate generate | `generate` + intent/search/curate/map | Older 4-step pipeline |
 | Location | `geocode`, `places/search`, `places/details`, `places-stores`, `places-contractors` | Local stores |
 | Products | `serp/search`, `search-products` | Real URLs |

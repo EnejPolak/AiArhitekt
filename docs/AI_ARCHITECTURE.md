@@ -15,7 +15,7 @@ AI Orchestrator (thin HTTP)
 ├── Render Generation        /api/render, generate/render, prompt-room-render
 ├── Cost Engine              budget-plan today → deterministic engine later
 ├── Legal / Regulation       not built (must be sourced)
-├── Material / Product       Places + SERP + optional GPT rank of real candidates
+├── Material / Product       P1.6 persisted SERP selections (Places allowlist, no hardcoded stores)
 └── Report Generator         Step10/11 UI; no durable PDF yet
 ```
 
@@ -27,14 +27,18 @@ Each box: own route or `lib/` module, own types, own failure mode.
 
 ### Vision
 
+- **P1.7b (MVP):** `lib/render/*` generates the canonical room visualization with OpenAI `gpt-image-1.5` image edits. Inputs: private room photo + confirmed private product reference bytes. Explicit Generate/Regenerate only. 120s `claim_room_render_slot`. Kill switch `OPENAI_IMAGE_RENDER_ENABLED`.
+- **P1.7a (MVP):** `lib/references/*` copies confirmed product images into private Storage after SSRF + magic-byte checks. Canonical product rows are written only by a service_role persist RPC.
+- **P1.6 (MVP):** `lib/discovery/*` server action. Builds item specs from persisted `design_requirements` (no OpenAI). Geocode once → Places once → canonical SERP (`lib/serp/search.ts`, same logic as `POST /api/serp/search`). Persists to `project_product_discoveries` / `project_product_selections`. Explicit Find products / Refresh products only. 60-second per-project cooldown (`claim_product_discovery_slot`).
 - **P1.5 / P1.5.1 (MVP):** `lib/analysis/*` server action. Uses the persisted private `room_photo`, `gpt-4o` + `json_object`, then Zod. Persists to `project_room_analyses`. Explicit Analyze / Re-analyze only. 60-second per-project cooldown is enforced in Postgres (`claim_room_analysis_slot`). Unauthenticated `POST /api/analyze-room` has been removed.
 - `POST /api/analyze-home` — floor plan / home (inactive MVP types)
 - `POST /api/generate-greeting` — copy only (GPT-4o-mini)
 
 ### Render
 
-- `POST /api/render` — OpenAI Images (`gpt-image-1`), edits + optional mask
-- `app/api/generate/render.ts` — Replicate path used by `/api/generate`
+- **Canonical room-renovation final render:** `lib/render/*` — OpenAI `gpt-image-1.5` edits (room + product reference files)
+- `POST /api/render` — OpenAI Images (`gpt-image-1`), edits + optional mask (legacy / other flows)
+- `app/api/generate/render.ts` — Replicate path used by `/api/generate` (not the MVP room final render)
 - `POST /api/prompt-room-render` — prompt helper
 - `POST /api/mask/segment`, `mask/auto-kitchen` — kitchen masking
 

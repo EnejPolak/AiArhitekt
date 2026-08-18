@@ -1,8 +1,14 @@
 # AI Architect
 
-Local platform: Docker + `npm run db:start`, or a hosted project via env. Auth uses `NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` only (never `NEXT_PUBLIC_SUPABASE_ANON_KEY`). Optional `NEXT_PUBLIC_SITE_URL` for confirmation emails. Project CRUD, room-photo Storage, and room analysis use the publishable key + RLS — never `SUPABASE_SECRET_KEY`. Room analysis is an **explicit paid operation** with a **server/database-enforced 60-second cooldown per project**. The unauthenticated analysis endpoint was removed. **MVP creates `room-renovation` projects only**; the photo is persisted first, then explicit AI analysis, then product discovery, then the final render. Notes: `docs/BACKEND.md`.
+Local platform: Docker + `npm run db:start`, or a hosted project via env. Auth uses `NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` only (never `NEXT_PUBLIC_SUPABASE_ANON_KEY`). Optional `NEXT_PUBLIC_SITE_URL` for confirmation emails. Project CRUD, room-photo Storage, and room analysis use the publishable key + RLS. Canonical product persist, private product-reference copies, and trusted room-render writes use server-only `SUPABASE_SECRET_KEY` persist RPCs — never for login or project CRUD. Room analysis is an **explicit paid operation** with a **server/database-enforced 60-second cooldown per project**. The unauthenticated analysis endpoint was removed. **MVP creates `room-renovation` projects only**; the photo is persisted first, then explicit AI analysis, then product discovery, then confirmed product reference assets, then an explicit product-conditioned final render (`gpt-image-1.5` image edits). Notes: `docs/BACKEND.md`.
 
-## Render API (OpenAI-only)
+## Room renovation final render (P1.7b)
+
+Canonical MVP final visualization uses **OpenAI Images edits** (`gpt-image-1.5`) from `lib/render/*`. Image 1 is the private room photo; images 2..N are private confirmed product reference assets. The browser does not submit the prompt. Kill switch: `OPENAI_IMAGE_RENDER_ENABLED` (server only). Cooldown: 120 seconds per project. User-facing copy: “Visualization created using your selected product references.”
+
+`POST /api/render` (`gpt-image-1`) remains for unrelated/legacy flows and is **not** the room-renovation MVP final render. Do not use Replicate RealVisXL for that path.
+
+## Legacy Render API (`POST /api/render`)
 
 This project uses **OpenAI Images API** (`gpt-image-1`) via the server route `POST /api/render`.
 

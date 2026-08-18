@@ -67,7 +67,67 @@ P1.5 does **not** run Places, SERP, product persistence, or a renovation render.
 
 This is a cooldown, not a billing system.
 
-Next: P1.6 — real product/material discovery + persisted product selection.
+---
+
+## P1.6 — Real product / material discovery + persisted selection
+
+One current discovery per project in `public.project_product_discoveries`, plus one canonical selected product per searched requirement in `public.project_product_selections`.
+
+Pipeline (explicit **Find products** / **Refresh products** only):
+
+```text
+persisted room analysis
+→ deterministic item specs (no OpenAI)
+→ Geocode address once
+→ Places once → allowlistDomains (stores only)
+→ canonical SERP batch
+→ persist discovery + selections
+```
+
+| Table | Purpose |
+| --- | --- |
+| `project_product_discoveries` | Current search context: analysis linkage, location, lat/lng, Places domains, unmatched requirements, normalized shopping preference snapshot + hash |
+| `project_product_selections` | Canonical SERP-picked product per requirement (`product_url` from `url`, never `link`) |
+
+A discovery is current only if `source_analysis_id` and `source_analysis_updated_at` match the current analysis **and** the normalized location matches **and** `source_preferences_hash` matches the current shopping-affecting preferences (wall colors, flooring, bed type, underfloor heating, selected styles). Preference changes do not trigger Geocode/Places/SERP; the UI asks the user to Find products again. Successful re-analysis deletes products **after** the new analysis persists. Failed re-analysis keeps the previous analysis and matching products. Photo replace/remove deletes analysis, which cascades discovery + selections.
+
+**Cost:** upload, analyze, refresh, open project, and viewing saved products make **zero** Geocode / Places / SERP / OpenAI calls. Paid discovery starts are limited by `claim_product_discovery_slot` (60s per project, independent of room analysis). Previous valid products are not deleted if a refresh fails. Partial SERP success is valid (`picked: null` → unmatched `no_valid_product`, no fake row). Missing price/image stay null. Empty Places store domains → `no_local_retailers` (do not search the open web). At most 10 requirements are searched (`MAX_PRODUCT_DISCOVERY_ITEMS`); extras are `not_searched`.
+
+`is_confirmed` starts false. The confirm action updates **only** that column. Canonical product rows are written only by `replace_project_product_discovery_result` (service_role persist client). Browser JWTs cannot insert or mutate commerce fields.
+
+### P1.7a — Canonical provenance + private product reference assets
+
+Trusted persist RPC `replace_project_product_discovery_result` is **service_role only**. Authenticated users keep `SELECT` + `DELETE` on discoveries, and `SELECT` + `UPDATE (is_confirmed)` on selections. They cannot PostgREST-insert fake product rows.
+
+Confirmed products with `has_reference_image = true` are copied server-side into the private `project-assets` bucket after SSRF + magic-byte validation:
+
+```text
+projects/{projectId}/product-references/{selectionId}.{jpg|png|webp}
+```
+
+Metadata lives in `public.project_product_reference_assets` (one current asset per selection). `source_hash` is SHA-256 of the acquired bytes. Authenticated users may `SELECT`/`DELETE` owned rows and Storage objects; they cannot INSERT/UPDATE metadata or upload objects. Writes go through `upsert_project_product_reference_asset` (service_role only).
+
+Confirmation succeeds even if the retailer image fetch fails. Failed fetch does not un-confirm. Unconfirmed SERP rows are not downloaded.
+
+P1.7a does **not** generate a renovation render.
+
+### P1.7b — Product-conditioned final room render
+
+Canonical room-renovation visualization uses OpenAI **`gpt-image-1.5`** via the Images **edits** API (`lib/render/*`). Image 1 is the current private `room_photo`. Images 2..N (at most 10) are validated private `project_product_reference_assets` for **confirmed** selections, ordered deterministically (large furniture → other furniture → materials → accessories). Unconfirmed products, raw SERP URLs, and browser-submitted images are never trusted render inputs.
+
+The prompt is built server-side. `input_fidelity` is always `high`. MVP default quality is `medium`, size `auto`. Kill switch: `OPENAI_IMAGE_RENDER_ENABLED` (not `NEXT_PUBLIC_`). Explicit **Generate design** / **Regenerate design** only. Cooldown: `claim_room_render_slot` (120s per project). In-flight same-fingerprint generations are deduped. Output is stored privately at `projects/{projectId}/renders/{renderId}.{jpg|png|webp}` with SHA-256. Preview uses a short-lived signed URL. A render is current only when `source_fingerprint` matches the live design state.
+
+User-facing language: **“Visualization created using your selected product references.”** Commerce remains `project_product_selections`.
+
+`POST /api/render` and Replicate RealVisXL are not this path.
+
+### P1.7c — Least-privilege grants + live smoke-test prep
+
+Authenticated table GRANTs on trusted commerce/render tables were tightened so default `ALL` leftovers cannot linger beside FORCE RLS. `project_room_renders`: SELECT only. Discovery/reference-asset owners keep SELECT+DELETE for cleanup. Selections keep SELECT + `UPDATE (is_confirmed)`.
+
+Manual paid render is **not** automated. Checklist: `docs/P1_7C_LIVE_SMOKE_TEST.md`. First live attempt should confirm 2–3 products (not 10). Kill switch must be enabled in server env before Generate design; enabling it does not start a call.
+
+Next: one manual end-to-end live render, then P1.8 — Final project result + cost summary + regeneration UX.
 
 ---
 
@@ -160,12 +220,16 @@ This app uses the **new Supabase API key model** ([docs](https://supabase.com/do
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Client + server | Publishable key (`sb_publishable_...`). Low privilege; **RLS applies**. Safe to expose. Replaces legacy `anon`. |
 | `NEXT_PUBLIC_SITE_URL` | Client + server | Optional. App origin for email confirmation links (e.g. `http://127.0.0.1:3000`). Not the Supabase API URL. |
 | `SUPABASE_SECRET_KEY` | Server only | Secret key (`sb_secret_...`). Bypasses RLS. Use only when a feature needs elevated access. **Never** `NEXT_PUBLIC_`. Replaces legacy `service_role`. |
+| `OPENAI_API_KEY` | Server only | OpenAI. Room analysis + P1.7b image edits. **Never** `NEXT_PUBLIC_`. |
+| `OPENAI_IMAGE_RENDER_ENABLED` | Server only | P1.7b kill switch (`true` / `false`). If false, Generate design does not call Images. **Never** `NEXT_PUBLIC_`. |
+| `OPENAI_IMAGE_QUALITY` | Server only | Optional. Default `medium`. Browser cannot choose. |
+| `OPENAI_IMAGE_SIZE` | Server only | Optional. Default `auto`. Browser cannot choose. |
 | `API_DEBUG_ENABLED` | Server | Explicit opt-in for debug routes in **non-production** only |
 | `APP_DEPLOYMENT_ENV` | Server | Non-Vercel equivalent of `VERCEL_ENV` (`production` / `preview` / `development`) |
 
 **Do not standardize application code on** `NEXT_PUBLIC_SUPABASE_ANON_KEY` **or** `SUPABASE_SERVICE_ROLE_KEY`. Those are the legacy JWT keys. `anon` is the legacy equivalent of the publishable key.
 
-P1.2 (email/password, user-scoped clients) needs URL + publishable key. Add `SUPABASE_SECRET_KEY` only when a server path must bypass RLS (later jobs, storage hard-delete, admin). Prefer the secret key over `service_role` when that path is implemented.
+P1.2 (email/password, user-scoped clients) needs URL + publishable key. `SUPABASE_SECRET_KEY` is required for P1.7a trusted persist RPCs, P1.7b room-render trusted writes, and private `project-assets` writes. Do not use it for login, project CRUD, or browser operations. Prefer the secret key over `service_role` when that path is implemented.
 
 Local CLI currently still prints **anon key** / **service_role key** (`Platform, CLI` in the Supabase key table). Paste them into `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` and `SUPABASE_SECRET_KEY` until the CLI emits `sb_publishable_` / `sb_secret_` values. Do not introduce `*_ANON_KEY` / `*_SERVICE_ROLE_KEY` env names in new code.
 
@@ -246,6 +310,21 @@ Details: `supabase/README.md`.
 - Creates `public.project_ai_request_guards`
 - RPC `claim_room_analysis_slot` (60s, SECURITY INVOKER)
 - FORCE RLS; no anonymous access; no DELETE grant
+
+`supabase/migrations/20260818200000_p1_6_product_discovery.sql`
+
+- Broadens guard operations with `product_discovery` + RPC `claim_product_discovery_slot` (60s, SECURITY INVOKER)
+- Creates `public.project_product_discoveries` (unique `project_id`) and `public.project_product_selections`
+- FORCE RLS via project ownership; selections column-grant UPDATE (`is_confirmed`) only
+- Analysis delete cascades discovery; project delete cascades both
+
+`supabase/migrations/20260818220000_p1_7_product_provenance_and_references.sql`
+
+- Revokes authenticated INSERT/UPDATE of discovery rows and INSERT/DELETE of selection rows
+- Trusted persist RPC `replace_project_product_discovery_result` (service_role only)
+- Private bucket `project-assets` (10 MB, JPEG/PNG/WebP)
+- `public.project_product_reference_assets` + `upsert_project_product_reference_asset` (service_role only)
+- Storage SELECT/DELETE for owned `product-references` (and reserved `renders` prefix). No authenticated INSERT/UPDATE
 
 Push in timestamp order. Do not rewrite P1.1/P1.3/P1.4/P1.5 history. Never `db reset --linked`.
 
