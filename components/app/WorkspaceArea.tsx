@@ -7,6 +7,7 @@ import { updateWizardStep } from "@/lib/projects/actions";
 import { MVP_PROJECT_TYPE, type ProjectType } from "@/lib/projects/types";
 import type { RoomAnalysisView } from "@/lib/analysis/types";
 import type { ProductDiscoveryView, ProductSelectionView } from "@/lib/discovery/types";
+import type { ProjectRoomPreferences } from "@/lib/project-preferences/types";
 
 export interface WorkspaceAreaProps {
   projectId: string | null;
@@ -18,6 +19,7 @@ export interface WorkspaceAreaProps {
     discovery: ProductDiscoveryView;
     selections: ProductSelectionView[];
   } | null;
+  initialRoomPreferences?: ProjectRoomPreferences | null;
   className?: string;
 }
 
@@ -28,6 +30,7 @@ export const WorkspaceArea: React.FC<WorkspaceAreaProps> = ({
   roomPhoto,
   roomAnalysis = null,
   productDiscovery = null,
+  initialRoomPreferences = null,
   className,
 }) => {
   const persistStep = (key: string) => {
@@ -57,6 +60,7 @@ export const WorkspaceArea: React.FC<WorkspaceAreaProps> = ({
           roomPhoto={roomPhoto}
           roomAnalysis={roomAnalysis}
           productDiscovery={productDiscovery}
+          initialRoomPreferences={initialRoomPreferences}
         />
       ) : projectId ? (
         <div className="flex-1 flex items-center justify-center px-6">

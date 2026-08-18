@@ -50,7 +50,7 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
   const missingIds = new Set(missing.map((item) => item.selectionId));
 
   const refresh = React.useCallback(async () => {
-    const result = await loadRoomRenderState({ projectId, preferences });
+    const result = await loadRoomRenderState({ projectId });
     if (!result.ok) {
       setError(result.message);
       return;
@@ -62,7 +62,7 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
     setProcessing(Boolean(result.processing));
     setReadinessMessage(result.readinessMessage);
     setHasCurrent(Boolean(result.currentRender));
-  }, [projectId, preferences]);
+  }, [projectId]);
 
   React.useEffect(() => {
     void refresh();
@@ -77,7 +77,6 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
       const result = await generateRoomRenderAction({
         projectId,
         force,
-        preferences,
       });
       if (!result.ok) {
         setError(result.message);

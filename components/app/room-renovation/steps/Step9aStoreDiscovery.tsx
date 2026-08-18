@@ -114,25 +114,6 @@ export const Step9aStoreDiscovery: React.FC<Step9aStoreDiscoveryProps> = ({
         locationInput,
         radiusKm,
         refresh,
-        wallMainColor: shoppingPreferences?.wallMainColor ?? undefined,
-        wallAccentColor: shoppingPreferences?.wallAccentColor ?? undefined,
-        keepExistingWalls: shoppingPreferences?.keepExistingWalls ?? undefined,
-        flooring: shoppingPreferences?.flooring as
-          | "keep"
-          | "hardwood"
-          | "laminate"
-          | "tiles"
-          | "marble"
-          | undefined,
-        underfloorHeating: shoppingPreferences?.underfloorHeating ?? undefined,
-        bedType: shoppingPreferences?.bedType as
-          | "none"
-          | "king"
-          | "queen"
-          | "bunk"
-          | "single"
-          | undefined,
-        selectedStyles: shoppingPreferences?.selectedStyles ?? undefined,
       });
       if (!result.ok) {
         setPhase(shoppingCurrent ? "results" : "error");

@@ -21,6 +21,13 @@ import { Step10FinalReport } from "./steps/Step10FinalReport";
 import { stepIndexFromKey, stepKeyFromIndex } from "@/lib/projects/steps";
 import type { RoomAnalysisView } from "@/lib/analysis/types";
 import type { ProductDiscoveryView, ProductSelectionView } from "@/lib/discovery/types";
+import { saveProjectRoomPreferencesAction } from "@/lib/project-preferences/actions";
+import { projectRoomPreferencesToShoppingPreferences } from "@/lib/project-preferences/adapter";
+import {
+  EMPTY_PROJECT_ROOM_PREFERENCES,
+  type ProjectRoomPreferences,
+  type ProjectRoomPreferencesPatch,
+} from "@/lib/project-preferences/types";
 
 export interface RoomRenovationData {
   roomType: "kitchen" | "bathroom" | "bedroom" | "living-room" | "other" | null;
@@ -110,6 +117,43 @@ export interface RoomRenovationFlowProps {
     discovery: ProductDiscoveryView;
     selections: ProductSelectionView[];
   } | null;
+  initialRoomPreferences?: ProjectRoomPreferences | null;
+}
+
+function wizardStateFromPreferences(prefs: ProjectRoomPreferences | null): Pick<
+  RoomRenovationData,
+  "roomType" | "selectedStyles" | "budgetLevel" | "preferences"
+> {
+  if (!prefs) {
+    return {
+      roomType: EMPTY_PROJECT_ROOM_PREFERENCES.roomType,
+      selectedStyles: [...EMPTY_PROJECT_ROOM_PREFERENCES.selectedStyles],
+      budgetLevel: EMPTY_PROJECT_ROOM_PREFERENCES.budgetLevel,
+      preferences: {
+        wallMainColor: EMPTY_PROJECT_ROOM_PREFERENCES.wallMainColor,
+        wallAccentColor: EMPTY_PROJECT_ROOM_PREFERENCES.wallAccentColor,
+        flooring: EMPTY_PROJECT_ROOM_PREFERENCES.flooring,
+        underfloorHeating: EMPTY_PROJECT_ROOM_PREFERENCES.underfloorHeating,
+        bedType: EMPTY_PROJECT_ROOM_PREFERENCES.bedType,
+        notes: EMPTY_PROJECT_ROOM_PREFERENCES.notes,
+        keepExistingWalls: EMPTY_PROJECT_ROOM_PREFERENCES.keepExistingWalls,
+      },
+    };
+  }
+  return {
+    roomType: prefs.roomType,
+    selectedStyles: prefs.selectedStyles,
+    budgetLevel: prefs.budgetLevel,
+    preferences: {
+      wallMainColor: prefs.wallMainColor,
+      wallAccentColor: prefs.wallAccentColor,
+      flooring: prefs.flooring,
+      underfloorHeating: prefs.underfloorHeating,
+      bedType: prefs.bedType,
+      notes: prefs.notes,
+      keepExistingWalls: prefs.keepExistingWalls,
+    },
+  };
 }
 
 export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
@@ -120,6 +164,7 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
   roomPhoto,
   roomAnalysis = null,
   productDiscovery = null,
+  initialRoomPreferences = null,
 }) => {
   const [currentAnalysis, setCurrentAnalysis] = React.useState<RoomAnalysisView | null>(
     roomAnalysis
@@ -137,20 +182,19 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
     stepIndexFromKey("room-renovation", initialStepKey ?? "greeting")
   );
   const [conversation, setConversation] = React.useState<ConversationEntry[]>([]);
+  const restored = wizardStateFromPreferences(initialRoomPreferences);
+  const [roomPrefs, setRoomPrefs] = React.useState<ProjectRoomPreferences | null>(
+    initialRoomPreferences
+  );
+  const [preferenceSaveError, setPreferenceSaveError] = React.useState<string | null>(null);
+  const [preferenceSaving, setPreferenceSaving] = React.useState(false);
   const [data, setData] = React.useState<RoomRenovationData>({
-    roomType: null,
+    roomType: restored.roomType,
     photos: [],
     aiObservation: null,
-    selectedStyles: [],
-    budgetLevel: null,
-    preferences: {
-      wallMainColor: "warm greige",
-      wallAccentColor: "olive green",
-      flooring: "keep",
-      underfloorHeating: false,
-      bedType: "none",
-      notes: "",
-    },
+    selectedStyles: restored.selectedStyles,
+    budgetLevel: restored.budgetLevel,
+    preferences: restored.preferences,
     generatedDesigns: [],
     selectedDesign: null,
     costEstimate: null,
@@ -283,6 +327,39 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
     setData((prev) => ({ ...prev, ...updates }));
   };
 
+  const persistRoomPreferences = async (patch: ProjectRoomPreferencesPatch): Promise<boolean> => {
+    if (preferenceSaving) return false;
+    setPreferenceSaving(true);
+    setPreferenceSaveError(null);
+    try {
+      const result = await saveProjectRoomPreferencesAction({ projectId, patch });
+      if (!result.ok) {
+        setPreferenceSaveError(result.message);
+        return false;
+      }
+      setRoomPrefs(result.preferences);
+      return true;
+    } catch {
+      setPreferenceSaveError("Could not save your preferences. Try again.");
+      return false;
+    } finally {
+      setPreferenceSaving(false);
+    }
+  };
+
+  const shoppingPreferences = projectRoomPreferencesToShoppingPreferences(
+    roomPrefs ?? {
+      ...EMPTY_PROJECT_ROOM_PREFERENCES,
+      selectedStyles: data.selectedStyles,
+      wallMainColor: data.preferences?.wallMainColor ?? "",
+      wallAccentColor: data.preferences?.wallAccentColor ?? "",
+      flooring: data.preferences?.flooring ?? "keep",
+      underfloorHeating: data.preferences?.underfloorHeating ?? false,
+      bedType: data.preferences?.bedType ?? "none",
+      keepExistingWalls: data.preferences?.keepExistingWalls ?? false,
+    }
+  );
+
   const nextStep = () => {
     const next = Math.min(currentStep + 1, 16);
     setCurrentStep(next);
@@ -381,7 +458,7 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
         return (
           <Step1RoomType
             selectedRoomType={data.roomType}
-            onSelect={(roomType) => {
+            onSelect={async (roomType) => {
               const roomLabels: Record<string, string> = {
                 kitchen: "Kitchen",
                 bathroom: "Bathroom",
@@ -389,6 +466,8 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
                 "living-room": "Living room",
                 other: "Other",
               };
+              const saved = await persistRoomPreferences({ roomType });
+              if (!saved) return;
               addUserMessage(roomLabels[roomType]);
               updateData({ roomType });
               nextStep();
@@ -439,7 +518,9 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
             onStylesChange={(styles) => {
               updateData({ selectedStyles: styles });
             }}
-            onContinue={() => {
+            onContinue={async () => {
+              const saved = await persistRoomPreferences({ selectedStyles: data.selectedStyles });
+              if (!saved) return;
               addUserMessage(`Selected styles: ${data.selectedStyles.join(", ")}`);
               nextStep();
             }}
@@ -449,13 +530,15 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
         return (
           <Step5BudgetSignal
             selectedBudget={data.budgetLevel}
-            onSelect={(budget) => {
+            onSelect={async (budget) => {
               const budgetLabels: Record<string, string> = {
                 "budget-friendly": "Budget-friendly",
                 balanced: "Balanced",
                 premium: "Premium",
                 "not-sure": "Not sure yet",
               };
+              const saved = await persistRoomPreferences({ budgetLevel: budget });
+              if (!saved) return;
               addUserMessage(budgetLabels[budget]);
               updateData({ budgetLevel: budget });
               nextStep();
@@ -468,8 +551,18 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
             roomType={data.roomType!}
             value={data.preferences!}
             onChange={(value) => updateData({ preferences: value })}
-            onContinue={() => {
+            onContinue={async () => {
               const p = data.preferences!;
+              const saved = await persistRoomPreferences({
+                wallMainColor: p.wallMainColor,
+                wallAccentColor: p.wallAccentColor,
+                flooring: p.flooring,
+                underfloorHeating: p.underfloorHeating,
+                bedType: p.bedType,
+                notes: p.notes,
+                keepExistingWalls: p.keepExistingWalls ?? false,
+              });
+              if (!saved) return;
               const parts: string[] = [];
               if (p.wallMainColor) parts.push(`Wall main: ${p.wallMainColor}`);
               if (p.wallAccentColor) parts.push(`Accent: ${p.wallAccentColor}`);
@@ -672,15 +765,7 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
             radiusKm={data.radiusKm}
             initialDiscovery={persistedDiscovery}
             initialSelections={persistedSelections}
-            shoppingPreferences={{
-              selectedStyles: data.selectedStyles,
-              wallMainColor: data.preferences?.wallMainColor ?? "",
-              wallAccentColor: data.preferences?.wallAccentColor ?? "",
-              flooring: data.preferences?.flooring ?? "keep",
-              underfloorHeating: data.preferences?.underfloorHeating ?? false,
-              bedType: data.preferences?.bedType ?? "none",
-              keepExistingWalls: false,
-            }}
+            shoppingPreferences={shoppingPreferences}
             onComplete={({ discovery, selections }) => {
               setPersistedDiscovery(discovery);
               setPersistedSelections(selections);
@@ -849,6 +934,12 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
               />
             );
           })}
+
+          {preferenceSaveError ? (
+            <p className="mb-4 text-[13px] text-[#E5484D]" role="alert">
+              {preferenceSaveError}
+            </p>
+          ) : null}
 
           {/* Current Step Interactive Content */}
           {renderCurrentStep()}

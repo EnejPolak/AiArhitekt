@@ -12,6 +12,9 @@ import { discoverProjectProducts, loadCurrentProductDiscovery } from "./discover
 import { DiscoveryError, discoveryErrorMessage } from "./errors";
 import { getOwnedSelection, setSelectionConfirmed } from "./queries";
 import type { ProductDiscoveryView, ProductSelectionView } from "./types";
+import { getProjectRoomPreferences } from "@/lib/project-preferences/queries";
+import { projectRoomPreferencesToShoppingPreferences } from "@/lib/project-preferences/adapter";
+import { EMPTY_PROJECT_ROOM_PREFERENCES } from "@/lib/project-preferences/types";
 import {
   DEFAULT_DISCOVERY_RADIUS_KM,
   MAX_DISCOVERY_RADIUS_KM,
@@ -43,13 +46,6 @@ const discoverInputSchema = z.object({
     .max(MAX_LOCATION_INPUT_LENGTH),
   radiusKm: z.number().int().min(1).max(MAX_DISCOVERY_RADIUS_KM).optional(),
   refresh: z.boolean().optional(),
-  wallMainColor: z.string().trim().max(80).optional(),
-  wallAccentColor: z.string().trim().max(80).optional(),
-  keepExistingWalls: z.boolean().optional(),
-  flooring: z.enum(["keep", "hardwood", "laminate", "tiles", "marble"]).optional(),
-  underfloorHeating: z.boolean().optional(),
-  bedType: z.enum(["none", "king", "queen", "bunk", "single"]).optional(),
-  selectedStyles: z.array(z.string().trim().min(1).max(80)).max(8).optional(),
 });
 
 const confirmInputSchema = z.object({
@@ -107,13 +103,6 @@ export async function discoverProjectProductsAction(input: {
   locationInput: string;
   radiusKm?: number;
   refresh?: boolean;
-  wallMainColor?: string;
-  wallAccentColor?: string;
-  keepExistingWalls?: boolean;
-  flooring?: "keep" | "hardwood" | "laminate" | "tiles" | "marble";
-  underfloorHeating?: boolean;
-  bedType?: "none" | "king" | "queen" | "bunk" | "single";
-  selectedStyles?: string[];
 }): Promise<DiscoveryActionResult> {
   const parsed = discoverInputSchema.safeParse(input);
   if (!parsed.success) return fail("invalid_input");
@@ -121,6 +110,10 @@ export async function discoverProjectProductsAction(input: {
   try {
     const { supabase, project } = await requireOwnedRoomProject(parsed.data.projectId);
     const persistClient = createPersistClient();
+    const stored = await getProjectRoomPreferences(supabase, parsed.data.projectId);
+    const preferences = projectRoomPreferencesToShoppingPreferences(
+      stored ?? EMPTY_PROJECT_ROOM_PREFERENCES
+    );
     const result = await discoverProjectProducts(
       supabase,
       parsed.data.projectId,
@@ -130,15 +123,7 @@ export async function discoverProjectProductsAction(input: {
         radiusKm: parsed.data.radiusKm ?? DEFAULT_DISCOVERY_RADIUS_KM,
         ownerUserId: project.user_id,
         persistClient,
-        preferences: {
-          wallMainColor: parsed.data.wallMainColor,
-          wallAccentColor: parsed.data.wallAccentColor,
-          keepExistingWalls: parsed.data.keepExistingWalls,
-          flooring: parsed.data.flooring,
-          underfloorHeating: parsed.data.underfloorHeating,
-          bedType: parsed.data.bedType,
-          selectedStyles: parsed.data.selectedStyles,
-        },
+        preferences,
       }
     );
     return {

@@ -5,6 +5,7 @@ import { loadOwnedProject } from "@/lib/projects/server";
 import { loadRoomPhotoPreview } from "@/lib/uploads/server";
 import { loadCurrentRoomAnalysis } from "@/lib/analysis/server";
 import { loadPersistedProductDiscovery } from "@/lib/discovery/server";
+import { loadPersistedProjectRoomPreferences } from "@/lib/project-preferences/server";
 import { PROJECT_TYPE_LABELS } from "@/lib/projects/types";
 
 export const dynamic = "force-dynamic";
@@ -24,6 +25,7 @@ export default async function ProjectWorkspacePage({
   const roomPhoto = await loadRoomPhotoPreview(project.id);
   const roomAnalysis = await loadCurrentRoomAnalysis(project.id);
   const productDiscovery = await loadPersistedProductDiscovery(project.id);
+  const roomPreferences = await loadPersistedProjectRoomPreferences(project.id);
 
   if (project.archived_at) {
     return (
@@ -57,6 +59,7 @@ export default async function ProjectWorkspacePage({
       }
       roomAnalysis={roomAnalysis}
       productDiscovery={productDiscovery}
+      initialRoomPreferences={roomPreferences}
     />
   );
 }

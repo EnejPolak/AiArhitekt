@@ -10,7 +10,9 @@ import { createPersistClient } from "@/lib/supabase/persist";
 import { PROJECT_ASSETS_BUCKET, RENDER_SIGNED_PREVIEW_TTL_SECONDS } from "./constants";
 import { RenderError, renderErrorMessage } from "./errors";
 import { generateRoomRender, prepareRenderSource } from "./generate";
-import { canonicalRenderPreferences, roomRenderPreferencesSchema } from "./preferences";
+import { getProjectRoomPreferences } from "@/lib/project-preferences/queries";
+import { projectRoomPreferencesToRenderPreferences } from "@/lib/project-preferences/adapter";
+import { EMPTY_PROJECT_ROOM_PREFERENCES } from "@/lib/project-preferences/types";
 import { listProjectRoomRenders, markCurrent } from "./queries";
 import { parseRoomRenderPath } from "./path";
 import type { MissingRenderReference, RoomRenderView } from "./types";
@@ -50,7 +52,6 @@ export type LoadRenderActionResult = LoadRenderActionOk | RenderActionFail;
 const generateInputSchema = z.object({
   projectId: projectIdInputSchema.shape.projectId,
   force: z.boolean().optional(),
-  preferences: roomRenderPreferencesSchema.optional(),
 });
 
 function fail(error: RenderError): RenderActionFail {
@@ -110,11 +111,9 @@ const READINESS_CODES = new Set([
 
 export async function loadRoomRenderState(input: {
   projectId: string;
-  preferences?: unknown;
 }): Promise<LoadRenderActionResult> {
   const parsed = generateInputSchema.safeParse({
     projectId: input.projectId,
-    preferences: input.preferences,
   });
   if (!parsed.success) {
     return fail(new RenderError("invalid_input", renderErrorMessage("invalid_input")));
@@ -122,7 +121,10 @@ export async function loadRoomRenderState(input: {
 
   try {
     const { supabase } = await requireOwnedRoomProject(parsed.data.projectId);
-    const preferences = canonicalRenderPreferences(parsed.data.preferences);
+    const stored = await getProjectRoomPreferences(supabase, parsed.data.projectId);
+    const preferences = projectRoomPreferencesToRenderPreferences(
+      stored ?? EMPTY_PROJECT_ROOM_PREFERENCES
+    );
     const renders = await listProjectRoomRenders(supabase, parsed.data.projectId);
     const latestSucceeded = renders.find((row) => row.status === "succeeded") ?? null;
     const processing = renders.find((row) => row.status === "processing") ?? null;
@@ -170,7 +172,6 @@ export async function loadRoomRenderState(input: {
 export async function generateRoomRenderAction(input: {
   projectId: string;
   force?: boolean;
-  preferences?: unknown;
 }): Promise<RenderActionResult> {
   const parsed = generateInputSchema.safeParse(input);
   if (!parsed.success) {
@@ -180,12 +181,16 @@ export async function generateRoomRenderAction(input: {
   try {
     const { user, supabase, project } = await requireOwnedRoomProject(parsed.data.projectId);
     const persistClient = createPersistClient();
+    const stored = await getProjectRoomPreferences(supabase, parsed.data.projectId);
+    const preferences = projectRoomPreferencesToRenderPreferences(
+      stored ?? EMPTY_PROJECT_ROOM_PREFERENCES
+    );
     const result = await generateRoomRender({
       userClient: supabase,
       persistClient,
       ownerUserId: user.id,
       projectId: project.id,
-      preferences: canonicalRenderPreferences(parsed.data.preferences),
+      preferences,
       force: Boolean(parsed.data.force),
     });
     return {

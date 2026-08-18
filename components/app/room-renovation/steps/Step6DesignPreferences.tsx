@@ -10,6 +10,7 @@ export type RoomDesignPreferences = {
   underfloorHeating: boolean;
   bedType: "none" | "king" | "queen" | "bunk" | "single";
   notes: string;
+  keepExistingWalls: boolean;
 };
 
 export interface Step6DesignPreferencesProps {
