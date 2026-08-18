@@ -11,6 +11,7 @@ import { buildRoomPhotoPath } from "@/lib/uploads/path";
 import { loadReusableRoomAnalysis, runRoomAnalysis } from "./analyze";
 import { AnalysisError } from "./errors";
 import { validRoomAnalysisResult } from "./fixtures";
+import { expireLocalRoomAnalysisCooldown } from "./localCooldownSetup";
 import { deleteProjectRoomAnalysis, getProjectRoomAnalysis } from "./queries";
 
 const LOCAL_URL = localSupabaseApiUrl();
@@ -144,6 +145,8 @@ describe("room analysis source + mocked provider (local)", () => {
       throw new AnalysisError("provider_failed", "Could not analyze the room. Try again.");
     });
 
+    await expireLocalRoomAnalysisCooldown(seeded.projectId);
+
     await expect(
       runRoomAnalysis(userA.client, seeded.projectId, { force: true, analyzeImage })
     ).rejects.toMatchObject({ code: "provider_failed" });
@@ -164,6 +167,8 @@ describe("room analysis source + mocked provider (local)", () => {
       },
       meta: { provider: "openai" as const, model: "gpt-4o" as const },
     }));
+
+    await expireLocalRoomAnalysisCooldown(seeded.projectId);
 
     const result = await runRoomAnalysis(userA.client, seeded.projectId, {
       force: true,
@@ -219,6 +224,7 @@ describe("room analysis source + mocked provider (local)", () => {
   });
 
   it("invalidates analysis when the room photo is removed", async () => {
+    await expireLocalRoomAnalysisCooldown(seeded.projectId);
     const analyzeImage = vi.fn(async () => ({
       result: validRoomAnalysisResult,
       meta: { provider: "openai" as const, model: "gpt-4o" as const },

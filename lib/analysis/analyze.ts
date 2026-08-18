@@ -3,6 +3,7 @@ import type { Database } from "@/lib/database.types";
 import { PROJECT_UPLOADS_BUCKET } from "@/lib/uploads/constants";
 import { getRoomPhotoUpload } from "@/lib/uploads/queries";
 import { ROOM_ANALYSIS_SCHEMA_VERSION } from "./constants";
+import { claimRoomAnalysisSlot } from "./claim";
 import { AnalysisError, analysisErrorMessage } from "./errors";
 import { analyzeRoomImage } from "./openai";
 import {
@@ -67,6 +68,8 @@ export async function runRoomAnalysis(
       return { analysis: existing, reused: true };
     }
   }
+
+  await claimRoomAnalysisSlot(client, projectId);
 
   const bytes = await downloadPrivateRoomPhoto(client, photo.storage_path);
   const analyzeImage = options.analyzeImage ?? analyzeRoomImage;

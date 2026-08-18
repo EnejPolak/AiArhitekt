@@ -8,15 +8,18 @@ export type AnalysisErrorCode =
   | "provider_busy"
   | "provider_failed"
   | "invalid_result"
+  | "rate_limited"
   | "failed";
 
 export class AnalysisError extends Error {
   readonly code: AnalysisErrorCode;
+  readonly retryAfterSeconds?: number;
 
-  constructor(code: AnalysisErrorCode, message: string) {
+  constructor(code: AnalysisErrorCode, message: string, retryAfterSeconds?: number) {
     super(message);
     this.name = "AnalysisError";
     this.code = code;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 
@@ -40,9 +43,16 @@ export function analysisErrorMessage(code: AnalysisErrorCode): string {
       return "Could not analyze the room. Try again.";
     case "invalid_result":
       return "The analysis result was incomplete. Try again.";
+    case "rate_limited":
+      return "Please wait a moment before analyzing this room again.";
     default:
       return "Could not analyze the room. Try again.";
   }
+}
+
+export function rateLimitMessage(retryAfterSeconds: number): string {
+  const seconds = Math.max(1, Math.ceil(retryAfterSeconds));
+  return `${analysisErrorMessage("rate_limited")} Try again in ${seconds} seconds.`;
 }
 
 export function mapAnalysisDbError(error: { message?: string; code?: string } | null): AnalysisError {
