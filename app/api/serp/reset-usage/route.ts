@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isDebugApiAllowed } from "@/lib/env/deployment";
 import { resetDailyUsage, checkDailyCap } from "@/lib/serpGuardrails";
 
 export const runtime = "nodejs";
@@ -6,8 +7,13 @@ export const runtime = "nodejs";
 /**
  * POST /api/serp/reset-usage
  * Resets daily SERP usage counter to 0 so remaining = cap again.
+ * Debug-only: production deployments always reject this route.
  */
 export async function POST() {
+  if (!isDebugApiAllowed()) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
   try {
     const usage = await resetDailyUsage();
     const cap = await checkDailyCap();

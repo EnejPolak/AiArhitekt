@@ -2,6 +2,7 @@
  * Unit tests: domain normalization + reject list
  */
 
+import { describe, it, expect } from "vitest";
 import { normalizeDomainToRoot, isRejectedDomain } from "./domainUtils";
 
 describe("domainUtils", () => {

@@ -1,12 +1,18 @@
-"use client";
-
 import { SignInForm } from "@/components/pages/sign-in/SignInForm";
 
-export default function SignInPage() {
+export default async function SignInPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string; next?: string }>;
+}) {
+  const params = await searchParams;
+
   return (
-    <main className="min-h-screen flex items-center justify-center pt-20">
-      <SignInForm />
+    <main className="flex min-h-screen items-center justify-center pt-20">
+      <SignInForm
+        callbackError={params.error === "callback"}
+        nextPath={params.next}
+      />
     </main>
   );
 }
-

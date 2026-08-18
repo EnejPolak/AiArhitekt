@@ -44,9 +44,9 @@ export const CookieToggle: React.FC<CookieToggleProps> = ({
         disabled={disabled}
         onClick={() => !disabled && onChange(!checked)}
         className={cn(
-          "relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-[#00E6CC] focus:ring-offset-2 focus:ring-offset-transparent",
+          "relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-transparent",
           checked
-            ? "bg-[#00E6CC] shadow-[0_0_8px_rgba(0,230,204,0.4)]"
+            ? "bg-primary shadow-[0_0_8px_rgba(0,201,177,0.4)]"
             : "bg-[rgba(255,255,255,0.15)]",
           disabled && "opacity-50 cursor-not-allowed"
         )}

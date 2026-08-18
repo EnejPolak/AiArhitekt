@@ -152,14 +152,23 @@ IZHOD (JSON):
 
   const parsed = JSON.parse(response);
 
-  // Validate that all links are from original products
-  const originalLinks = new Set(products.map((p) => p.link));
+  // Validate that all links are from original products; copy commerce fields from the provider row.
+  const originalByLink = new Map(products.map((p) => [p.link, p]));
   const curatedProducts = parsed.products || [];
-  
-  // Filter out any products with modified links
-  const validProducts = curatedProducts.filter((p: any) => 
-    originalLinks.has(p.link)
-  );
+
+  const validProducts = curatedProducts
+    .filter((p: { link?: string }) => typeof p?.link === "string" && originalByLink.has(p.link))
+    .map((p: { link: string; justification?: string }) => {
+      const src = originalByLink.get(p.link)!;
+      return {
+        category: src.category,
+        name: src.title,
+        store: src.source,
+        price: "Na povpraševanje",
+        link: src.link,
+        justification: typeof p.justification === "string" ? p.justification : "",
+      };
+    });
 
   // ENFORCE: Only ONE product per category
   const productsByCategory: Record<string, any[]> = {};

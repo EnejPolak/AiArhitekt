@@ -9,6 +9,7 @@ import { checkProductCatalogSignal, type CatalogProbe, type CatalogCheckResult, 
 import { normalizeDomainToRoot, isRejectedDomain as isRejectedDomainUtil } from "@/lib/places/domainUtils";
 import { normalizeDomainToRoot as normalizeDomainToRootForAllowlist } from "@/lib/serp/domains";
 import { placeTypesToTaxonomyCategories } from "@/lib/serp/taxonomy";
+import { delay } from "./runtime";
 
 // Types
 export interface Place {
@@ -694,7 +695,7 @@ async function throttle(): Promise<void> {
   const minInterval = 1000 / REQUESTS_PER_SECOND; // ~333ms
 
   if (timeSinceLastRequest < minInterval) {
-    await new Promise((resolve) => setTimeout(resolve, minInterval - timeSinceLastRequest));
+    await delay(minInterval - timeSinceLastRequest);
   }
 
   lastRequestTime = Date.now();
@@ -708,7 +709,7 @@ async function executeWithConcurrency<T>(
 ): Promise<T> {
   // Wait for available slot
   while (activeRequests >= MAX_CONCURRENCY) {
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await delay(100);
   }
 
   activeRequests++;
@@ -769,7 +770,7 @@ async function fetchPlaces(
       if (data.status === "OVER_QUERY_LIMIT" || response.status === 429) {
         if (retries < maxRetries) {
           const backoffMs = Math.pow(2, retries) * 1000; // Exponential backoff
-          await new Promise((resolve) => setTimeout(resolve, backoffMs));
+          await delay(backoffMs);
           retries++;
           continue;
         }
@@ -820,7 +821,7 @@ async function fetchPlaces(
       }
       if (retries < maxRetries) {
         const backoffMs = Math.pow(2, retries) * 1000;
-        await new Promise((resolve) => setTimeout(resolve, backoffMs));
+        await delay(backoffMs);
         retries++;
         continue;
       }
@@ -869,7 +870,7 @@ async function fetchPlacesByType(
 
       if (data.status === "OVER_QUERY_LIMIT" || response.status === 429) {
         if (retries < maxRetries) {
-          await new Promise((r) => setTimeout(r, Math.pow(2, retries) * 1000));
+          await delay(Math.pow(2, retries) * 1000);
           retries++;
           continue;
         }
@@ -904,7 +905,7 @@ async function fetchPlacesByType(
     } catch (error: any) {
       if (error.name === "AbortError") throw new Error("Google Places API request timeout");
       if (retries < maxRetries) {
-        await new Promise((r) => setTimeout(r, Math.pow(2, retries) * 1000));
+        await delay(Math.pow(2, retries) * 1000);
         retries++;
         continue;
       }
@@ -1390,6 +1391,10 @@ export async function getPlaceDetails(placeId: string): Promise<PlaceDetails | n
     }
 
     const result = data.result;
+    if (!result?.geometry?.location || typeof result.geometry.location.lat !== "number") {
+      return null;
+    }
+
     const details: PlaceDetails = {
       place_id: result.place_id,
       name: result.name,

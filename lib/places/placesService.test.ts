@@ -1,17 +1,23 @@
 /**
  * Tests for placesService
- * Run with: npm test (if Vitest is configured) or manually verify logic
+ * Run with: npm test
  */
 
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { searchPlaces, getPlaceDetails, classifyPlaceBucket, isServiceDomainByHeuristic, type SearchParams } from "./placesService";
+import { resetPlacesDelay, setPlacesDelay } from "./runtime";
 
-// Mock fetch for testing
-global.fetch = jest.fn() as jest.Mock;
+global.fetch = vi.fn();
 
 describe("placesService", () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
     process.env.GOOGLE_MAPS_API_KEY = "test-key";
+    setPlacesDelay(async () => {});
+  });
+
+  afterEach(() => {
+    resetPlacesDelay();
   });
 
   describe("query planning", () => {
@@ -49,7 +55,7 @@ describe("placesService", () => {
     });
 
     it("should make multiple Places searches (store keywords + types + contractors)", async () => {
-      (global.fetch as jest.Mock).mockResolvedValue({
+      (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
         ok: true,
         json: async () => ({ status: "OK", results: [] }),
       });
@@ -124,7 +130,7 @@ describe("placesService", () => {
         dryRun: false,
       };
 
-      (global.fetch as jest.Mock).mockResolvedValue({
+      (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
         ok: true,
         json: async () => ({ status: "ZERO_RESULTS", results: [] }),
       });
@@ -159,7 +165,7 @@ describe("placesService", () => {
       };
 
       // Mock responses that return the same place_id
-      (global.fetch as jest.Mock).mockResolvedValue({
+      (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
         ok: true,
         json: async () => ({
           status: "OK",
@@ -170,7 +176,7 @@ describe("placesService", () => {
       const result = await searchPlaces(params);
 
       // Should deduplicate
-      const placeIds = result.places.map((p) => p.place_id);
+      const placeIds = [...result.stores, ...result.contractors].map((p) => p.place_id);
       const uniquePlaceIds = new Set(placeIds);
       expect(uniquePlaceIds.size).toBe(placeIds.length);
     });
@@ -192,7 +198,7 @@ describe("placesService", () => {
       };
 
       let callCount = 0;
-      (global.fetch as jest.Mock).mockImplementation(async () => {
+      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async () => {
         callCount++;
         return {
           ok: true,
@@ -250,7 +256,7 @@ describe("placesService", () => {
       expect(result.meta.cacheHits).toBe(0);
       expect(result.meta.plannedQueries.length).toBeGreaterThan(0);
       expect(result.places).toHaveLength(0);
-      expect(result.meta.executionNotes).toContain("Dry run mode");
+      expect(result.meta.executionNotes?.some((n) => n.startsWith("Dry run mode"))).toBe(true);
     });
   });
 
@@ -265,7 +271,7 @@ describe("placesService", () => {
       };
 
       let callCount = 0;
-      (global.fetch as jest.Mock).mockImplementation(async () => {
+      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async () => {
         callCount++;
         // First query succeeds
         if (callCount === 1) {
@@ -311,14 +317,14 @@ describe("placesService", () => {
 
     it("should handle ZERO_RESULTS as success", async () => {
       const params: SearchParams = {
-        lat: 46.0569,
-        lng: 14.5058,
+        lat: 46.071,
+        lng: 14.521,
         radiusKm: 10,
         mode: "category",
         dryRun: false,
       };
 
-      (global.fetch as jest.Mock).mockResolvedValue({
+      (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
         ok: true,
         json: async () => ({
           status: "ZERO_RESULTS",
@@ -338,7 +344,7 @@ describe("placesService", () => {
     it("should cache place details", async () => {
       const placeId = "ChIJTest123";
 
-      (global.fetch as jest.Mock).mockResolvedValueOnce({
+      (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
         ok: true,
         json: async () => ({
           status: "OK",
@@ -357,9 +363,9 @@ describe("placesService", () => {
       expect(result1).toBeDefined();
 
       // Second call should use cache (no new fetch)
-      const fetchCountBefore = (global.fetch as jest.Mock).mock.calls.length;
+      const fetchCountBefore = (global.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
       const result2 = await getPlaceDetails(placeId);
-      const fetchCountAfter = (global.fetch as jest.Mock).mock.calls.length;
+      const fetchCountAfter = (global.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
 
       expect(result2).toBeDefined();
       // Should not make additional fetch (cached)
@@ -368,7 +374,3 @@ describe("placesService", () => {
   });
 });
 
-// Note: These tests use Jest mocks. To run them:
-// 1. Install Jest: npm install --save-dev jest @types/jest ts-jest
-// 2. Configure Jest in package.json or jest.config.js
-// 3. Run: npm test

@@ -4,6 +4,8 @@
 
 **api-debug** je testna/debug stran v Next.js aplikaciji. Omogoča ročno testiranje treh API korakov v zaporedju: **A) Geocode**, **D) Places**, **C) SERP**. Vsak korak ima svoj vhodni obrazec in prikaže odgovor API-ja (status, čas, JSON). Namen je razumeti, kako skupaj delujejo geokodiranje, iskanje trgovin/obrtnikov po lokaciji in iskanje produktov po domenah.
 
+Stran in `POST /api/serp/reset-usage` sta **debug-only**. Production deployment (`VERCEL_ENV` / `VERCEL_TARGET_ENV` / `APP_DEPLOYMENT_ENV=production`) ju vedno onemogoči, tudi če je `API_DEBUG_ENABLED=true`. Lokalno/preview: nastavi `API_DEBUG_ENABLED=true`. Ne uporabljaj `NODE_ENV` kot edinega gata. Glej `lib/env/deployment.ts` in `docs/BACKEND.md`.
+
 ---
 
 ## Splošen tok (koraki A → D → C)
@@ -33,11 +35,11 @@
 ### API route: Geocode
 
 - **`app/api/geocode/route.ts`**  
-  - GET z query parametrom `address`.  
-  - Validira `address` (obvezno, vsaj 3 znaki).  
-  - Uporabi **`lib/cache`** (TTLCache, 24 h) – če je naslov že v cacheu, vrne shranjeni `formattedAddress`, `lat`, `lng`.  
-  - Če ni v cacheu: kliče Google Geocoding API (`maps.googleapis.com/maps/api/geocode/json`), z `GOOGLE_MAPS_API_KEY`. Timeout 10 s.  
-  - Iz odziva vzame prvi rezultat, izlušči `formatted_address` in `geometry.location` (lat/lng), shrani v cache in vrne JSON.
+  - GET `?address=` ali POST `{ address }` / `{ lat, lng }` (reverse).  
+  - `GOOGLE_GEOCODING_ENABLED=false` → ne kliče Google (`GEOCODING_DISABLED`).  
+  - Normaliziran **`lib/cache`** (TTLCache, 24 h) – `Velenje` / ` velenje ` / `VELENJE` = en ključ.  
+  - Če ni v cacheu in je enabled: en klic Google Geocoding API (brez retry ob quota). Timeout 10 s.  
+  - Uspeh: `{ ok, formattedAddress, lat, lng }`. Quota: `GEOCODING_QUOTA_REACHED`.
 
 ---
 

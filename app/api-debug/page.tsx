@@ -12,11 +12,10 @@ interface GeocodeResult {
 
 interface SerpPicked {
   title: string;
-  link: string;
-  url?: string;
-  price?: string | number | null;
-  currency?: string | null;
-  image?: string | null;
+  url: string;
+  price: number | null;
+  currency: "EUR" | null;
+  image: string | null;
   domain: string;
   score?: number;
   confidence: number;
@@ -465,10 +464,11 @@ export default function APIDebugPage() {
             topCandidates: r.topCandidates ?? [],
             legacyPicked: r.picked
               ? {
-                  link: r.picked.link ?? (r.picked as { url?: string }).url,
+                  url: r.picked.url,
+                  link: r.picked.url,
                   title: r.picked.title,
-                  price: r.picked.price,
-                  currency: r.picked.currency,
+                  price: r.picked.price != null ? String(r.picked.price) : undefined,
+                  currency: r.picked.currency ?? undefined,
                 }
               : null,
           })),
@@ -538,7 +538,7 @@ export default function APIDebugPage() {
   const cEnabled = allowedDomains.length > 0;
 
   return (
-    <div className="min-h-screen bg-[#0D0D0F] text-white p-8">
+    <div className="min-h-screen bg-background text-foreground p-8">
       <div className="max-w-6xl mx-auto space-y-8">
         <h1 className="text-3xl font-bold mb-8">API Debug Page</h1>
 
@@ -1129,7 +1129,7 @@ export default function APIDebugPage() {
                           ) : r.picked ? (
                             <div className="text-sm mb-2">
                               <a
-                                href={r.picked.link ?? (r.picked as { url?: string }).url}
+                                href={r.picked.url}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="text-[#3B82F6] hover:underline font-medium"

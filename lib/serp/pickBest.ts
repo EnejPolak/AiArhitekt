@@ -261,9 +261,6 @@ export function pickBestCandidate(
     reasons: s.reasons,
   }));
 
-  const best = scored[0];
-  if (!best) return { picked: null, topCandidates };
-
   const productLike = scored.filter((s) => hasProductSignals(s.result.link));
   const bestProduct = productLike[0];
 
@@ -285,22 +282,8 @@ export function pickBestCandidate(
     };
   }
 
-  // Always return best candidate as fallback (link better than null for debug).
-  const reasons = [...best.reasons, "fallback_non_product_page"];
-  return {
-    picked: {
-      title: best.result.title,
-      url: best.result.link,
-      snippet: best.result.snippet,
-      price: best.result.price,
-      image: best.result.image,
-      domain: normalizeDomainToRoot(best.result.link),
-      score: best.score,
-      confidence: 0.2,
-      reasons,
-    },
-    topCandidates,
-  };
+  // No product-like URL at/above threshold: do not surface a category/listing as a product.
+  return { picked: null, topCandidates };
 }
 
 /** Get flags for one candidate (for GPT pick: reject tool-intent for home items). */

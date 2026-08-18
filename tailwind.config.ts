@@ -15,6 +15,11 @@ const config: Config = {
       colors: {
         background: "var(--background)",
         foreground: "var(--foreground)",
+        heading: "var(--heading)",
+        surface: {
+          DEFAULT: "var(--surface)",
+          muted: "var(--surface-muted)",
+        },
         card: {
           DEFAULT: "var(--card)",
           foreground: "var(--card-foreground)",
@@ -43,6 +48,8 @@ const config: Config = {
           DEFAULT: "var(--destructive)",
           foreground: "var(--destructive-foreground)",
         },
+        success: "var(--success)",
+        warning: "var(--warning)",
         border: "var(--border)",
         input: "var(--input)",
         ring: "var(--ring)",

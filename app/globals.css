@@ -2,15 +2,50 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Canonical tokens: docs/DESIGN.md (dark product chrome). Values are full CSS colors so Tailwind `var(--*)` works. */
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-  }
+    --background: #0d0d0f;
+    --foreground: #e8e8ea;
+    --heading: #ffffff;
 
-  .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
+    --surface: #0d0d0f;
+    --surface-muted: #141416;
+
+    --card: rgba(255, 255, 255, 0.03);
+    --card-foreground: #e8e8ea;
+
+    --popover: #141416;
+    --popover-foreground: #e8e8ea;
+
+    --primary: #00c9b1;
+    --primary-foreground: #04110f;
+
+    --secondary: rgba(255, 255, 255, 0.06);
+    --secondary-foreground: #e8e8ea;
+
+    --muted: rgba(255, 255, 255, 0.06);
+    --muted-foreground: rgba(255, 255, 255, 0.6);
+
+    --accent: #00c9b1;
+    --accent-foreground: #04110f;
+
+    --border: rgba(255, 255, 255, 0.08);
+    --input: rgba(255, 255, 255, 0.14);
+    --ring: rgba(0, 201, 177, 0.6);
+
+    --success: #3d9a6a;
+    --warning: #d4a017;
+    --destructive: #e5484d;
+    --destructive-foreground: #fff5f5;
+
+    --radius: 12px;
+
+    --chart-1: #00c9b1;
+    --chart-2: #3d9a6a;
+    --chart-3: #d4a017;
+    --chart-4: #5b8def;
+    --chart-5: #e5484d;
   }
 }
 
@@ -18,7 +53,7 @@
   * {
     @apply border-border;
   }
-  
+
   html {
     background: radial-gradient(
       circle at 15% 10%,
@@ -29,17 +64,32 @@
     );
     min-height: 100vh;
   }
-  
+
   body {
     @apply bg-transparent text-foreground;
-    color: #c9c9c9;
     line-height: 1.6;
   }
-  
-  h1, h2, h3, h4, h5, h6 {
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
     font-weight: 800;
     line-height: 1.1;
-    color: #ffffff;
+    color: var(--heading);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
 
@@ -69,10 +119,6 @@
   padding-bottom: 120px;
 }
 
-.pt-30 {
-  padding-top: 120px;
-}
-
 .mb-25 {
   margin-bottom: 100px;
 }
@@ -80,4 +126,3 @@
 .gap-15 {
   gap: 60px;
 }
-

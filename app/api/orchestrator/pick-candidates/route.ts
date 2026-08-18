@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import OpenAI from "openai";
 import { rulesBundle } from "@/lib/serp/searchBundle";
 import { getSafeCandidates } from "@/lib/serp/safetyFilter";
+import { gptPickJsonSchema } from "@/lib/schemas/ai";
 
 export const runtime = "nodejs";
 
@@ -20,6 +21,11 @@ const HOME_CONTEXT_KEYWORDS = [
   "dekor", "preproga", "postelja", "bathroom", "wall", "mirror", "ogledal",
   "living", "bedroom", "furniture", "decor",
 ];
+
+function legacyUrl(legacy: { url?: string; link?: string } | null | undefined): string | undefined {
+  const u = legacy?.url || legacy?.link;
+  return u && u.trim() ? u.trim() : undefined;
+}
 
 function hasHomeContext(itemSpec: string): boolean {
   const lower = (itemSpec ?? "").toLowerCase();
@@ -48,7 +54,7 @@ type ItemWithCandidates = {
   item: string;
   category?: string;
   topCandidates: CandidateInput[];
-  legacyPicked?: { link: string; title?: string; price?: string; currency?: string } | null;
+  legacyPicked?: { url?: string; link?: string; title?: string; price?: string; currency?: string } | null;
 };
 
 /** Request body */
@@ -163,13 +169,14 @@ export async function POST(req: Request) {
       const candidates = filterCandidates(it);
       const safeCandidates = getSafeCandidatesForPick(it);
       const legacy = it.legacyPicked;
+      const legacyHref = legacyUrl(legacy);
       if (candidates.length === 0) {
-        if (legacy?.link) {
-          const num = legacy.price ? parseFloat(legacy.price.replace(",", ".")) : undefined;
+        if (legacyHref) {
+          const num = legacy?.price ? parseFloat(String(legacy.price).replace(",", ".")) : undefined;
           picks.push({
             item: it.item,
-            pickedUrl: legacy.link,
-            pickedTitle: legacy.title,
+            pickedUrl: legacyHref,
+            pickedTitle: legacy?.title,
             pickedPrice: typeof num === "number" && !Number.isNaN(num) ? { value: num, currency: "EUR" } : null,
             confidence: "low",
             reason: "No candidates after filter; using legacy SERP pick",
@@ -187,12 +194,12 @@ export async function POST(req: Request) {
         continue;
       }
       if (safeCandidates.length === 0) {
-        if (legacy?.link) {
-          const num = legacy.price ? parseFloat(legacy.price.replace(",", ".")) : undefined;
+        if (legacyHref) {
+          const num = legacy?.price ? parseFloat(String(legacy.price).replace(",", ".")) : undefined;
           picks.push({
             item: it.item,
-            pickedUrl: legacy.link,
-            pickedTitle: legacy.title,
+            pickedUrl: legacyHref,
+            pickedTitle: legacy?.title,
             pickedPrice: typeof num === "number" && !Number.isNaN(num) ? { value: num, currency: "EUR" } : null,
             confidence: "low",
             reason: "No safe candidates (tool/mustTokens/pdf/budget); using legacy",
@@ -267,13 +274,13 @@ Choose the single best candidate or null. Return JSON: { "pickedUrl", "pickedTit
             reason: "Empty LLM response; fallback best by score (must-hit + overlap)",
             selectionSource: "fallback",
           });
-        } else if (it.legacyPicked?.link) {
+        } else if (legacyHref) {
           const l = it.legacyPicked;
-          const num = l.price ? parseFloat(l.price.replace(",", ".")) : undefined;
+          const num = l?.price ? parseFloat(String(l.price).replace(",", ".")) : undefined;
           picks.push({
             item: it.item,
-            pickedUrl: l.link,
-            pickedTitle: l.title,
+            pickedUrl: legacyHref,
+            pickedTitle: l?.title,
             pickedPrice: typeof num === "number" && !Number.isNaN(num) ? { value: num, currency: "EUR" } : null,
             confidence: "low",
             reason: "Empty LLM response; using legacy pick",
@@ -292,37 +299,25 @@ Choose the single best candidate or null. Return JSON: { "pickedUrl", "pickedTit
       }
 
       try {
-        const parsed = JSON.parse(raw);
+        const parsedJson = gptPickJsonSchema.safeParse(JSON.parse(raw));
+        const parsed = parsedJson.success ? parsedJson.data : null;
         const pickedUrl =
-          typeof parsed.pickedUrl === "string" && parsed.pickedUrl.trim()
-            ? parsed.pickedUrl.trim()
-            : null;
-        const pickedTitle =
-          typeof parsed.pickedTitle === "string" ? parsed.pickedTitle : undefined;
-        const pickedPrice =
-          parsed.pickedPrice &&
-          typeof parsed.pickedPrice.value === "number" &&
-          parsed.pickedPrice.currency === "EUR"
-            ? {
-                value: parsed.pickedPrice.value,
-                currency: "EUR" as const,
-                unit: ["item", "m2", "from", "set"].includes(parsed.pickedPrice.unit)
-                  ? parsed.pickedPrice.unit
-                  : undefined,
-              }
-            : null;
+          parsed?.pickedUrl && parsed.pickedUrl.trim() ? parsed.pickedUrl.trim() : null;
+        const match = pickedUrl ? safeCandidates.find((c) => c.url === pickedUrl) : undefined;
         const confidence =
-          ["high", "medium", "low"].includes(parsed.confidence) ? parsed.confidence : "low";
-        const reason = typeof parsed.reason === "string" ? parsed.reason : "";
+          parsed?.confidence && ["high", "medium", "low"].includes(parsed.confidence)
+            ? parsed.confidence
+            : "low";
+        const reason = parsed?.reason ?? "";
 
-        const urlInSafe = safeCandidates.some((c) => c.url === pickedUrl);
-        const useGptPick = pickedUrl && urlInSafe && confidence !== "low";
-        if (useGptPick) {
+        const urlInSafe = Boolean(match);
+        const useGptPick = Boolean(pickedUrl && urlInSafe && confidence !== "low" && match);
+        if (useGptPick && match) {
           picks.push({
             item: it.item,
-            pickedUrl,
-            pickedTitle,
-            pickedPrice,
+            pickedUrl: match.url,
+            pickedTitle: match.title,
+            pickedPrice: match.price ?? null,
             confidence,
             reason,
             selectionSource: "gpt",
@@ -339,13 +334,13 @@ Choose the single best candidate or null. Return JSON: { "pickedUrl", "pickedTit
               reason: "GPT picked unsafe URL; using safe fallback",
               selectionSource: "fallback",
             });
-          } else if (it.legacyPicked?.link) {
+          } else if (legacyHref) {
             const l = it.legacyPicked;
-            const num = l.price ? parseFloat(l.price.replace(",", ".")) : undefined;
+            const num = l?.price ? parseFloat(String(l.price).replace(",", ".")) : undefined;
             picks.push({
               item: it.item,
-              pickedUrl: l.link,
-              pickedTitle: l.title,
+              pickedUrl: legacyHref,
+              pickedTitle: l?.title,
               pickedPrice: typeof num === "number" && !Number.isNaN(num) ? { value: num, currency: "EUR" } : null,
               confidence: "low",
               reason: "GPT picked unsafe URL; using legacy",
@@ -372,13 +367,13 @@ Choose the single best candidate or null. Return JSON: { "pickedUrl", "pickedTit
               reason: `GPT returned null: ${reason?.slice(0, 80) ?? "no reason"}; fallback best by score (must-hit + overlap)`,
               selectionSource: "fallback",
             });
-          } else if (it.legacyPicked?.link) {
+          } else if (legacyHref) {
             const l = it.legacyPicked;
-            const num = l.price ? parseFloat(l.price.replace(",", ".")) : undefined;
+            const num = l?.price ? parseFloat(String(l.price).replace(",", ".")) : undefined;
             picks.push({
               item: it.item,
-              pickedUrl: l.link,
-              pickedTitle: l.title,
+              pickedUrl: legacyHref,
+              pickedTitle: l?.title,
               pickedPrice: typeof num === "number" && !Number.isNaN(num) ? { value: num, currency: "EUR" } : null,
               confidence: "low",
               reason: "GPT returned null; using legacy pick",
@@ -406,13 +401,13 @@ Choose the single best candidate or null. Return JSON: { "pickedUrl", "pickedTit
             reason: "Invalid JSON from LLM; fallback best by score (must-hit + overlap)",
             selectionSource: "fallback",
           });
-        } else if (it.legacyPicked?.link) {
+        } else if (legacyHref) {
           const l = it.legacyPicked;
-          const num = l.price ? parseFloat(l.price.replace(",", ".")) : undefined;
+          const num = l?.price ? parseFloat(String(l.price).replace(",", ".")) : undefined;
           picks.push({
             item: it.item,
-            pickedUrl: l.link,
-            pickedTitle: l.title,
+            pickedUrl: legacyHref,
+            pickedTitle: l?.title,
             pickedPrice: typeof num === "number" && !Number.isNaN(num) ? { value: num, currency: "EUR" } : null,
             confidence: "low",
             reason: "Invalid JSON from LLM; using legacy pick",

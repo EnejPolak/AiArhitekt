@@ -1,57 +1,15 @@
-"use client";
-
-import * as React from "react";
-import { ProjectsSidebar } from "@/components/app/ProjectsSidebar";
+import { EmptyState } from "@/components/app/EmptyState";
 import { WorkspaceArea } from "@/components/app/WorkspaceArea";
-import { ProjectTypeSelection } from "@/components/app/ProjectTypeSelection";
+import { loadWorkspaceProjects } from "@/lib/projects/server";
 
-export default function AppPage() {
-  const [selectedProjectId, setSelectedProjectId] = React.useState<string | null>(null);
-  const [selectedProjectType, setSelectedProjectType] = React.useState<"room-renovation" | "home-renovation" | "new-construction" | null>(null);
-  const [showProjectSelection, setShowProjectSelection] = React.useState(false);
+export const dynamic = "force-dynamic";
 
-  const handleNewProject = () => {
-    setSelectedProjectId(null);
-    setSelectedProjectType(null);
-    setShowProjectSelection(true);
-  };
+export default async function AppPage() {
+  const { active } = await loadWorkspaceProjects();
 
-  const handleProjectTypeSelect = (type: "room-renovation" | "home-renovation" | "new-construction") => {
-    // Generate a new project ID
-    const newProjectId = `project-${Date.now()}`;
-    
-    // TODO: Create project in backend with type
-    // For now, just set the project ID and hide selection
-    setSelectedProjectId(newProjectId);
-    setSelectedProjectType(type);
-    setShowProjectSelection(false);
-  };
+  if (active.length === 0) {
+    return <EmptyState />;
+  }
 
-  return (
-    <div className="flex h-screen bg-[#0D0D0F] overflow-hidden">
-      {/* Left Sidebar */}
-      <ProjectsSidebar
-        selectedProjectId={selectedProjectId}
-        onProjectSelect={(id) => {
-          setSelectedProjectId(id);
-          setShowProjectSelection(false);
-        }}
-        onNewProject={handleNewProject}
-      />
-
-      {/* Right Workspace Area */}
-      {showProjectSelection ? (
-        <ProjectTypeSelection onSelect={handleProjectTypeSelect} />
-      ) : (
-        <WorkspaceArea 
-          projectId={selectedProjectId} 
-          projectType={selectedProjectType}
-          onProjectComplete={() => {
-            setSelectedProjectId(null);
-            setSelectedProjectType(null);
-          }}
-        />
-      )}
-    </div>
-  );
+  return <WorkspaceArea projectId={null} projectType={null} />;
 }

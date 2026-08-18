@@ -14,6 +14,7 @@
 
 import { getJson } from "serpapi";
 import { SearchIntent, VerifiedProduct } from "./types";
+import { normalizeSerpApiResponse } from "@/lib/serp/normalize";
 
 // Known Slovenian stores to search
 const SLOVENIAN_STORES = [
@@ -127,22 +128,20 @@ export async function searchProducts(
 
         const response = await getJson(params);
 
-        // Extract organic results
-        if (response.organic_results && Array.isArray(response.organic_results)) {
-          for (const result of response.organic_results) {
-            const link = result.link || "";
-            
-            // Only keep product pages
-            if (isProductPage(link)) {
-              allProducts.push({
-                title: result.title || "",
-                link: link,
-                snippet: result.snippet || "",
-                source: extractStoreName(link),
-                category: category,
-                query: query,
-              });
-            }
+        const organic = normalizeSerpApiResponse(response);
+        for (const result of organic) {
+          const link = result.link || "";
+          if (!result.title?.trim() || !link) continue;
+
+          if (isProductPage(link)) {
+            allProducts.push({
+              title: result.title,
+              link,
+              snippet: result.snippet || "",
+              source: extractStoreName(link),
+              category: category,
+              query: query,
+            });
           }
         }
 

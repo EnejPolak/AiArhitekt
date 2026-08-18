@@ -19,6 +19,7 @@ import { itemSpecToCategory } from "@/lib/serp/taxonomy";
 import { rulesBundle } from "@/lib/serp/searchBundle";
 import { parsePriceFromSnippet, parsePriceFromAny, enrichProductPage } from "@/lib/serp/enrich";
 import { rankDomainsBySuccess, recordDomainOutcome } from "@/lib/serp/domainStats";
+import { serpSearchRequestSchema } from "@/lib/schemas/serp";
 
 // Node runtime required: lib/serp/domains uses Node crypto for cache key hash (no Edge).
 export const runtime = "nodejs";
@@ -42,13 +43,13 @@ interface SerpSearchRequest {
   debug?: boolean;
 }
 
-/** One best product per item (or null). */
+/** One best product per item (or null). Canonical: url + numeric price or null. */
 type ApiPicked = {
   title: string;
-  link: string;
-  image?: string;
-  price?: string;
-  currency?: string;
+  url: string;
+  image: string | null;
+  price: number | null;
+  currency: "EUR" | null;
   score: number;
   confidence: number;
   reasons: string[];
@@ -91,6 +92,8 @@ type SerpResponse = {
   domainsPerItemUsed?: number;
   variantsUsed?: string;
   executedCount: number;
+  dailyUsed: number;
+  dailyRemaining: number;
   results: ApiResult[];
   status: number;
   /** When debug=true: queries executed per item. */
@@ -126,7 +129,14 @@ export async function POST(req: Request) {
       );
     }
 
-    const body: SerpSearchRequest = await req.json().catch(() => ({}));
+    const parsedBody = serpSearchRequestSchema.safeParse(await req.json().catch(() => ({})));
+    if (!parsedBody.success) {
+      return NextResponse.json(
+        { error: "Invalid SERP request", details: parsedBody.error.flatten(), status: 400 },
+        { status: 400 }
+      );
+    }
+    const body = parsedBody.data;
     const items = normalizeItems(body.items);
 
     if (items.length === 0) {
@@ -355,10 +365,10 @@ export async function POST(req: Request) {
 
           results[i].picked = {
             title: picked.title,
-            link: picked.url,
-            image: image ?? undefined,
-            price: price != null ? String(price) : undefined,
-            currency: currency ?? undefined,
+            url: picked.url,
+            image: image ?? null,
+            price: price,
+            currency: currency === "EUR" ? "EUR" : null,
             score: picked.score,
             confidence: picked.confidence,
             reasons: picked.reasons,
@@ -381,6 +391,7 @@ export async function POST(req: Request) {
       }
     }
 
+    const quota = await checkDailyCap();
     const response: SerpResponse = {
       dryRun,
       plannedQueries: planned,
@@ -389,6 +400,8 @@ export async function POST(req: Request) {
       domainsPerItemUsed,
       variantsUsed,
       executedCount,
+      dailyUsed: quota.used,
+      dailyRemaining: quota.remaining,
       results,
       status: 200,
     };

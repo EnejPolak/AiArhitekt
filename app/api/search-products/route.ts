@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { normalizeSerpApiResponse } from "@/lib/serp/normalize";
 
 export const runtime = "nodejs";
 
@@ -70,7 +71,8 @@ export async function POST(req: Request) {
 
           serpCallCount++;
 
-          if (!data.organic_results || !Array.isArray(data.organic_results)) continue;
+          const organic = normalizeSerpApiResponse(data);
+          if (organic.length === 0) continue;
 
           const products: Array<{
             name: string;
@@ -80,26 +82,28 @@ export async function POST(req: Request) {
             store: string;
           }> = [];
 
-          for (const result of data.organic_results) {
-            // Extract price from title/snippet
+          for (const result of organic) {
+            if (!result.title?.trim() || !result.link) continue;
+
             let price = 0;
-            const priceMatch = (result.title + " " + (result.snippet || "")).match(/[\d,]+\.?\d*\s*€/);
+            const priceMatch = `${result.title} ${result.snippet || ""} ${result.price || ""}`.match(
+              /[\d,]+\.?\d*\s*€/
+            );
             if (priceMatch) {
               price = parseFloat(priceMatch[0].replace(/[^\d.,]/g, "").replace(",", "."));
             }
 
-            // Hard filter: price must be <= per_item_max
+            // Hard filter: price must be <= per_item_max; skip if price is unavailable
             if (price > 0 && price <= capValue.max) {
               products.push({
-                name: result.title || "Product",
+                name: result.title,
                 price,
-                url: result.link || "",
-                imageUrl: result.thumbnail || null,
+                url: result.link,
+                imageUrl: result.image ?? null,
                 store: store.name,
               });
             }
 
-            // Stop early if we have 3 good results
             if (products.length >= 3) break;
           }
 

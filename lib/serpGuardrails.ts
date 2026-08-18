@@ -6,6 +6,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import { TTLCache } from "./cache";
 import { serpCacheKey } from "./serp/domains";
+import { normalizeSerpApiResponse } from "./serp/normalize";
 
 const DAILY_CAP = Math.max(1, parseInt(process.env.SERP_DAILY_CAP ?? "100", 10) || 100);
 const RATE_LIMIT_MS = 1000; // 1 request per second
@@ -215,14 +216,14 @@ export async function makeSerpRequest(
     }
 
     const data = await response.json();
-
-    // Parse organic results (top 5)
-    const organic = (data.organic_results || [])
+    const organic = normalizeSerpApiResponse(data)
       .slice(0, 5)
-      .map((item: any) => ({
-        title: item.title || "",
-        link: item.link || "",
-        snippet: item.snippet || "",
+      .map((r) => ({
+        title: r.title,
+        link: r.link,
+        snippet: r.snippet ?? "",
+        price: r.price,
+        image: r.image,
       }));
 
     const result: SerpResult = { organic };

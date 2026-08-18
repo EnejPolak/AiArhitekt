@@ -1,5 +1,10 @@
 # System Architecture - 4-Layer Design
 
+> **Superseded as source of truth.** Current architecture, UI, AI, and testing live in:
+> `docs/ARCHITECTURE.md`, `docs/DESIGN.md`, `docs/AI_ARCHITECTURE.md`, `docs/TESTING.md`.
+>
+> This file describes a target 4-layer split (`lib/services/*`) that is **not implemented** in the repo. Keep for historical intent only.
+
 ## Overview
 
 This system implements a clean, production-safe architecture with **strict separation of concerns**. Each layer has a single responsibility and cannot perform the job of another layer.

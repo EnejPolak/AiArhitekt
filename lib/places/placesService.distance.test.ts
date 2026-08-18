@@ -1,226 +1,181 @@
 /**
- * Tests for distance filtering in placesService
+ * Tests for distance calculation, radius filtering, and discarded tracking.
+ * Nearby Search is mocked; Place Details is mocked so in-radius furniture stores
+ * enter `stores[]` (`places[]` is always empty by design).
+ *
+ * Unique lat/lng per test: searchPlaces caches Nearby Search by rounded coordinates.
  */
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { searchPlaces } from "./placesService";
+import { resetPlacesDelay, setPlacesDelay } from "./runtime";
 
-import { searchPlaces, type SearchParams } from "./placesService";
-import { haversineDistanceKm } from "@/lib/geo/haversine";
+global.fetch = vi.fn();
 
-// Mock fetch
-global.fetch = jest.fn() as jest.Mock;
+const LJUBLJANA = { lat: 46.0569, lng: 14.5058 };
 
-describe("placesService distance filtering", () => {
+function nearbyResult(id: string, name: string, loc: { lat: number; lng: number }) {
+  return {
+    place_id: id,
+    name,
+    geometry: { location: loc },
+    types: ["furniture_store", "store"],
+    vicinity: name,
+  };
+}
+
+function mockGoogle(nearbyResults: unknown[]) {
+  (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: unknown) => {
+    const u = String(url);
+    if (u.includes("place/details")) {
+      return {
+        ok: true,
+        json: async () => ({
+          status: "OK",
+          result: {
+            name: "Merkur Velenje",
+            website: "https://www.merkur.si/",
+            types: ["furniture_store", "home_goods_store", "store", "point_of_interest"],
+            formatted_address: "Velenje, Slovenia",
+            geometry: { location: { lat: 46.3592, lng: 15.1103 } },
+            rating: 4.2,
+            user_ratings_total: 80,
+          },
+        }),
+      };
+    }
+    return {
+      ok: true,
+      json: async () => ({
+        status: "OK",
+        results: nearbyResults,
+      }),
+    };
+  });
+}
+
+describe("Places Service - Distance Calculation", () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
     process.env.GOOGLE_MAPS_API_KEY = "test-key";
-    (process.env as Record<string, string>).NODE_ENV = "test";
+    setPlacesDelay(async () => {});
   });
 
-  it("should filter out places outside radius (Ljubljana from Velenje)", async () => {
-    // Velenje coordinates
-    const velenjeLat = 46.3592;
-    const velenjeLng = 15.1103;
+  afterEach(() => {
+    resetPlacesDelay();
+  });
 
-    // Ljubljana coordinates (outside 50km radius)
-    const ljubljanaLat = 46.0569;
-    const ljubljanaLng = 14.5058;
+  it("should calculate distance correctly using haversine formula", async () => {
+    const origin = { lat: 46.351, lng: 15.101 };
+    mockGoogle([nearbyResult("ChIJDistCalc", "Merkur Velenje", origin)]);
 
-    const distance = haversineDistanceKm(velenjeLat, velenjeLng, ljubljanaLat, ljubljanaLng);
-    expect(distance).toBeGreaterThan(50); // Verify Ljubljana is indeed outside 50km
-
-    const params: SearchParams = {
-      lat: velenjeLat,
-      lng: velenjeLng,
+    const result = await searchPlaces({
+      lat: origin.lat,
+      lng: origin.lng,
       radiusKm: 50,
       mode: "category",
       dryRun: false,
-    };
-
-    // Mock Google response with Ljubljana place
-    (global.fetch as jest.Mock).mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        status: "OK",
-        results: [
-          {
-            place_id: "ChIJLjubljana",
-            name: "Store in Ljubljana",
-            geometry: { location: { lat: ljubljanaLat, lng: ljubljanaLng } },
-            types: ["store"],
-            vicinity: "Ljubljana",
-          },
-          {
-            place_id: "ChIJVelenje",
-            name: "Store in Velenje",
-            geometry: { location: { lat: velenjeLat, lng: velenjeLng } },
-            types: ["store"],
-            vicinity: "Velenje",
-          },
-        ],
-      }),
     });
 
-    const result = await searchPlaces(params);
-
-    // Ljubljana should be filtered out
-    const ljubljanaPlace = result.places.find((p) => p.place_id === "ChIJLjubljana");
-    expect(ljubljanaPlace).toBeUndefined();
-
-    // Velenje place should remain (distance = 0)
-    const velenjePlace = result.places.find((p) => p.place_id === "ChIJVelenje");
-    expect(velenjePlace).toBeDefined();
-    expect(velenjePlace?.distanceMeters).toBe(0);
+    expect(result.places).toHaveLength(0);
+    expect(result.stores.length).toBeGreaterThan(0);
+    const store = result.stores[0];
+    expect(store.distanceKm).toBeDefined();
+    expect(typeof store.distanceKm).toBe("number");
+    expect(store.distanceKm).toBeLessThan(0.1);
   });
 
-  it("should keep places within radius (10km from Velenje)", async () => {
-    const velenjeLat = 46.3592;
-    const velenjeLng = 15.1103;
+  it("should include in-radius stores and discard out-of-radius nearby hits", async () => {
+    const origin = { lat: 46.352, lng: 15.102 };
+    mockGoogle([
+      nearbyResult("ChIJInRadius", "Merkur Velenje", origin),
+      nearbyResult("ChIJOutRadius", "Store in Ljubljana", LJUBLJANA),
+    ]);
 
-    // Point approximately 10km away
-    const nearbyLat = 46.3592 + 0.09; // ~10km north
-    const nearbyLng = 15.1103;
-
-    const params: SearchParams = {
-      lat: velenjeLat,
-      lng: velenjeLng,
+    const result = await searchPlaces({
+      lat: origin.lat,
+      lng: origin.lng,
       radiusKm: 50,
       mode: "category",
       dryRun: false,
-    };
-
-    (global.fetch as jest.Mock).mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        status: "OK",
-        results: [
-          {
-            place_id: "ChIJNearby",
-            name: "Store nearby",
-            geometry: { location: { lat: nearbyLat, lng: nearbyLng } },
-            types: ["store"],
-            vicinity: "Near Velenje",
-          },
-        ],
-      }),
     });
 
-    const result = await searchPlaces(params);
-
-    // Nearby place should remain
-    const nearbyPlace = result.places.find((p) => p.place_id === "ChIJNearby");
-    expect(nearbyPlace).toBeDefined();
-    expect(nearbyPlace?.distanceMeters).toBeLessThanOrEqual(50 * 1000);
-    expect(nearbyPlace?.distanceKm).toBeLessThanOrEqual(50);
+    expect(result.stores.some((s) => s.place_id === "ChIJInRadius")).toBe(true);
+    expect(result.stores.some((s) => s.place_id === "ChIJOutRadius")).toBe(false);
+    expect(result.meta.discardedOutOfRadius).toBeGreaterThan(0);
+    expect(result.meta.filteredOutCount).toBeGreaterThan(0);
   });
 
-  it("should include distanceMeters and distanceKm in response", async () => {
-    const lat = 46.3592;
-    const lng = 15.1103;
+  it("should exclude all stores when every nearby result is outside radius", async () => {
+    const origin = { lat: 46.353, lng: 15.103 };
+    mockGoogle([nearbyResult("ChIJOnlyLjubljana", "Store in Ljubljana", LJUBLJANA)]);
 
-    const params: SearchParams = {
-      lat,
-      lng,
+    const result = await searchPlaces({
+      lat: origin.lat,
+      lng: origin.lng,
       radiusKm: 50,
       mode: "category",
       dryRun: false,
-    };
-
-    (global.fetch as jest.Mock).mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        status: "OK",
-        results: [
-          {
-            place_id: "ChIJTest",
-            name: "Test Store",
-            geometry: { location: { lat: lat + 0.01, lng: lng } },
-            types: ["store"],
-            vicinity: "Test",
-          },
-        ],
-      }),
     });
 
-    const result = await searchPlaces(params);
+    expect(result.stores.length).toBe(0);
+    expect(result.meta.discardedOutOfRadius).toBeGreaterThan(0);
+    expect(result.meta.filteredOutCount).toBeGreaterThan(0);
+  });
 
-    expect(result.places.length).toBeGreaterThan(0);
-    result.places.forEach((place) => {
-      expect(place.distanceMeters).toBeDefined();
-      expect(place.distanceKm).toBeDefined();
-      expect(typeof place.distanceMeters).toBe("number");
-      expect(typeof place.distanceKm).toBe("number");
+  it("should include numeric distance fields on stores", async () => {
+    const origin = { lat: 46.354, lng: 15.104 };
+    mockGoogle([nearbyResult("ChIJDistFields", "Merkur Velenje", origin)]);
+
+    const result = await searchPlaces({
+      lat: origin.lat,
+      lng: origin.lng,
+      radiusKm: 50,
+      mode: "category",
+      dryRun: false,
+    });
+
+    expect(result.stores.length).toBeGreaterThan(0);
+    result.stores.forEach((store) => {
+      expect(store.distanceKm).toBeDefined();
+      expect(typeof store.distanceKm).toBe("number");
     });
   });
 
   it("should include filteredOutCount in meta when places are filtered", async () => {
-    const velenjeLat = 46.3592;
-    const velenjeLng = 15.1103;
-    const ljubljanaLat = 46.0569;
-    const ljubljanaLng = 14.5058;
+    const origin = { lat: 46.355, lng: 15.105 };
+    mockGoogle([
+      nearbyResult("ChIJFilterLj", "Store in Ljubljana", LJUBLJANA),
+      nearbyResult("ChIJFilterVe", "Merkur Velenje", origin),
+    ]);
 
-    const params: SearchParams = {
-      lat: velenjeLat,
-      lng: velenjeLng,
+    const result = await searchPlaces({
+      lat: origin.lat,
+      lng: origin.lng,
       radiusKm: 50,
       mode: "category",
       dryRun: false,
-    };
-
-    (global.fetch as jest.Mock).mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        status: "OK",
-        results: [
-          {
-            place_id: "ChIJLjubljana",
-            name: "Store in Ljubljana",
-            geometry: { location: { lat: ljubljanaLat, lng: ljubljanaLng } },
-            types: ["store"],
-            vicinity: "Ljubljana",
-          },
-          {
-            place_id: "ChIJVelenje",
-            name: "Store in Velenje",
-            geometry: { location: { lat: velenjeLat, lng: velenjeLng } },
-            types: ["store"],
-            vicinity: "Velenje",
-          },
-        ],
-      }),
     });
 
-    const result = await searchPlaces(params);
-
-    // Should have filtered out at least Ljubljana
     expect(result.meta.filteredOutCount).toBeGreaterThan(0);
-    expect(
-      result.meta.executionNotes?.some((n) => n.includes("Post-filter removed"))
-    ).toBe(true);
+    expect(result.meta.executionNotes?.some((n) => n.includes("Post-filter removed"))).toBe(
+      true
+    );
   });
 
   it("should include usedLocation in meta", async () => {
-    const lat = 46.3592;
-    const lng = 15.1103;
+    const origin = { lat: 46.356, lng: 15.106 };
+    mockGoogle([]);
 
-    const params: SearchParams = {
-      lat,
-      lng,
+    const result = await searchPlaces({
+      lat: origin.lat,
+      lng: origin.lng,
       radiusKm: 50,
       mode: "category",
       dryRun: false,
-    };
-
-    (global.fetch as jest.Mock).mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        status: "OK",
-        results: [],
-      }),
     });
 
-    const result = await searchPlaces(params);
-
     expect(result.meta.usedLocation).toBeDefined();
-    expect(result.meta.usedLocation?.lat).toBe(lat);
-    expect(result.meta.usedLocation?.lng).toBe(lng);
+    expect(result.meta.usedLocation?.lat).toBe(origin.lat);
+    expect(result.meta.usedLocation?.lng).toBe(origin.lng);
   });
 });

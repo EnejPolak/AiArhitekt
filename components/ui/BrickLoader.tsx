@@ -130,7 +130,7 @@ export const BrickLoader: React.FC<BrickLoaderProps> = ({ className }) => {
           );
         })}
       </div>
-      <span className="text-sm font-medium text-[rgba(255,255,255,0.6)]">
+      <span className="text-sm font-medium text-muted-foreground">
         Processing…
       </span>
     </div>

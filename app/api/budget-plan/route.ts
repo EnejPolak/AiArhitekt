@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
+import { budgetPlanSchema } from "@/lib/schemas/ai";
 
 export const runtime = "nodejs";
 
@@ -58,35 +59,32 @@ Create a budget allocation plan with category caps.`;
     });
 
     const raw = completion.choices?.[0]?.message?.content || "{}";
-    let parsed: any = {};
+    let parsedJson: unknown = {};
     try {
-      parsed = JSON.parse(raw);
+      parsedJson = JSON.parse(raw);
     } catch {
-      parsed = {};
+      parsedJson = {};
     }
 
-    // Validate and normalize
-    if (!parsed.caps || typeof parsed.caps !== "object") {
-      // Fallback
-      parsed = {
-        caps: {
-          "Paint & Wall Finishes": { max: Math.round(avgBudget * 0.15), qty: 1 },
-          "Flooring": { max: Math.round(avgBudget * 0.25), qty: 1 },
-          "Furniture": { max: Math.round(avgBudget * 0.35), qty: 1 },
-          "Lighting": { max: Math.round(avgBudget * 0.10), qty: 1 },
-          "Decor & Accessories": { max: Math.round(avgBudget * 0.10), qty: 1 },
-        },
-        reservedBufferRatio: 0.05,
-        totalBudget: avgBudget,
-      };
-    }
+    const validated = budgetPlanSchema.safeParse(parsedJson);
+    const parsed = validated.success
+      ? validated.data
+      : {
+          caps: {
+            "Paint & Wall Finishes": { max: Math.round(avgBudget * 0.15), qty: 1 },
+            Flooring: { max: Math.round(avgBudget * 0.25), qty: 1 },
+            Furniture: { max: Math.round(avgBudget * 0.35), qty: 1 },
+            Lighting: { max: Math.round(avgBudget * 0.10), qty: 1 },
+            "Decor & Accessories": { max: Math.round(avgBudget * 0.10), qty: 1 },
+          },
+          reservedBufferRatio: 0.05,
+          totalBudget: avgBudget,
+        };
 
-    // Ensure totalBudget is set
     if (!parsed.totalBudget) {
       parsed.totalBudget = avgBudget;
     }
 
-    // Ensure reservedBufferRatio
     if (typeof parsed.reservedBufferRatio !== "number") {
       parsed.reservedBufferRatio = 0.05;
     }

@@ -1,101 +1,176 @@
 "use client";
 
 import * as React from "react";
+import { analyzeRoom } from "@/lib/analysis/actions";
+import type { RoomAnalysisView } from "@/lib/analysis/types";
+import type { DesignRequirements, RoomAnalysisObservation } from "@/lib/analysis/schema";
 
 export interface Step3AIObservationProps {
-  photos: File[];
-  onObservationComplete: (observation: string) => void;
+  projectId: string;
+  hasPersistedPhoto: boolean;
+  initialAnalysis: RoomAnalysisView | null;
+  onContinue: (analysis: RoomAnalysisView) => void;
+}
+
+type Status = "ready" | "analyzing" | "complete" | "error";
+
+const ROOM_TYPE_LABEL: Record<RoomAnalysisObservation["roomType"], string> = {
+  kitchen: "Kitchen",
+  bathroom: "Bathroom",
+  bedroom: "Bedroom",
+  "living-room": "Living room",
+  other: "Other",
+  unknown: "Uncertain",
+};
+
+function Section({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="mt-4">
+      <div className="text-[12px] uppercase tracking-[0.08em] text-[rgba(255,255,255,0.45)] mb-2">
+        {title}
+      </div>
+      <div className="text-[14px] text-[rgba(255,255,255,0.82)] leading-relaxed">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function List({ items }: { items: string[] }) {
+  if (items.length === 0) {
+    return <span className="text-[rgba(255,255,255,0.45)]">None noted</span>;
+  }
+  return (
+    <ul className="list-disc pl-4 space-y-1">
+      {items.map((item) => (
+        <li key={item}>{item}</li>
+      ))}
+    </ul>
+  );
+}
+
+function AnalysisBody({
+  analysis,
+  requirements,
+}: {
+  analysis: RoomAnalysisObservation;
+  requirements: DesignRequirements;
+}) {
+  const existing = analysis.existingElements.map((item) => item.description);
+  const furniture = requirements.furnitureNeeds.map((item) => {
+    const qty = item.quantity != null ? ` × ${item.quantity}` : "";
+    const place = item.placementNotes ? ` — ${item.placementNotes}` : "";
+    return `${item.category}${qty}${place}`;
+  });
+  const materials = requirements.materialNeeds.map((item) => {
+    const finish = item.finishDirection ? ` (${item.finishDirection})` : "";
+    return `${item.surface}: ${item.category}${finish}`;
+  });
+
+  return (
+    <>
+      <Section title="Room detected">
+        {ROOM_TYPE_LABEL[analysis.roomType]}
+        {analysis.visualCondition.overall ? ` · ${analysis.visualCondition.overall}` : ""}
+      </Section>
+      <Section title="Existing space">
+        <List
+          items={[
+            ...analysis.architecture.fixedElements,
+            ...existing,
+            ...(analysis.visualCondition.colors.length
+              ? [`Colors: ${analysis.visualCondition.colors.join(", ")}`]
+              : []),
+            ...(analysis.visualCondition.lighting
+              ? [`Lighting: ${analysis.visualCondition.lighting}`]
+              : []),
+          ]}
+        />
+      </Section>
+      <Section title="What should stay">
+        <List items={analysis.preserve.length ? analysis.preserve : requirements.preserve} />
+      </Section>
+      <Section title="What could change">
+        <List
+          items={
+            analysis.replaceOrRemove.length
+              ? analysis.replaceOrRemove
+              : requirements.replaceOrRemove
+          }
+        />
+      </Section>
+      <Section title="Furniture needed">
+        <List items={furniture} />
+      </Section>
+      <Section title="Materials needed">
+        <List items={materials} />
+      </Section>
+      <Section title="Constraints / uncertainties">
+        <List
+          items={[
+            ...analysis.constraints,
+            ...analysis.measurementStatus.qualitativeNotes,
+            ...analysis.uncertainties,
+          ]}
+        />
+      </Section>
+    </>
+  );
 }
 
 export const Step3AIObservation: React.FC<Step3AIObservationProps> = ({
-  photos,
-  onObservationComplete,
+  projectId,
+  hasPersistedPhoto,
+  initialAnalysis,
+  onContinue,
 }) => {
-  const [isAnalyzing, setIsAnalyzing] = React.useState(true);
-  const [observation, setObservation] = React.useState<string | null>(null);
+  const [analysis, setAnalysis] = React.useState<RoomAnalysisView | null>(initialAnalysis);
+  const [status, setStatus] = React.useState<Status>(
+    initialAnalysis ? "complete" : "ready"
+  );
   const [error, setError] = React.useState<string | null>(null);
-  const completedRef = React.useRef(false);
-  const lastRunKeyRef = React.useRef<string>("");
-
-  const photosKey = React.useMemo(() => {
-    return photos
-      .map((p) => `${p.name}:${p.size}:${p.lastModified}`)
-      .join("|");
-  }, [photos]);
+  const inFlightRef = React.useRef(false);
 
   React.useEffect(() => {
-    // Prevent double-run in React StrictMode for same inputs
-    if (lastRunKeyRef.current === photosKey) return;
-    lastRunKeyRef.current = photosKey;
+    setAnalysis(initialAnalysis);
+    setStatus(initialAnalysis ? "complete" : "ready");
+    setError(null);
+  }, [initialAnalysis]);
 
-    const analyzePhotos = async () => {
-      if (photos.length === 0) {
-        setError("No photos to analyze");
-        setIsAnalyzing(false);
-        return;
-      }
+  const runAnalysis = async (reanalyze: boolean) => {
+    if (inFlightRef.current) return;
+    if (!hasPersistedPhoto) {
+      setError("Upload a room photo before analyzing.");
+      setStatus("error");
+      return;
+    }
+    inFlightRef.current = true;
+    setStatus("analyzing");
+    setError(null);
+    const result = await analyzeRoom({ projectId, reanalyze });
+    inFlightRef.current = false;
+    if (!result.ok) {
+      setError(result.message);
+      setStatus(analysis ? "complete" : "error");
+      return;
+    }
+    setAnalysis(result.analysis);
+    setStatus("complete");
+  };
 
-      try {
-        // Convert files to base64
-        const imagePromises = photos.map((file) => {
-          return new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => {
-              const result = reader.result as string;
-              resolve(result);
-            };
-            reader.onerror = reject;
-            reader.readAsDataURL(file);
-          });
-        });
+  const cardClass =
+    "max-w-[85%] rounded-[16px] px-6 py-5 bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.08)]";
 
-        const base64Images = await Promise.all(imagePromises);
-
-        // Call API to analyze images
-        const response = await fetch("/api/analyze-room", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            images: base64Images,
-          }),
-        });
-
-        if (!response.ok) {
-          throw new Error("Failed to analyze room");
-        }
-
-        const data = await response.json();
-        setObservation(data.observation);
-      } catch (err: any) {
-        console.error("Error analyzing photos:", err);
-        setError(err.message || "Failed to analyze room photos");
-        // Fallback observation
-        setObservation(
-          "The room appears to be in need of renovation. I can see the current layout and finishes."
-        );
-      } finally {
-        setIsAnalyzing(false);
-      }
-    };
-
-    analyzePhotos();
-  }, [photos, photosKey]);
-
-  // Auto-advance when observation is ready (no manual Continue)
-  React.useEffect(() => {
-    if (completedRef.current) return;
-    if (!observation) return;
-    completedRef.current = true;
-    const t = setTimeout(() => onObservationComplete(observation), 150);
-    return () => clearTimeout(t);
-  }, [observation, onObservationComplete]);
-
-  if (isAnalyzing) {
+  if (status === "analyzing") {
     return (
       <div className="flex justify-start mb-6">
-        <div className="max-w-[85%] rounded-[16px] px-6 py-5 bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.08)]">
+        <div className={cardClass}>
           <div className="text-[15px] text-[rgba(255,255,255,0.85)] leading-relaxed">
             Analyzing your space…
           </div>
@@ -109,19 +184,68 @@ export const Step3AIObservation: React.FC<Step3AIObservationProps> = ({
     );
   }
 
-  if (error && !observation) {
+  if (status === "complete" && analysis) {
     return (
       <div className="flex justify-start mb-6">
-        <div className="max-w-[85%] rounded-[16px] px-6 py-5 bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.08)]">
+        <div className={cardClass}>
           <div className="text-[15px] text-[rgba(255,255,255,0.85)] leading-relaxed">
-            {error}
+            Here is a structured reading of the current room. Style and budget come next —
+            this is observation and requirements, not a product list or a render.
+          </div>
+          <AnalysisBody
+            analysis={analysis.analysis}
+            requirements={analysis.designRequirements}
+          />
+          {error ? (
+            <p className="mt-4 text-[13px] text-[#E5484D]" role="alert">
+              {error}
+            </p>
+          ) : null}
+          <div className="flex flex-wrap gap-3 mt-5">
+            <button
+              type="button"
+              onClick={() => onContinue(analysis)}
+              className="text-[14px] text-[rgba(0,230,204,0.85)] hover:text-[rgba(0,230,204,1)]"
+            >
+              Continue
+            </button>
+            <button
+              type="button"
+              onClick={() => void runAnalysis(true)}
+              className="text-[14px] text-[rgba(255,255,255,0.70)] hover:text-white"
+            >
+              Re-analyze
+            </button>
           </div>
         </div>
       </div>
     );
   }
 
-  if (observation) return null;
-
-  return null;
+  return (
+    <div className="flex justify-start mb-6">
+      <div className={cardClass}>
+        <div className="text-[15px] text-[rgba(255,255,255,0.85)] leading-relaxed">
+          {hasPersistedPhoto
+            ? "The room photo is saved. I can analyze the existing space and prepare design requirements. This does not search products or generate a render."
+            : "Upload a room photo first, then analyze the space."}
+        </div>
+        {error ? (
+          <p className="mt-3 text-[13px] text-[#E5484D]" role="alert">
+            {error}
+          </p>
+        ) : null}
+        <div className="mt-5">
+          <button
+            type="button"
+            disabled={!hasPersistedPhoto}
+            onClick={() => void runAnalysis(false)}
+            className="text-[14px] text-[rgba(0,230,204,0.85)] hover:text-[rgba(0,230,204,1)] disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Analyze Room
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 };

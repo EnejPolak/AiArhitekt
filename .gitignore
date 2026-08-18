@@ -38,3 +38,7 @@ next-env.d.ts
 # tmp files
 /tmp
 
+# supabase local (also listed in supabase/.gitignore)
+supabase/.temp
+supabase/.branches
+

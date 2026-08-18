@@ -63,23 +63,15 @@ Room renovation flow je interaktivni pogovorni proces, ki vodi uporabnika skozi 
 **Komponenta:** `Step3AIObservation.tsx`
 
 **Proces:**
-1. Komponenta se avtomatsko zažene, ko so fotografije naložene
-2. Prikaže se loading stanje: "Analyzing your space…"
-3. Fotografije se pretvorijo v base64 data URLs
-4. API klic: `POST /api/analyze-room`
-   - **API Endpoint:** `/app/api/analyze-room/route.ts`
-   - Uporablja OpenAI GPT-4o Vision API
-   - Analizira fotografije in generira objektivno opazovanje sobe
-   - System prompt: "Describe only what you objectively see... Do not guess. Do not suggest improvements."
-5. AI opazovanje se prikaže v konverzaciji
-6. Flow se avtomatsko premakne na korak 4
+1. The room photo must already be persisted in private Storage (`project_uploads`).
+2. The user explicitly clicks **Analyze Room** (not on mount, not on refresh).
+3. Server action `analyzeRoom` loads the owned project photo, reuses a current analysis when possible, otherwise claims a 60s per-project cooldown slot and calls OpenAI.
+4. Structured observation + design requirements are shown. **Continue** goes to style selection.
+5. **Re-analyze** is the same paid path and is cooldown-limited.
 
-**API Endpoint:** `POST /api/analyze-room`
-- **Model:** GPT-4o (Vision)
-- **Input:** Array of base64 image data URLs
-- **Output:** `{ observation: string }` - 2-3 kratke, faktualne povedi o trenutnem stanju sobe
+The unauthenticated `POST /api/analyze-room` route has been removed.
 
-**Shranjeno:** `aiObservation: string`
+**Shranjeno:** `project_room_analyses` (not in-memory File state)
 
 ---
 
@@ -319,12 +311,9 @@ Room renovation flow je interaktivni pogovorni proces, ki vodi uporabnika skozi 
 - **Model:** GPT-4o-mini
 - **Namen:** Generira personaliziran pozdrav
 
-### 2. `/api/analyze-room`
-- **Metoda:** POST
-- **Model:** GPT-4o (Vision)
-- **Input:** `{ images: string[] }` (base64 data URLs)
-- **Output:** `{ observation: string }`
-- **Namen:** Analizira fotografije sobe in generira objektivno opazovanje
+### 2. Room analysis (canonical)
+
+Authenticated server action `analyzeRoom` in `lib/analysis/actions.ts`. Source image is the private Storage `room_photo`. `POST /api/analyze-room` no longer exists.
 
 ### 3. `/api/prompt-room-render`
 - **Metoda:** POST

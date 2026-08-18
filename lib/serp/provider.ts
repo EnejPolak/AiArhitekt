@@ -4,6 +4,7 @@
  */
 
 import { normalizeDomainToRoot } from "./domains";
+import { normalizeSerpApiResponse } from "./normalize";
 import type { SerpOrganicResult } from "./pickBest";
 
 export interface FetchSerpOptions {
@@ -64,23 +65,7 @@ async function fetchSerpInternal(
     }
 
     const data = await response.json();
-
-    const organic: SerpOrganicResult[] = (data.organic_results || [])
-      .map((item: any) => {
-        const priceRaw = item.price ?? item.rich_snippet?.price ?? item.rich_snippets?.top?.price;
-        const priceStr = typeof priceRaw === "string" ? priceRaw : priceRaw?.value ?? undefined;
-        return {
-          title: item.title || "",
-          link: item.link || "",
-          snippet: item.snippet || "",
-          price: priceStr ?? (typeof item.price === "string" ? item.price : undefined),
-          image: item.thumbnail ?? item.image ?? undefined,
-          richSnippetPrice: typeof priceRaw === "string" ? priceRaw : priceRaw?.value ?? undefined,
-        };
-      })
-      .filter((item: SerpOrganicResult) => item.link.length > 0);
-
-    return organic;
+    return normalizeSerpApiResponse(data);
   } catch (error: any) {
     clearTimeout(timeout);
     if (error.name === "AbortError") {

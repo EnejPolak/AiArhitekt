@@ -53,7 +53,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({ className }) => {
         No projects yet.
       </h2>
       <p className="text-[15px] text-[rgba(255,255,255,0.55)] mb-8 max-w-md">
-        Start by uploading your first floor plan.
+        Start by creating your first project.
       </p>
 
       {/* CTA Button */}

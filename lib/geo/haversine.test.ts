@@ -2,6 +2,7 @@
  * Tests for Haversine distance calculation
  */
 
+import { describe, it, expect } from "vitest";
 import { haversineDistanceMeters, haversineDistanceKm } from "./haversine";
 
 describe("haversine", () => {

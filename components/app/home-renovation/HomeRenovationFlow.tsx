@@ -14,6 +14,7 @@ import { Step8ConceptSelection } from "./steps/Step8ConceptSelection";
 import { Step9CostEstimate } from "./steps/Step9CostEstimate";
 import { Step10MaterialGuidance } from "./steps/Step10MaterialGuidance";
 import { Step11FinalReport } from "./steps/Step11FinalReport";
+import { stepIndexFromKey, stepKeyFromIndex } from "@/lib/projects/steps";
 
 export interface HomeRenovationData {
   userName?: string;
@@ -56,13 +57,19 @@ export interface ConversationEntry {
 export interface HomeRenovationFlowProps {
   projectId: string;
   onComplete?: () => void;
+  initialStepKey?: string;
+  onStepChange?: (key: string) => void;
 }
 
 export const HomeRenovationFlow: React.FC<HomeRenovationFlowProps> = ({
   projectId,
   onComplete,
+  initialStepKey,
+  onStepChange,
 }) => {
-  const [currentStep, setCurrentStep] = React.useState(0);
+  const [currentStep, setCurrentStep] = React.useState(() =>
+    stepIndexFromKey("home-renovation", initialStepKey ?? "greeting")
+  );
   const [conversation, setConversation] = React.useState<ConversationEntry[]>([]);
   const [data, setData] = React.useState<HomeRenovationData>({
     homeType: null,
@@ -188,7 +195,11 @@ export const HomeRenovationFlow: React.FC<HomeRenovationFlowProps> = ({
   };
 
   const nextStep = () => {
-    setCurrentStep((prev) => Math.min(prev + 1, 11));
+    setCurrentStep((prev) => {
+      const next = Math.min(prev + 1, 11);
+      onStepChange?.(stepKeyFromIndex("home-renovation", next));
+      return next;
+    });
   };
 
   // Cleanup typing timers on unmount
@@ -208,6 +219,9 @@ export const HomeRenovationFlow: React.FC<HomeRenovationFlowProps> = ({
   React.useEffect(() => {
     if (!hasInitialized.current) {
       hasInitialized.current = true;
+      if (currentStep > 0) {
+        return;
+      }
       const loadGreeting = async () => {
         try {
           const response = await fetch("/api/generate-greeting", {
@@ -224,10 +238,11 @@ export const HomeRenovationFlow: React.FC<HomeRenovationFlowProps> = ({
           );
         }
         setCurrentStep(1);
+        onStepChange?.(stepKeyFromIndex("home-renovation", 1));
       };
-      loadGreeting();
+      void loadGreeting();
     }
-  }, [addAIMessage]);
+  }, [addAIMessage, currentStep, onStepChange]);
 
   // Add step-specific AI messages when steps change
   const stepMessagesRef = React.useRef<Set<number>>(new Set());
@@ -525,7 +540,7 @@ export const HomeRenovationFlow: React.FC<HomeRenovationFlowProps> = ({
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-hidden bg-[#0D0D0F]">
+    <div className="flex-1 flex flex-col h-full overflow-hidden bg-background">
       {/* Conversation Timeline */}
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-[900px] mx-auto px-6 md:px-8 py-6 md:py-8">

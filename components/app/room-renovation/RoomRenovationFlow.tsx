@@ -18,6 +18,8 @@ import { Step9bProductSourcing } from "./steps/Step9bProductSourcing";
 import { Step9cShoppingList } from "./steps/Step9cShoppingList";
 import { Step9dContractors } from "./steps/Step9dContractors";
 import { Step10FinalReport } from "./steps/Step10FinalReport";
+import { stepIndexFromKey, stepKeyFromIndex } from "@/lib/projects/steps";
+import type { RoomAnalysisView } from "@/lib/analysis/types";
 
 export interface RoomRenovationData {
   roomType: "kitchen" | "bathroom" | "bedroom" | "living-room" | "other" | null;
@@ -99,13 +101,29 @@ export interface ConversationEntry {
 export interface RoomRenovationFlowProps {
   projectId: string;
   onComplete?: () => void;
+  initialStepKey?: string;
+  onStepChange?: (key: string) => void;
+  roomPhoto?: { previewUrl: string | null; filename: string | null } | null;
+  roomAnalysis?: RoomAnalysisView | null;
 }
 
 export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
   projectId,
   onComplete,
+  initialStepKey,
+  onStepChange,
+  roomPhoto,
+  roomAnalysis = null,
 }) => {
-  const [currentStep, setCurrentStep] = React.useState(0);
+  const [currentAnalysis, setCurrentAnalysis] = React.useState<RoomAnalysisView | null>(
+    roomAnalysis
+  );
+  const [hasPersistedPhoto, setHasPersistedPhoto] = React.useState(
+    Boolean(roomPhoto?.previewUrl || roomPhoto?.filename)
+  );
+  const [currentStep, setCurrentStep] = React.useState(() =>
+    stepIndexFromKey("room-renovation", initialStepKey ?? "greeting")
+  );
   const [conversation, setConversation] = React.useState<ConversationEntry[]>([]);
   const [data, setData] = React.useState<RoomRenovationData>({
     roomType: null,
@@ -254,7 +272,11 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
   };
 
   const nextStep = () => {
-    setCurrentStep((prev) => Math.min(prev + 1, 16));
+    setCurrentStep((prev) => {
+      const next = Math.min(prev + 1, 16);
+      onStepChange?.(stepKeyFromIndex("room-renovation", next));
+      return next;
+    });
   };
 
   // Cleanup typing timers on unmount
@@ -274,6 +296,9 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
   React.useEffect(() => {
     if (!hasInitialized.current) {
       hasInitialized.current = true;
+      if (currentStep > 0) {
+        return;
+      }
       const loadGreeting = async () => {
         try {
           const response = await fetch("/api/generate-greeting", {
@@ -287,12 +312,12 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
             "Hello 👋\n\nI'll help you redesign your space step by step.\n\nLet's start simple.\nWhich room would you like to renovate today?"
           );
         }
-        // Advance to step 1 immediately after greeting
         setCurrentStep(1);
+        onStepChange?.(stepKeyFromIndex("room-renovation", 1));
       };
-      loadGreeting();
+      void loadGreeting();
     }
-  }, [addAIMessage]);
+  }, [addAIMessage, currentStep, onStepChange]);
 
   // Add step-specific AI messages when steps change
   const stepMessagesRef = React.useRef<Set<number>>(new Set());
@@ -301,6 +326,7 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
     const stepMessages: Record<number, string> = {
       1: "Which room would you like to renovate today?",
       2: "Great.\n\nPlease upload a photo of the room as it looks right now.",
+      3: "When you are ready, I will analyze the saved photo of this room and prepare design requirements. I will not search products or generate a render yet.",
       4: "What style would you like this room to have?",
       5: "To guide the design choices, what budget level should I aim for?",
       6: "Great. Tell me your preferences (colors, floor, heating, key furniture) so I don’t guess.",
@@ -362,12 +388,21 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
       case 2:
         return (
           <Step2PhotoUpload
-            photos={data.photos}
-            onPhotosChange={(photos) => {
-              updateData({ photos });
+            projectId={projectId}
+            persistedPreviewUrl={roomPhoto?.previewUrl}
+            persistedFilename={roomPhoto?.filename}
+            onPersistedChange={(next) => {
+              setHasPersistedPhoto(Boolean(next.previewUrl || next.filename));
+              setCurrentAnalysis(null);
+              updateData({ photos: [], aiObservation: null });
+              if (!next.previewUrl) {
+                const photoStep = stepIndexFromKey("room-renovation", "photo-upload");
+                setCurrentStep(photoStep);
+                onStepChange?.(stepKeyFromIndex("room-renovation", photoStep));
+              }
             }}
             onContinue={() => {
-              addUserMessage(`${data.photos.length} photo${data.photos.length > 1 ? "s" : ""} uploaded`);
+              addUserMessage("Room photo uploaded");
               nextStep();
             }}
           />
@@ -375,10 +410,14 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
       case 3:
         return (
           <Step3AIObservation
-            photos={data.photos}
-            onObservationComplete={(observation) => {
-              updateData({ aiObservation: observation });
-              addAIMessage(observation);
+            projectId={projectId}
+            hasPersistedPhoto={hasPersistedPhoto}
+            initialAnalysis={currentAnalysis}
+            onContinue={(observation) => {
+              setCurrentAnalysis(observation);
+              const summary = `Room detected: ${observation.analysis.roomType}. Requirements prepared for later product discovery.`;
+              updateData({ aiObservation: summary });
+              addUserMessage("Continue");
               nextStep();
             }}
           />
@@ -750,7 +789,7 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-hidden bg-[#0D0D0F]">
+    <div className="flex-1 flex flex-col h-full overflow-hidden bg-background">
       {/* Conversation Timeline */}
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-[900px] mx-auto px-6 md:px-8 py-6 md:py-8">

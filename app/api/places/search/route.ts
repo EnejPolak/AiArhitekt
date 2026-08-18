@@ -1,11 +1,19 @@
 import { NextResponse } from "next/server";
-import { searchPlaces, type SearchParams } from "@/lib/places/placesService";
+import { searchPlaces } from "@/lib/places/placesService";
+import { placesSearchRequestSchema } from "@/lib/schemas/places";
 
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
   try {
-    const body: SearchParams = await req.json().catch(() => ({}));
+    const parsed = placesSearchRequestSchema.safeParse(await req.json().catch(() => ({})));
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "lat, lng, and radiusKm (1–50) are required", status: 400 },
+        { status: 400 }
+      );
+    }
+    const body = parsed.data;
 
     // Strict validation - fail if lat/lng missing or invalid
     if (typeof body.lat !== "number" || typeof body.lng !== "number") {

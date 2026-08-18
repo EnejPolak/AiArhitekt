@@ -1,0 +1,50 @@
+import { describe, it, expect } from "vitest";
+import {
+  buildPlannedQueries,
+  itemSpecToKeywords,
+  stripStoreNamesAndDomainsFromItem,
+} from "./queryGen";
+
+describe("queryGen", () => {
+  const allowlist = ["merkur.si", "jysk.si"];
+
+  it("strips store names from item specs so they never appear as keywords", () => {
+    const spec = stripStoreNamesAndDomainsFromItem(
+      "bela stenska barva merkur jysk",
+      allowlist
+    );
+    expect(spec.toLowerCase()).not.toMatch(/merkur/);
+    expect(spec.toLowerCase()).not.toMatch(/jysk/);
+    expect(spec).toMatch(/barva/);
+  });
+
+  it("itemSpecToKeywords drops store names, domains, and price noise", () => {
+    const keywords = itemSpecToKeywords("stenska barva merkur 12 EUR merkur.si", allowlist);
+    expect(keywords.toLowerCase()).not.toContain("merkur");
+    expect(keywords.toLowerCase()).not.toContain("eur");
+    expect(keywords).toMatch(/stenska/);
+    expect(keywords).toMatch(/barva/);
+  });
+
+  it("builds site:domain queries from specs and allowlist only", () => {
+    const { planned, flat } = buildPlannedQueries(["stenska barva bela"], allowlist);
+
+    expect(flat.length).toBeGreaterThan(0);
+    for (const row of flat) {
+      expect(row.query).toMatch(/^site:(merkur\.si|jysk\.si)\s+/);
+      const keywords = row.query.replace(/^site:\S+\s+/, "").toLowerCase();
+      expect(keywords).not.toMatch(/\bmerkur\b/);
+      expect(row.item).toBe("stenska barva bela");
+    }
+    expect(planned["stenska barva bela"]?.length).toBeGreaterThan(0);
+    expect(planned["stenska barva bela"].some((q) => q.includes("site:merkur.si"))).toBe(
+      true
+    );
+  });
+
+  it("does not plan queries when the item is only a store name", () => {
+    const { planned, flat } = buildPlannedQueries(["Merkur"], allowlist);
+    expect(flat).toEqual([]);
+    expect(planned["Merkur"]).toEqual([]);
+  });
+});

@@ -3,50 +3,62 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 import { RoomRenovationFlow } from "./room-renovation/RoomRenovationFlow";
-import { HomeRenovationFlow } from "./home-renovation/HomeRenovationFlow";
+import { updateWizardStep } from "@/lib/projects/actions";
+import { MVP_PROJECT_TYPE, type ProjectType } from "@/lib/projects/types";
+import type { RoomAnalysisView } from "@/lib/analysis/types";
 
 export interface WorkspaceAreaProps {
   projectId: string | null;
-  projectType?: "room-renovation" | "home-renovation" | "new-construction" | null;
-  onProjectComplete?: () => void;
+  projectType?: ProjectType | null;
+  currentStepKey?: string;
+  roomPhoto?: { previewUrl: string | null; filename: string | null } | null;
+  roomAnalysis?: RoomAnalysisView | null;
   className?: string;
 }
 
 export const WorkspaceArea: React.FC<WorkspaceAreaProps> = ({
   projectId,
   projectType,
-  onProjectComplete,
+  currentStepKey,
+  roomPhoto,
+  roomAnalysis = null,
   className,
 }) => {
+  const persistStep = (key: string) => {
+    if (!projectId) return;
+    void updateWizardStep({
+      projectId,
+      projectType: MVP_PROJECT_TYPE,
+      currentStepKey: key,
+    });
+  };
+
   return (
     <div
       className={cn(
         "flex-1 h-screen",
-        "bg-[#0D0D0F]",
+        "bg-background",
         "flex flex-col",
         "overflow-hidden",
         className
       )}
     >
-      {projectId && projectType === "room-renovation" ? (
-        <RoomRenovationFlow 
-          projectId={projectId} 
-          onComplete={onProjectComplete}
-        />
-      ) : projectId && projectType === "home-renovation" ? (
-        <HomeRenovationFlow 
-          projectId={projectId} 
-          onComplete={onProjectComplete}
+      {projectId && projectType === MVP_PROJECT_TYPE ? (
+        <RoomRenovationFlow
+          projectId={projectId}
+          initialStepKey={currentStepKey}
+          onStepChange={persistStep}
+          roomPhoto={roomPhoto}
+          roomAnalysis={roomAnalysis}
         />
       ) : projectId ? (
         <div className="flex-1 flex items-center justify-center px-6">
           <div className="text-center">
             <h2 className="text-[20px] font-semibold text-white mb-2">
-              Project Workspace
+              Project type not available
             </h2>
             <p className="text-[14px] text-[rgba(255,255,255,0.60)]">
-              {projectType === "new-construction" && "New construction flow coming soon"}
-              {!projectType && "Project content will appear here"}
+              This MVP supports single-room renovation only.
             </p>
           </div>
         </div>
@@ -57,7 +69,7 @@ export const WorkspaceArea: React.FC<WorkspaceAreaProps> = ({
               No project selected
             </h2>
             <p className="text-[14px] text-[rgba(255,255,255,0.60)]">
-              Click "New Project" to get started
+              Click &quot;New Project&quot; to get started
             </p>
           </div>
         </div>
