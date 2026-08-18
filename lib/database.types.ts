@@ -308,6 +308,62 @@ export type Database = {
           },
         ]
       }
+      project_room_preferences: {
+        Row: {
+          bed_type: string
+          budget_level: string | null
+          created_at: string
+          flooring: string
+          keep_existing_walls: boolean
+          notes: string
+          project_id: string
+          room_type: string | null
+          selected_styles: Json
+          underfloor_heating: boolean
+          updated_at: string
+          wall_accent_color: string
+          wall_main_color: string
+        }
+        Insert: {
+          bed_type?: string
+          budget_level?: string | null
+          created_at?: string
+          flooring?: string
+          keep_existing_walls?: boolean
+          notes?: string
+          project_id: string
+          room_type?: string | null
+          selected_styles?: Json
+          underfloor_heating?: boolean
+          updated_at?: string
+          wall_accent_color?: string
+          wall_main_color?: string
+        }
+        Update: {
+          bed_type?: string
+          budget_level?: string | null
+          created_at?: string
+          flooring?: string
+          keep_existing_walls?: boolean
+          notes?: string
+          project_id?: string
+          room_type?: string | null
+          selected_styles?: Json
+          underfloor_heating?: boolean
+          updated_at?: string
+          wall_accent_color?: string
+          wall_main_color?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_room_preferences_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: true
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       project_room_renders: {
         Row: {
           completed_at: string | null
@@ -556,6 +612,10 @@ export type Database = {
       }
       is_owned_project_upload_path: {
         Args: { object_name: string }
+        Returns: boolean
+      }
+      project_room_preference_styles_valid: {
+        Args: { styles: Json }
         Returns: boolean
       }
       replace_project_product_discovery_result: {

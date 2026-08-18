@@ -78,4 +78,16 @@ describe("trusted table GRANTs (local)", () => {
       localHasTablePrivilege("authenticated", "project_product_reference_assets", "UPDATE")
     ).toBe(false);
   });
+
+  it("authenticated can CRUD own project_room_preferences; anon cannot", () => {
+    assertLocalOnly(LOCAL_URL);
+    expect(localHasTablePrivilege("authenticated", "project_room_preferences", "SELECT")).toBe(true);
+    expect(localHasTablePrivilege("authenticated", "project_room_preferences", "INSERT")).toBe(true);
+    expect(localHasTablePrivilege("authenticated", "project_room_preferences", "UPDATE")).toBe(true);
+    expect(localHasTablePrivilege("authenticated", "project_room_preferences", "DELETE")).toBe(true);
+    expect(localHasTablePrivilege("anon", "project_room_preferences", "SELECT")).toBe(false);
+    expect(localHasTablePrivilege("anon", "project_room_preferences", "INSERT")).toBe(false);
+    expect(localHasTablePrivilege("anon", "project_room_preferences", "UPDATE")).toBe(false);
+    expect(localHasTablePrivilege("anon", "project_room_preferences", "DELETE")).toBe(false);
+  });
 });
