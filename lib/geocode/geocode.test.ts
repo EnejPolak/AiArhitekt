@@ -186,4 +186,16 @@ describe("geocode", () => {
     expect(result).toMatchObject({ ok: false, code: GEOCODING_ERROR_CODES.DISABLED });
     expect(fetchFn).not.toHaveBeenCalled();
   });
+
+  it("returns formattedAddress for a successful reverse geocode", async () => {
+    fetchFn.mockResolvedValue(jsonResponse(OK_BODY));
+    const result = await reverseGeocode(46.3592, 15.1103, fetchFn);
+    expect(result).toEqual({
+      ok: true,
+      formattedAddress: "Velenje, Slovenia",
+      lat: 46.3592,
+      lng: 15.1103,
+    });
+    expect(result).not.toHaveProperty("address");
+  });
 });

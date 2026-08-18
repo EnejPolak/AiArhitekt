@@ -10,7 +10,7 @@ type Client = SupabaseClient<Database>;
 function asProject(row: Record<string, unknown>): ProjectRow {
   const projectType = String(row.project_type ?? "");
   if (!isProjectType(projectType)) {
-    throw new ProjectError("failed", projectErrorMessage("failed"));
+    throw new ProjectError("failed", projectErrorMessage("failed", "load"));
   }
   return {
     id: String(row.id),
@@ -32,7 +32,7 @@ export async function listActiveProjects(client: Client): Promise<ProjectRow[]> 
     .is("archived_at", null)
     .order("updated_at", { ascending: false });
 
-  if (error) throw mapProjectDbError(error);
+  if (error) throw mapProjectDbError(error, "load");
   return (data ?? []).map((row) => asProject(row as Record<string, unknown>));
 }
 
@@ -43,7 +43,7 @@ export async function listArchivedProjects(client: Client): Promise<ProjectRow[]
     .not("archived_at", "is", null)
     .order("archived_at", { ascending: false });
 
-  if (error) throw mapProjectDbError(error);
+  if (error) throw mapProjectDbError(error, "load");
   return (data ?? []).map((row) => asProject(row as Record<string, unknown>));
 }
 
@@ -60,7 +60,7 @@ export async function getProjectById(
     .eq("id", parsed.data)
     .maybeSingle();
 
-  if (error) throw mapProjectDbError(error);
+  if (error) throw mapProjectDbError(error, "load");
   if (!data) return null;
   return asProject(data as Record<string, unknown>);
 }

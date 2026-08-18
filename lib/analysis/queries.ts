@@ -8,6 +8,7 @@ import {
   type DesignRequirements,
   type RoomAnalysisObservation,
 } from "./schema";
+import { removeProductReferenceStorageObjects } from "@/lib/references/storageCleanup";
 
 type Client = SupabaseClient<Database>;
 
@@ -85,6 +86,8 @@ export async function deleteProjectRoomAnalysis(
 ): Promise<void> {
   const parsed = projectIdSchema.safeParse(projectId);
   if (!parsed.success) return;
+
+  await removeProductReferenceStorageObjects(client, parsed.data);
 
   const { error } = await client
     .from("project_room_analyses")

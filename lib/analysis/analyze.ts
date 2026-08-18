@@ -6,6 +6,7 @@ import { ROOM_ANALYSIS_SCHEMA_VERSION } from "./constants";
 import { claimRoomAnalysisSlot } from "./claim";
 import { AnalysisError, analysisErrorMessage } from "./errors";
 import { analyzeRoomImage } from "./openai";
+import { deleteProjectProductDiscovery } from "@/lib/discovery/queries";
 import {
   deleteProjectRoomAnalysis,
   getProjectRoomAnalysis,
@@ -87,6 +88,8 @@ export async function runRoomAnalysis(
     analysis: result.analysis,
     designRequirements: result.designRequirements,
   });
+
+  await deleteProjectProductDiscovery(client, projectId);
 
   return { analysis: saved, reused: false };
 }

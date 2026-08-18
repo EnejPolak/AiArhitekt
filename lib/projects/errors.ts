@@ -4,6 +4,8 @@ export type ProjectErrorCode =
   | "not_found"
   | "failed";
 
+export type ProjectDbOp = "load" | "mutate";
+
 export class ProjectError extends Error {
   readonly code: ProjectErrorCode;
 
@@ -14,7 +16,10 @@ export class ProjectError extends Error {
   }
 }
 
-export function projectErrorMessage(code: ProjectErrorCode): string {
+export function projectErrorMessage(
+  code: ProjectErrorCode,
+  op: ProjectDbOp = "mutate"
+): string {
   switch (code) {
     case "invalid_input":
       return "Check the project details and try again.";
@@ -23,15 +28,21 @@ export function projectErrorMessage(code: ProjectErrorCode): string {
     case "not_found":
       return "Project not found.";
     default:
-      return "Could not update the project. Try again.";
+      return op === "load"
+        ? "Could not load your projects. Try again."
+        : "Could not update the project. Try again.";
   }
 }
 
-export function mapProjectDbError(error: { message?: string; code?: string } | null): ProjectError {
-  if (!error) return new ProjectError("failed", projectErrorMessage("failed"));
+export function mapProjectDbError(
+  error: { message?: string; code?: string } | null,
+  op: ProjectDbOp = "mutate"
+): ProjectError {
+  if (!error) return new ProjectError("failed", projectErrorMessage("failed", op));
   const code = (error.code ?? "").toUpperCase();
   if (code === "PGRST116" || code === "42501" || code === "PGRST301") {
     return new ProjectError("not_found", projectErrorMessage("not_found"));
   }
-  return new ProjectError("failed", projectErrorMessage("failed"));
+  console.error("[projects] database_error", { op, code: code || "unknown" });
+  return new ProjectError("failed", projectErrorMessage("failed", op));
 }

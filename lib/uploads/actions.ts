@@ -26,6 +26,7 @@ import {
 import { validateRoomPhotoBytes } from "./validate";
 import { deleteProjectRoomAnalysis } from "@/lib/analysis/queries";
 import { getRoomPhotoUpload, type ProjectUploadRow } from "./queries";
+import { removeProjectAssetObjects } from "@/lib/references/storageCleanup";
 
 export type UploadActionResult =
   | {
@@ -328,15 +329,17 @@ export async function removeProjectStorageObjects(projectId: string): Promise<vo
     }
   }
 
-  if (paths.size === 0) return;
-
-  const { error } = await supabase.storage
-    .from(PROJECT_UPLOADS_BUCKET)
-    .remove([...paths]);
-  if (error) {
-    logCleanupFailure("project hard-delete storage failed", {
-      projectId: project.id,
-    });
-    throw new UploadError("failed", uploadErrorMessage("failed"));
+  if (paths.size > 0) {
+    const { error } = await supabase.storage
+      .from(PROJECT_UPLOADS_BUCKET)
+      .remove([...paths]);
+    if (error) {
+      logCleanupFailure("project hard-delete storage failed", {
+        projectId: project.id,
+      });
+      throw new UploadError("failed", uploadErrorMessage("failed"));
+    }
   }
+
+  await removeProjectAssetObjects(supabase, project.id);
 }

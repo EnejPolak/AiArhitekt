@@ -1,17 +1,16 @@
 /**
- * Public Supabase config (URL + publishable key).
+ * Public Supabase config (URL + publishable key) plus a separate secret helper
+ * used only for trusted persist RPCs.
  *
- * Never read NEXT_PUBLIC_SUPABASE_ANON_KEY or SUPABASE_SECRET_KEY here.
- * Missing values must fail clearly — do not construct a client with "".
+ * Never read NEXT_PUBLIC_SUPABASE_ANON_KEY.
+ * Never put SUPABASE_SECRET_KEY in NEXT_PUBLIC_*.
  */
 
 export class MissingSupabaseConfigError extends Error {
   readonly code = "config" as const;
 
-  constructor() {
-    super(
-      "Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY"
-    );
+  constructor(message = "Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY") {
+    super(message);
     this.name = "MissingSupabaseConfigError";
   }
 }
@@ -19,6 +18,11 @@ export class MissingSupabaseConfigError extends Error {
 export type SupabasePublicConfig = {
   url: string;
   publishableKey: string;
+};
+
+export type SupabaseSecretConfig = {
+  url: string;
+  secretKey: string;
 };
 
 export function getSupabasePublicConfig(): SupabasePublicConfig {
@@ -32,6 +36,21 @@ export function getSupabasePublicConfig(): SupabasePublicConfig {
   }
 
   return { url, publishableKey };
+}
+
+/**
+ * Server-only secret for trusted persist RPCs. Never NEXT_PUBLIC_.
+ * Not used for login, project CRUD, or browser operations.
+ */
+export function getSupabaseSecretConfig(): SupabaseSecretConfig {
+  const url = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").trim();
+  const secretKey = (process.env.SUPABASE_SECRET_KEY ?? "").trim();
+  if (!url || !secretKey) {
+    throw new MissingSupabaseConfigError(
+      "Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SECRET_KEY"
+    );
+  }
+  return { url, secretKey };
 }
 
 /**

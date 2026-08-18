@@ -16,8 +16,6 @@ const analyzeRoomInputSchema = z.object({
   reanalyze: z.boolean().optional(),
 });
 
-export type { RoomAnalysisView };
-
 export type AnalyzeRoomActionResult =
   | { ok: true; analysis: RoomAnalysisView; reused: boolean }
   | { ok: false; code: string; message: string };

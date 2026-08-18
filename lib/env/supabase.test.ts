@@ -3,6 +3,7 @@ import {
   MissingSupabaseConfigError,
   getAppOrigin,
   getSupabasePublicConfig,
+  getSupabaseSecretConfig,
 } from "./supabase";
 
 const KEYS = [
@@ -10,6 +11,7 @@ const KEYS = [
   "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
   "NEXT_PUBLIC_SITE_URL",
   "VERCEL_URL",
+  "SUPABASE_SECRET_KEY",
 ] as const;
 
 const snapshot: Record<string, string | undefined> = {};
@@ -41,6 +43,33 @@ describe("getSupabasePublicConfig", () => {
     expect(getSupabasePublicConfig()).toEqual({
       url: "http://127.0.0.1:54321",
       publishableKey: "sb_publishable_test",
+    });
+  });
+});
+
+describe("getSupabaseSecretConfig", () => {
+  afterEach(() => {
+    for (const key of KEYS) {
+      const value = snapshot[key];
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  it("throws when URL or secret key is missing", () => {
+    for (const key of KEYS) snapshot[key] = process.env[key];
+    process.env.NEXT_PUBLIC_SUPABASE_URL = "http://127.0.0.1:54321";
+    delete process.env.SUPABASE_SECRET_KEY;
+    expect(() => getSupabaseSecretConfig()).toThrow(MissingSupabaseConfigError);
+  });
+
+  it("returns trimmed secret config", () => {
+    for (const key of KEYS) snapshot[key] = process.env[key];
+    process.env.NEXT_PUBLIC_SUPABASE_URL = " http://127.0.0.1:54321 ";
+    process.env.SUPABASE_SECRET_KEY = " sb_secret_test ";
+    expect(getSupabaseSecretConfig()).toEqual({
+      url: "http://127.0.0.1:54321",
+      secretKey: "sb_secret_test",
     });
   });
 });

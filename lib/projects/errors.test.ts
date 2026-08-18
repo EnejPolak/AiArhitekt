@@ -27,4 +27,26 @@ describe("project errors", () => {
     });
     expect(mapped.message).toBe("Project not found.");
   });
+
+  it("maps list/select failures without calling them updates", () => {
+    const mapped = mapProjectDbError(
+      {
+        message: "Could not find the table 'public.projects' in the schema cache",
+        code: "PGRST205",
+      },
+      "load"
+    );
+    expect(mapped.code).toBe("failed");
+    expect(mapped.message).toBe("Could not load your projects. Try again.");
+    expect(mapped.message).not.toMatch(/update|schema cache|PGRST|SQL|policy/i);
+  });
+
+  it("keeps mutate copy for write failures", () => {
+    const mapped = mapProjectDbError(
+      { message: "deadlock detected", code: "40P01" },
+      "mutate"
+    );
+    expect(mapped.message).toBe("Could not update the project. Try again.");
+    expect(mapped.message).not.toMatch(/deadlock|40P01/i);
+  });
 });
