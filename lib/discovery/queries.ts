@@ -1,0 +1,242 @@
+import { z } from "zod";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database, Json } from "@/lib/database.types";
+import { projectIdSchema } from "@/lib/projects/schema";
+import { DiscoveryError, discoveryErrorMessage, mapDiscoveryDbError } from "./errors";
+import { unmatchedRequirementSchema, type UnmatchedRequirement } from "./itemSpecs";
+import type { ProductDiscoveryView, ProductSelectionView } from "./types";
+import type { CanonicalSelectionFields } from "./mapProduct";
+import type { FurnitureNeed, MaterialNeed } from "./itemSpecs";
+import type { ShoppingPreferenceInput, ShoppingPreferenceSnapshot } from "./preferences";
+import { canonicalShoppingPreferences } from "./preferences";
+import { removeProductReferenceStorageObjects } from "@/lib/references/storageCleanup";
+
+type Client = SupabaseClient<Database>;
+
+const allowlistSchema = z.array(z.string().min(1).max(253)).max(80);
+
+function asAllowlist(value: Json): string[] {
+  const parsed = allowlistSchema.safeParse(value);
+  return parsed.success ? parsed.data : [];
+}
+
+function asUnmatched(value: Json): UnmatchedRequirement[] {
+  const parsed = z.array(unmatchedRequirementSchema).safeParse(value);
+  return parsed.success ? parsed.data : [];
+}
+
+function asDiscovery(
+  row: Database["public"]["Tables"]["project_product_discoveries"]["Row"]
+): ProductDiscoveryView {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    sourceAnalysisId: row.source_analysis_id,
+    sourceAnalysisUpdatedAt: row.source_analysis_updated_at,
+    locationInput: row.location_input,
+    latitude: row.latitude,
+    longitude: row.longitude,
+    radiusKm: row.radius_km,
+    searchedItemCount: row.searched_item_count,
+    notSearchedCount: row.not_searched_count,
+    allowlistDomains: asAllowlist(row.allowlist_domains),
+    unmatchedRequirements: asUnmatched(row.unmatched_requirements),
+    sourcePreferences: canonicalShoppingPreferences(
+      row.source_preferences as unknown as ShoppingPreferenceInput
+    ),
+    sourcePreferencesHash: String(row.source_preferences_hash ?? ""),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function asSelection(
+  row: Database["public"]["Tables"]["project_product_selections"]["Row"]
+): ProductSelectionView | null {
+  if (row.requirement_type !== "furniture" && row.requirement_type !== "material") {
+    return null;
+  }
+  const price =
+    row.price == null ? null : typeof row.price === "number" ? row.price : Number(row.price);
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    discoveryId: row.discovery_id,
+    requirementType: row.requirement_type,
+    requirementKey: row.requirement_key,
+    requirementSnapshot: row.requirement_snapshot,
+    itemSpec: row.item_spec,
+    productTitle: row.product_title,
+    productUrl: row.product_url,
+    productImageUrl: row.product_image_url,
+    price: Number.isFinite(price as number) ? (price as number) : null,
+    currency: row.currency === "EUR" ? "EUR" : null,
+    retailerDomain: row.retailer_domain,
+    retailerName: row.retailer_name,
+    hasReferenceImage: row.has_reference_image,
+    isConfirmed: row.is_confirmed,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export async function getProjectProductDiscovery(
+  client: Client,
+  projectId: string
+): Promise<ProductDiscoveryView | null> {
+  const parsed = projectIdSchema.safeParse(projectId);
+  if (!parsed.success) return null;
+
+  const { data, error } = await client
+    .from("project_product_discoveries")
+    .select("*")
+    .eq("project_id", parsed.data)
+    .maybeSingle();
+
+  if (error) throw mapDiscoveryDbError(error);
+  if (!data) return null;
+  return asDiscovery(data);
+}
+
+export async function getProjectProductSelections(
+  client: Client,
+  discoveryId: string
+): Promise<ProductSelectionView[]> {
+  const { data, error } = await client
+    .from("project_product_selections")
+    .select("*")
+    .eq("discovery_id", discoveryId)
+    .order("created_at", { ascending: true });
+
+  if (error) throw mapDiscoveryDbError(error);
+  return (data ?? []).map(asSelection).filter((row): row is ProductSelectionView => row !== null);
+}
+
+export async function deleteProjectProductDiscovery(
+  client: Client,
+  projectId: string
+): Promise<void> {
+  const parsed = projectIdSchema.safeParse(projectId);
+  if (!parsed.success) return;
+
+  await removeProductReferenceStorageObjects(client, parsed.data);
+
+  const { error } = await client
+    .from("project_product_discoveries")
+    .delete()
+    .eq("project_id", parsed.data);
+
+  if (error) throw mapDiscoveryDbError(error);
+}
+
+export type PersistDiscoveryInput = {
+  projectId: string;
+  sourceAnalysisId: string;
+  sourceAnalysisUpdatedAt: string;
+  locationInput: string;
+  latitude: number;
+  longitude: number;
+  radiusKm: number;
+  searchedItemCount: number;
+  notSearchedCount: number;
+  allowlistDomains: string[];
+  unmatchedRequirements: UnmatchedRequirement[];
+  sourcePreferences: ShoppingPreferenceSnapshot;
+  sourcePreferencesHash: string;
+  selections: Array<{
+    requirementType: "furniture" | "material";
+    requirementKey: string;
+    requirementSnapshot: FurnitureNeed | MaterialNeed;
+    itemSpec: string;
+    product: CanonicalSelectionFields;
+  }>;
+};
+
+export async function persistProductDiscoveryResult(
+  persistClient: Client,
+  ownerUserId: string,
+  input: PersistDiscoveryInput,
+  readClient: Client
+): Promise<{ discovery: ProductDiscoveryView; selections: ProductSelectionView[] }> {
+  const { data, error } = await persistClient.rpc("replace_project_product_discovery_result", {
+    p_owner_user_id: ownerUserId,
+    p_project_id: input.projectId,
+    p_discovery: {
+      source_analysis_id: input.sourceAnalysisId,
+      source_analysis_updated_at: input.sourceAnalysisUpdatedAt,
+      location_input: input.locationInput,
+      latitude: input.latitude,
+      longitude: input.longitude,
+      radius_km: input.radiusKm,
+      searched_item_count: input.searchedItemCount,
+      not_searched_count: input.notSearchedCount,
+      allowlist_domains: input.allowlistDomains,
+      unmatched_requirements: input.unmatchedRequirements,
+      source_preferences: input.sourcePreferences,
+      source_preferences_hash: input.sourcePreferencesHash,
+    } as unknown as Json,
+    p_selections: input.selections.map((item) => ({
+      requirement_type: item.requirementType,
+      requirement_key: item.requirementKey,
+      requirement_snapshot: item.requirementSnapshot,
+      item_spec: item.itemSpec,
+      product_title: item.product.productTitle,
+      product_url: item.product.productUrl,
+      product_image_url: item.product.productImageUrl,
+      price: item.product.price,
+      currency: item.product.currency,
+      retailer_domain: item.product.retailerDomain,
+      retailer_name: item.product.retailerName,
+      has_reference_image: item.product.hasReferenceImage,
+    })) as unknown as Json,
+  });
+
+  if (error || data == null) {
+    throw mapDiscoveryDbError(error);
+  }
+
+  await removeProductReferenceStorageObjects(persistClient, input.projectId);
+
+  const discovery = await getProjectProductDiscovery(readClient, input.projectId);
+  if (!discovery) {
+    throw new DiscoveryError("failed", discoveryErrorMessage("failed"));
+  }
+  const selections = await getProjectProductSelections(readClient, discovery.id);
+  return { discovery, selections };
+}
+
+export async function setSelectionConfirmed(
+  client: Client,
+  selectionId: string,
+  confirmed: boolean
+): Promise<ProductSelectionView> {
+  const { data, error } = await client
+    .from("project_product_selections")
+    .update({ is_confirmed: confirmed })
+    .eq("id", selectionId)
+    .select("*")
+    .single();
+
+  if (error || !data) {
+    throw mapDiscoveryDbError(error);
+  }
+  const mapped = asSelection(data);
+  if (!mapped) {
+    throw new DiscoveryError("failed", discoveryErrorMessage("failed"));
+  }
+  return mapped;
+}
+
+export async function getOwnedSelection(
+  client: Client,
+  selectionId: string
+): Promise<ProductSelectionView | null> {
+  const { data, error } = await client
+    .from("project_product_selections")
+    .select("*")
+    .eq("id", selectionId)
+    .maybeSingle();
+  if (error) throw mapDiscoveryDbError(error);
+  if (!data) return null;
+  return asSelection(data);
+}
