@@ -38,7 +38,7 @@ const HIGH_PRIORITY_LIST: Array<{ test: (n: string) => boolean; category: Taxono
 
 /** Item-spec keyword hints → primary category (Slovenian + English). Bathroom no longer includes ogledal/keramik/ploščic for priority. */
 const ITEM_KEYWORDS_TO_CATEGORY: Array<{ keywords: string[]; category: TaxonomyCategory }> = [
-  { keywords: ["postelj", "vzmetnic", "omar", "nočn", "polic", "miz", "stol", "sedež", "pohištv", "furniture", "bed", "wardrobe", "shelf", "table", "chair", "sofa"], category: "furniture" },
+  { keywords: ["postelj", "vzmetnic", "omar", "nočn", "polic", "miz", "stol", "sedež", "pohištv", "furniture", "bed", "wardrobe", "shelf", "table", "chair", "sofa", "desk", "workstation"], category: "furniture" },
   { keywords: ["svetil", "luč", "led", "razsvetljav", "lighting", "lamp", "panel"], category: "lighting" },
   { keywords: ["sanitar", "kopalnic", "kopal", "pipe", "bathroom", "faucet", "toilet", "umival"], category: "bathroom_plumbing" },
   { keywords: ["laminat", "vinil", "parket", "taln", "oblog", "flooring", "floor"], category: "flooring" },

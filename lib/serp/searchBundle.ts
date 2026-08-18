@@ -51,6 +51,7 @@ const MUST_HIT_RULES: Array<{ pattern: RegExp; tokens: string[] }> = [
   { pattern: /ogledal|mirror/i, tokens: ["ogledal", "mirror", "ogledalo"] },
   { pattern: /preprog|tepih|rug/i, tokens: ["preprog", "tepih", "preproga", "rug"] },
   { pattern: /zaves|zagrinjal|ogrinjal|curtain/i, tokens: ["zaves", "zagrinjal", "ogrinjal", "zavesa", "curtain"] },
+  { pattern: /\bdesk\b|workstation|pisalna\s+miza/i, tokens: ["desk", "workstation"] },
 ];
 
 function getMustTokensForItem(itemSpec: string): string[] {

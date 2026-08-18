@@ -4,6 +4,7 @@ import {
   itemSpecToKeywords,
   stripStoreNamesAndDomainsFromItem,
 } from "./queryGen";
+import { itemSpecToCategory } from "./taxonomy";
 
 describe("queryGen", () => {
   const allowlist = ["merkur.si", "jysk.si"];
@@ -46,5 +47,12 @@ describe("queryGen", () => {
     const { planned, flat } = buildPlannedQueries(["Merkur"], allowlist);
     expect(flat).toEqual([]);
     expect(planned["Merkur"]).toEqual([]);
+  });
+});
+
+describe("desk taxonomy", () => {
+  it("classifies computer desk as furniture", () => {
+    expect(itemSpecToCategory("large computer desk multiple monitors")).toBe("furniture");
+    expect(itemSpecToCategory("computer desk")).toBe("furniture");
   });
 });
