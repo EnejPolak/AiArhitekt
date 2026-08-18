@@ -5,6 +5,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { searchPlaces, getPlaceDetails, classifyPlaceBucket, isServiceDomainByHeuristic, type SearchParams } from "./placesService";
+import { PLACES_ERROR_CODES } from "./errors";
 import { resetPlacesDelay, setPlacesDelay } from "./runtime";
 
 global.fetch = vi.fn();
@@ -21,23 +22,26 @@ describe("placesService", () => {
   });
 
   describe("query planning", () => {
-    it("should plan multi-pass stores (keywords + types) and contractors in category mode (dry run)", async () => {
+    it("should plan requirement-driven store queries without contractors by default (dry run)", async () => {
       const result = await searchPlaces({
         lat: 46.0569,
         lng: 14.5058,
         radiusKm: 10,
         mode: "category",
         dryRun: true,
+        retailRequirements: ["office chair", "marble flooring", "interior wall paint"],
       });
 
       expect(result.meta.requestsMade).toBe(0);
-      expect(result.meta.plannedQueries.length).toBeGreaterThanOrEqual(2);
-      expect(result.meta.plannedTypes).toBeDefined();
-      expect(result.meta.plannedTypes!.length).toBeGreaterThanOrEqual(1);
+      expect(result.meta.plannedQueries.some((q) => q.startsWith("stores[furniture]"))).toBe(true);
+      expect(result.meta.plannedQueries.some((q) => q.startsWith("stores[flooring]"))).toBe(true);
+      expect(result.meta.plannedQueries.some((q) => q.startsWith("stores[paint]"))).toBe(true);
+      expect(result.meta.plannedQueries.some((q) => q.startsWith("contractors:"))).toBe(false);
+      expect(result.meta.plannedTypes).toEqual(expect.arrayContaining(["furniture_store"]));
       expect(result.domains).toEqual({ stores: [], contractors: [] });
     });
 
-    it("should plan stores + contractors queries in brand mode", async () => {
+    it("ignores retailer brand names in brand mode; canonical planning stays category-based", async () => {
       const params: SearchParams = {
         lat: 46.0569,
         lng: 14.5058,
@@ -48,10 +52,11 @@ describe("placesService", () => {
       };
 
       const result = await searchPlaces(params);
+      const planned = [...result.meta.plannedQueries, ...(result.meta.plannedTypes ?? [])].join(" ");
 
       expect(result.meta.requestsMade).toBe(0);
+      expect(planned).not.toMatch(/Merkur|Lesnina|JYSK|OBI|Jager/i);
       expect(result.domains.stores).toEqual([]);
-      expect(result.domains.contractors).toEqual([]);
     });
 
     it("should make multiple Places searches (store keywords + types + contractors)", async () => {
@@ -66,10 +71,12 @@ describe("placesService", () => {
         radiusKm: 10,
         mode: "category",
         dryRun: false,
+        includeContractors: false,
+        retailRequirements: ["office chair"],
       });
 
       expect(result.meta.requestsMade).toBeGreaterThan(0);
-      expect(result.meta.requestsMade).toBeLessThanOrEqual(20);
+      expect(result.meta.requestsMade).toBeLessThanOrEqual(4);
     });
   });
 
@@ -93,9 +100,10 @@ describe("placesService", () => {
       expect(classifyPlaceBucket(["plumber", "general_contractor"], "Vodovod")).toBe("contractor");
     });
 
-    it("returns null for ambiguous (no store type, no contractor keyword)", () => {
+    it("returns null for generic store without home-retail signal", () => {
       expect(classifyPlaceBucket(["point_of_interest"], "Random Place")).toBe(null);
       expect(classifyPlaceBucket([], "Neznana trgovina")).toBe(null);
+      expect(classifyPlaceBucket(["store"], "Unrelated Kiosk")).toBe(null);
     });
 
     it("classifies contractor when websiteDomain matches service heuristics", () => {
@@ -334,9 +342,127 @@ describe("placesService", () => {
 
       const result = await searchPlaces(params);
 
-      // Should return empty places, not error
       expect(result.places).toHaveLength(0);
       expect(result.meta.requestsMade).toBeGreaterThan(0);
+      expect(result.outcome).toBe("NO_PLACES_CANDIDATES");
+    });
+
+    it("stops on quota without retrying or returning zero stores", async () => {
+      const fetchMock = global.fetch as ReturnType<typeof vi.fn>;
+      fetchMock.mockResolvedValue({
+        ok: true,
+        json: async () => ({ status: "OVER_QUERY_LIMIT", results: [] }),
+      });
+
+      await expect(
+        searchPlaces({
+          lat: 46.3611,
+          lng: 15.1111,
+          radiusKm: 50,
+          includeContractors: false,
+        })
+      ).rejects.toMatchObject({
+        name: "PlacesError",
+        code: PLACES_ERROR_CODES.PLACES_QUOTA_EXCEEDED,
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("returns STORES_FOUND_BUT_FILTERED when candidates exist but none are stores", async () => {
+      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: unknown) => {
+        const u = String(url);
+        if (u.includes("place/details")) {
+          return {
+            ok: true,
+            json: async () => ({
+              status: "OK",
+              result: {
+                name: "Janez Električar",
+                website: "https://elektricar-janez.si",
+                types: ["electrician", "point_of_interest"],
+                geometry: { location: { lat: 46.3622, lng: 15.1122 } },
+              },
+            }),
+          };
+        }
+        return {
+          ok: true,
+          json: async () => ({
+            status: "OK",
+            results: [
+              {
+                place_id: "ChIJElectricOnly",
+                name: "Janez Električar",
+                geometry: { location: { lat: 46.3622, lng: 15.1122 } },
+                types: ["electrician"],
+              },
+            ],
+          }),
+        };
+      });
+
+      const result = await searchPlaces({
+        lat: 46.3622,
+        lng: 15.1122,
+        radiusKm: 50,
+        includeContractors: false,
+        debug: true,
+      });
+
+      expect(result.allowlistDomainsStores).toEqual([]);
+      expect(result.outcome).toBe(PLACES_ERROR_CODES.STORES_FOUND_BUT_FILTERED);
+      expect(result.debug?.pipeline?.some((row) => row.rejectionReason === "classified_contractor")).toBe(
+        true
+      );
+    });
+
+    it("fetches Place Details once when the same place is returned by multiple categories", async () => {
+      const samePlace = {
+        place_id: "ChIJMergeOnce",
+        name: "City Furniture",
+        geometry: { location: { lat: 46.3701, lng: 15.1201 } },
+        types: ["furniture_store", "store"],
+      };
+      const fetchMock = global.fetch as ReturnType<typeof vi.fn>;
+      fetchMock.mockImplementation(async (url: unknown) => {
+        const u = String(url);
+        if (u.includes("place/details")) {
+          return {
+            ok: true,
+            json: async () => ({
+              status: "OK",
+              result: {
+                name: "City Furniture",
+                website: "https://www.cityfurniture.example/",
+                types: ["furniture_store", "store", "point_of_interest"],
+                geometry: { location: { lat: 46.3701, lng: 15.1201 } },
+                rating: 4.5,
+                user_ratings_total: 40,
+              },
+            }),
+          };
+        }
+        return {
+          ok: true,
+          json: async () => ({ status: "OK", results: [samePlace] }),
+        };
+      });
+
+      const result = await searchPlaces({
+        lat: 46.3701,
+        lng: 15.1201,
+        radiusKm: 50,
+        includeContractors: false,
+        retailRequirements: ["office chair", "interior wall paint"],
+        debug: true,
+      });
+
+      const detailsCalls = fetchMock.mock.calls.filter((call) => String(call[0]).includes("place/details"));
+      expect(detailsCalls).toHaveLength(1);
+      expect(result.stores.map((s) => s.place_id)).toEqual(["ChIJMergeOnce"]);
+      expect(result.stores[0].matchedRetailCategories).toEqual(
+        expect.arrayContaining(["furniture", "paint"])
+      );
     });
   });
 

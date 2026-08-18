@@ -5,11 +5,45 @@
 
 import { TTLCache } from "@/lib/cache";
 import { haversineDistanceMeters } from "@/lib/geo/haversine";
-import { checkProductCatalogSignal, type CatalogProbe, type CatalogCheckResult, type CatalogSignalResult } from "@/lib/places/catalogSignal";
+import { checkProductCatalogSignal, type CatalogProbe, type CatalogSignalResult } from "@/lib/places/catalogSignal";
 import { normalizeDomainToRoot, isRejectedDomain as isRejectedDomainUtil } from "@/lib/places/domainUtils";
 import { normalizeDomainToRoot as normalizeDomainToRootForAllowlist } from "@/lib/serp/domains";
 import { placeTypesToTaxonomyCategories } from "@/lib/serp/taxonomy";
 import { delay } from "./runtime";
+import {
+  PlacesError,
+  PLACES_ERROR_CODES,
+  isPlacesQuotaStatus,
+  isPlacesRateLimitedStatus,
+  placesErrorFromHttp,
+  type PlacesOutcome,
+} from "./errors";
+import {
+  buildStoreDiscoveryPlan,
+  defaultStoreDiscoveryPlan,
+  type StoreDiscoveryPlan,
+} from "./retailTaxonomy";
+import {
+  STORE_TYPES,
+  SERVICE_TYPES,
+  classifyPlaceBucket,
+  classifyWebsiteQuality,
+  computeStoreScore,
+  evaluateStoreDomainGate,
+  hasCatalogPathSignal,
+  hasStrongStoreType,
+  isOfficialDomain,
+  isServiceDomainByHeuristic,
+  placesOutcomeFromCounts,
+} from "./storeRelevance";
+
+export {
+  classifyPlaceBucket,
+  classifyWebsiteQuality,
+  computeStoreScore,
+  isServiceDomainByHeuristic,
+} from "./storeRelevance";
+export { PlacesError, PLACES_ERROR_CODES } from "./errors";
 
 // Types
 export interface Place {
@@ -51,13 +85,20 @@ export interface SearchParams {
   lat: number;
   lng: number;
   radiusKm: number;
+  /** Debug-only. Canonical A→D→C never plans by retailer brand names. */
   mode?: "category" | "brand";
+  /** Debug-only. Ignored by Places query planning. */
   brandKeywords?: string[];
   dryRun?: boolean;
   /** If true (default), only include places with website in domain allowlists; stores/contractors lists still show all (with/without website). */
   onlyWithWebsite?: boolean;
   /** If true, include debug.candidates and debug.discarded in response */
   debug?: boolean;
+  /** Product discovery only needs retail stores. Default false (canonical A→D→C). */
+  includeContractors?: boolean;
+  /** Requirement-driven Places plan. Canonical discovery always passes this. */
+  storePlan?: StoreDiscoveryPlan;
+  retailRequirements?: string[];
 }
 
 export interface SearchMeta {
@@ -91,6 +132,10 @@ export interface SearchMeta {
   /** API debug label: exactly "D)" */
   debugVersionLabel?: string;
   debugDistances?: Array<{ name: string; distanceKm: number }>;
+  /** Structured D) outcome. Empty-store cases are never collapsed into a generic provider error. */
+  outcome?: PlacesOutcome;
+  providerHttpStatus?: number;
+  providerStatus?: string;
 }
 
 /** Place with store/service scoring and website quality (for output) */
@@ -139,6 +184,7 @@ export interface PlaceResult {
   websiteDomain: string;
   categoryBucket: "store" | "contractor";
   types: string[];
+  matchedRetailCategories?: string[];
   qualityFlags: QualityFlags;
 }
 
@@ -158,6 +204,7 @@ export interface SearchResult {
   /** Domain → taxonomy categories for category-based SERP routing (from store Place.types). */
   domainCategoryMapStores?: Record<string, string[]>;
   status: number;
+  outcome: PlacesOutcome;
   /** Only when debug=true. */
   debug?: {
     rejectionReasons?: Array<{ name: string; place_id?: string; reason: string }>;
@@ -167,8 +214,37 @@ export interface SearchResult {
     classificationSignals?: Array<{ name: string; storeScore: number; contractorScore: number; serviceHintScore: number; bucket?: string; rejected?: boolean }>;
     candidates?: StoreOrServicePlace[];
     discarded?: DiscardedPlace[];
+    pipeline?: PlacePipelineDebugRow[];
+    googlePlacesRequests?: Array<{
+      kind: "nearby_keyword" | "nearby_type" | "details";
+      query?: string;
+      httpStatus?: number;
+      providerStatus?: string;
+      resultCount?: number;
+      cacheHit?: boolean;
+    }>;
   };
 }
+
+/** Per-candidate D) rejection pipeline (debug only). */
+export type PlacePipelineDebugRow = {
+  name: string;
+  place_id: string;
+  sourceKeywords: string[];
+  googleTypes: string[];
+  sourceRetailCategories: string[];
+  afterRadiusFilter: boolean;
+  detailsFetched: boolean;
+  hasWebsite: boolean;
+  websiteDomain?: string;
+  classifyPlaceBucket: "store" | "contractor" | null;
+  storeScore: number;
+  officialDomain: boolean;
+  catalogPath: boolean;
+  catalogSignal?: CatalogSignalResult | "not_probed";
+  rejectionReason: string | null;
+  acceptedStoreDomain: boolean;
+};
 
 // Constants
 const MAX_CONCURRENCY = 2;
@@ -177,45 +253,14 @@ const REQUEST_TIMEOUT_MS = 6000;
 const CACHE_TTL_SEARCH = 14 * 24 * 60 * 60 * 1000; // 14 days
 const CACHE_TTL_DETAILS = 30 * 24 * 60 * 60 * 1000; // 30 days
 /** Max places after merge + distance filter (before details); increased for multi-pass. */
-const MAX_PLACES = 100;
-const MAX_DETAILS_PER_SEARCH = 80;
+const MAX_PLACES = 40;
+const MAX_DETAILS_PER_SEARCH = 30;
 const DETAILS_CONCURRENCY = 3;
 const MAX_DOMAINS_PER_LIST = 10;
 /** Cap stores and contractors arrays each to this many places. */
 const MAX_PLACES_OUTPUT = 20;
 
-/** Multi-pass store discovery: category keywords (Slovenian), NOT store names. All required retail categories. */
-const STORE_CATEGORY_KEYWORDS = [
-  // hardware/DIY
-  "gradbeni center železnina",
-  "orodje železnina gradbeni",
-  // bathroom/tiles
-  "tla keramika ploščice kopalnica",
-  "keramika ploščice sanitarna oprema",
-  // flooring
-  "laminat vinil parket talne obloge",
-  // paint & walls
-  "barve stene maloprodaja",
-  "notranje barve premaz lazura stene",
-  // furniture
-  "pohištvo omare postelje police",
-  "mize stoli sedežne vzmetnice nočne omarice",
-  // lighting
-  "svetila elektrika luči",
-  "stropne luči LED paneli razsvetljava",
-  // decor/textiles
-  "tekstil dekoracija zavese",
-];
-
-/** Second-pass: Places API types for big-box retailers (one type per request). Exclude electronics_store (noise), department_store (we penalise it). */
-const STORE_TYPES_FOR_SEARCH: string[] = [
-  "hardware_store",
-  "home_goods_store",
-  "furniture_store",
-  "lighting_store",
-];
-
-/** Contractor discovery: all required trades (Slovenian). Multiple queries for full coverage. */
+/** Contractor discovery: optional, not part of canonical product discovery. */
 const CONTRACTORS_QUERY_KEYWORDS = [
   "pleskar električar vodovodar keramičar polagalec ploščic",
   "monter pohištva sestavljalec pohištva montaža adaptacije renovacije",
@@ -223,63 +268,6 @@ const CONTRACTORS_QUERY_KEYWORDS = [
   "suhomontažer mizar",
 ];
 
-// Category keywords (Slovenian-first) – used when mode is brand for fallback
-const CATEGORY_KEYWORDS = {
-  furniture: { sl: "pohištvo", en: "furniture store" },
-  tiles_bathroom: { sl: "keramika", en: "tile store" },
-  hardware: { sl: "železnina", en: "hardware store" },
-};
-
-// Brand keywords (examples)
-const BRAND_KEYWORDS = [
-  "Merkur",
-  "Lesnina",
-  "XXXL Lesnina",
-  "Harvey Norman",
-  "JYSK",
-  "OBI",
-  "Jager",
-  "Topdom",
-  "SAM",
-  "Termonova",
-  "Mega Keramika",
-  "Italko",
-];
-
-// === GLOBAL STORE/SERVICE CLASSIFIER (language/country agnostic) ===
-
-/** Google Place types that indicate a retail store (SERP-friendly). Exclude "store" (too broad) and "shopping_mall" (location, not store). */
-const STORE_TYPES = [
-  "furniture_store",
-  "hardware_store",
-  "home_goods_store",
-  "lighting_store",
-] as const;
-
-/** Types that indicate non-store retail (supermarkets, department stores) */
-const RETAIL_NEGATIVE_TYPES = [
-  "supermarket",
-  "grocery_or_supermarket",
-  "department_store",
-] as const;
-
-/** Google Place types for contractors/trades (services) */
-const SERVICE_TYPES = [
-  "general_contractor",
-  "electrician",
-  "plumber",
-  "painter",
-  "roofing_contractor",
-  "flooring_contractor",
-  "locksmith",
-  "carpenter",
-  "handyman",
-  "moving_company",
-  "real_estate_agency",
-  "home_builder",
-] as const;
-
-/** Slovenian (and common) name/category keywords that imply CONTRACTOR (service). Never put in stores. */
 const CONTRACTOR_NAME_KEYWORDS_SL = [
   "montaža",
   "montaza",
@@ -290,7 +278,6 @@ const CONTRACTOR_NAME_KEYWORDS_SL = [
   "vodovodar",
   "keramičar",
   "keramicar",
-  "parket",
   "instalacije",
   "servis",
   "pleskanje",
@@ -304,143 +291,8 @@ const CONTRACTOR_NAME_KEYWORDS_SL = [
   "renovacij",
 ];
 
-/** Domain substrings that imply service provider (contractor). If domain contains any → contractor. */
-const SERVICE_DOMAIN_PATTERNS = [
-  "kamnosestvo",
-  "pleskar",
-  "vodovodar",
-  "mizarstvo",
-  "storitve",
-  "montaza",
-  "montaža",
-  "instalacije",
-  "italko",
-  "lesarstvo",
-  "keramicar",
-  "keramičar",
-  "elektricar",
-  "električar",
-  "inštalacije",
-  "obrt",
-  "gradbeništvo",
-];
-
-/**
- * True if websiteDomain matches service-domain heuristics (treat as contractor).
- */
-export function isServiceDomainByHeuristic(websiteDomain: string): boolean {
-  if (!websiteDomain || !String(websiteDomain).trim()) return false;
-  const d = String(websiteDomain).toLowerCase().replace(/^www\./, "").trim();
-  return SERVICE_DOMAIN_PATTERNS.some((p) => d.includes(p));
-}
-
-/**
- * Classify a place into exactly one bucket (store or contractor) or null (ambiguous).
- * Based on Place types + name keywords + optional websiteDomain heuristics.
- * If both store and contractor match, prefer contractor (safer).
- * Exported for tests (Slovenian classification).
- */
-export function classifyPlaceBucket(
-  types: string[],
-  name: string,
-  websiteDomain?: string | null
-): "store" | "contractor" | null {
-  const t = types.map((x) => x.toLowerCase());
-  const n = (name ?? "").toLowerCase();
-  const hasStoreType = t.some((x) => STORE_TYPES.includes(x as any));
-  const hasServiceType = t.some((x) => SERVICE_TYPES.includes(x as any));
-  const nameMatchesContractor = CONTRACTOR_NAME_KEYWORDS_SL.some((kw) => n.includes(kw.toLowerCase()));
-  const domainMatchesService = websiteDomain ? isServiceDomainByHeuristic(websiteDomain) : false;
-
-  if (domainMatchesService || nameMatchesContractor || hasServiceType) {
-    return "contractor";
-  }
-  if (hasStoreType && !nameMatchesContractor) {
-    return "store";
-  }
-  return null;
-}
-
-/** Social domains – not official store sites */
-const SOCIAL_DOMAINS = [
-  "facebook.com",
-  "instagram.com",
-  "tiktok.com",
-  "linkedin.com",
-];
-
-/** Directory/aggregator domains – not official store or contractor sites */
-const DIRECTORY_AGGREGATOR_DOMAINS = [
-  "yelp.com",
-  "foursquare.com",
-  "tripadvisor.com",
-  "bizi.si",
-  "najdi.si",
-  "rumene-strani.si",
-  "cylex.si",
-  "biznis.si",
-  "cylex.at",
-  "cylex.de",
-  "slovenskenovice.si",
-  "gorenjski.si",
-  "podjetnik.com",
-  "zrs.si",
-  "mojepodjetje.si",
-  "pg.si",
-  "find-open.co.uk",
-  "hotfrog.",
-  "brownbook.net",
-  "tuugo.",
-  "expressen.se",
-  "eniro.",
-  "11880.com",
-  "dasoertliche.",
-  "goldenpages.",
-  "yell.com",
-  "thomsonlocal.com",
-];
-
-/** Use shared reject list from domainUtils. */
 function isRejectedDomain(domain: string): boolean {
   return isRejectedDomainUtil(domain);
-}
-
-/**
- * Classify website domain quality (global list).
- * Returns "official" for real store/service sites; "social" or "directory" otherwise.
- */
-export function classifyWebsiteQuality(domain: string): "social" | "directory" | "official" {
-  if (!domain || !domain.trim()) return "official";
-  const d = domain.toLowerCase().replace(/^www\./, "").trim();
-  if (SOCIAL_DOMAINS.some((s) => d === s || d.endsWith("." + s))) return "social";
-  if (DIRECTORY_AGGREGATOR_DOMAINS.some((s) => d === s || d.includes(s))) return "directory";
-  return "official";
-}
-
-/**
- * Compute store score ∈ [0..1] from Google types + rating/reviews (global, no keywords).
- * Strong store types +0.7; weak "store"/"shopping_mall" +0.15/+0.1 only.
- */
-export function computeStoreScore(
-  types: string[],
-  rating?: number,
-  user_ratings_total?: number
-): number {
-  const t = types.map((x) => x.toLowerCase());
-  let score = 0;
-
-  if (t.some((x) => STORE_TYPES.includes(x as any))) score += 0.7;
-  if (t.includes("store")) score += 0.15;
-  if (t.includes("shopping_mall")) score += 0.1;
-  if (t.some((x) => RETAIL_NEGATIVE_TYPES.includes(x as any))) score -= 0.9;
-  if (t.includes("shopping_mall") && !t.some((x) => STORE_TYPES.includes(x as any))) score -= 0.2;
-
-  const reviews = user_ratings_total ?? 0;
-  if (reviews > 0) score += Math.min(0.2, Math.log10(reviews + 1) / 15);
-  const r = rating ?? 0;
-  if (r >= 4) score += 0.1;
-
-  return Math.max(0, Math.min(1, score));
 }
 
 /**
@@ -466,9 +318,6 @@ export function computeServiceScore(
 
 /** URL path segments that suggest a service business (not retail catalog) */
 const SERVICE_URL_PATTERNS = ["/services", "/booking", "/contact", "/pricing", "/cenik", "/storitve", "/povpraševanje", "/montaža", "/pleskanje", "/kontakt"];
-
-/** Path/URL patterns that suggest ecommerce/catalog (stores). */
-const CATALOG_PATH_PATTERNS = ["/p/", "/product", "/izdelek", "/shop", "/kategorija", "cart", "cena", "/trgovina", "/artikel"];
 
 /**
  * Multilingual seed keywords for service providers (installation, assembly, repair, contractor, etc.).
@@ -594,39 +443,6 @@ export function extractDomain(websiteUrl: string): string {
   return normalizeDomainToRoot(websiteUrl);
 }
 
-/** Generic name tokens to ignore when matching domain (avoid false positives). */
-const GENERIC_NAME_TOKENS = new Set([
-  "center", "centre", "trgovina", "d.o.o", "doo", "outlet", "salon", "poslovalnica",
-  "trgovski", "dipo", "d.o.o.", "s.p", "sp", "storitve", "slovenija", "ljubljana",
-  "celje", "maribor", "kranj", "koper", "novo", "mesto", "group", "plus",
-]);
-
-/** True if domain looks like the business: at least one brand-like name token (length ≥4, not generic) appears in domain. */
-function isOfficialDomain(domain: string, businessName: string): boolean {
-  if (!domain || !businessName) return false;
-  const d = domain.toLowerCase().replace(/^www\./, "");
-  const tokens = businessName
-    .toLowerCase()
-    .replace(/[^\w\sčćžšđ]/g, " ")
-    .split(/\s+/)
-    .map((t) => t.trim())
-    .filter((t) => t.length >= 2 && !GENERIC_NAME_TOKENS.has(t));
-  if (tokens.length === 0) return false;
-  const brandLike = tokens.filter((t) => t.length >= 4);
-  const toMatch = brandLike.length > 0 ? brandLike : tokens;
-  return toMatch.some((t) => d.includes(t));
-}
-
-/** True if URL path suggests ecommerce/catalog (stores). */
-function hasCatalogPathSignal(url: string): boolean {
-  try {
-    const path = new URL(url.startsWith("http") ? url : `https://${url}`).pathname.toLowerCase();
-    return CATALOG_PATH_PATTERNS.some((p) => path.includes(p) || url.toLowerCase().includes(p));
-  } catch {
-    return false;
-  }
-}
-
 /** True if URL path suggests services (contractors). */
 function hasServicePathSignal(url: string): boolean {
   try {
@@ -721,198 +537,175 @@ async function executeWithConcurrency<T>(
   }
 }
 
-/**
- * Fetch places from Google Places API with retry logic
- */
+type GooglePlacesRequestLog = {
+  kind: "nearby_keyword" | "nearby_type" | "details";
+  query?: string;
+  httpStatus?: number;
+  providerStatus?: string;
+  resultCount?: number;
+  cacheHit?: boolean;
+};
+
+function rethrowFatalPlacesError(error: unknown): void {
+  if (!(error instanceof PlacesError)) return;
+  if (
+    error.code === PLACES_ERROR_CODES.PLACES_QUOTA_EXCEEDED ||
+    error.code === PLACES_ERROR_CODES.PLACES_RATE_LIMITED
+  ) {
+    throw error;
+  }
+  const swallow =
+    error.providerStatus === "TIMEOUT" || error.providerStatus === "NETWORK_ERROR";
+  if (!swallow) throw error;
+}
+
+function requireMapsKey(): string {
+  const key = process.env.GOOGLE_MAPS_API_KEY;
+  if (!key) {
+    throw new PlacesError(PLACES_ERROR_CODES.PLACES_PROVIDER_ERROR, "Places is not configured");
+  }
+  return key;
+}
+
+function mapPlaceResult(result: {
+  place_id?: string;
+  name?: string;
+  types?: string[];
+  vicinity?: string;
+  formatted_address?: string;
+  geometry?: { location?: { lat?: number; lng?: number } };
+  rating?: number;
+  user_ratings_total?: number;
+  opening_hours?: { open_now?: boolean };
+}, sourceKeywords: string[], categoriesMatched: string[]): Place {
+  return {
+    place_id: result.place_id ?? "",
+    name: result.name ?? "",
+    types: result.types || [],
+    vicinity: result.vicinity,
+    formatted_address: result.formatted_address,
+    location: {
+      lat: result.geometry?.location?.lat ?? 0,
+      lng: result.geometry?.location?.lng ?? 0,
+    },
+    rating: result.rating,
+    user_ratings_total: result.user_ratings_total,
+    opening_hours: result.opening_hours ? { open_now: result.opening_hours.open_now } : undefined,
+    googleMapsUrl: `https://www.google.com/maps/place/?q=place_id:${result.place_id}`,
+    sourceKeywords,
+    categoriesMatched,
+  };
+}
+
+async function fetchNearbyJson(
+  url: string,
+  log: GooglePlacesRequestLog[],
+  kind: GooglePlacesRequestLog["kind"],
+  query: string
+): Promise<{ httpStatus: number; providerStatus: string; results: unknown[] }> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(url, { signal: controller.signal });
+  } catch (error: unknown) {
+    clearTimeout(timeout);
+    const name = error instanceof Error ? error.name : "";
+    log.push({ kind, query, providerStatus: name === "AbortError" ? "TIMEOUT" : "NETWORK_ERROR" });
+    throw new PlacesError(
+      PLACES_ERROR_CODES.PLACES_PROVIDER_ERROR,
+      name === "AbortError" ? "Places request timeout" : "Places network error"
+    );
+  }
+  clearTimeout(timeout);
+
+  if (isPlacesRateLimitedStatus(response.status) || isPlacesQuotaStatus(response.status)) {
+    log.push({ kind, query, httpStatus: response.status, providerStatus: "HTTP_ERROR" });
+    throw placesErrorFromHttp(response.status);
+  }
+  if (!response.ok) {
+    log.push({ kind, query, httpStatus: response.status });
+    throw placesErrorFromHttp(response.status);
+  }
+
+  const data = (await response.json()) as { status?: string; results?: unknown[] };
+  const providerStatus = String(data.status ?? "");
+  log.push({
+    kind,
+    query,
+    httpStatus: response.status,
+    providerStatus,
+    resultCount: Array.isArray(data.results) ? data.results.length : 0,
+  });
+
+  if (isPlacesQuotaStatus(response.status, providerStatus) || isPlacesRateLimitedStatus(response.status, providerStatus)) {
+    throw placesErrorFromHttp(response.status, providerStatus);
+  }
+  if (providerStatus === "ZERO_RESULTS") {
+    return { httpStatus: response.status, providerStatus, results: [] };
+  }
+  if (providerStatus !== "OK") {
+    throw placesErrorFromHttp(response.status, providerStatus);
+  }
+  return {
+    httpStatus: response.status,
+    providerStatus,
+    results: Array.isArray(data.results) ? data.results : [],
+  };
+}
+
 async function fetchPlaces(
   keyword: string,
   lat: number,
   lng: number,
   radiusMeters: number,
   language: string = "sl",
-  region: string = "si"
+  region: string = "si",
+  log: GooglePlacesRequestLog[] = []
 ): Promise<Place[]> {
-  if (!process.env.GOOGLE_MAPS_API_KEY) {
-    throw new Error("GOOGLE_MAPS_API_KEY not configured");
-  }
-
+  const apiKey = requireMapsKey();
   const cacheKey = getCacheKey(lat, lng, radiusMeters / 1000, keyword, language, region);
   const cached = searchCache.get(cacheKey);
   if (cached) {
+    log.push({ kind: "nearby_keyword", query: keyword, cacheHit: true, resultCount: cached.length });
     return cached;
   }
 
-  // Use Nearby Search API
   const location = `${lat},${lng}`;
-  const url = `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${location}&radius=${radiusMeters}&keyword=${encodeURIComponent(keyword)}&language=${language}&region=${region}&key=${process.env.GOOGLE_MAPS_API_KEY}`;
-
-  let retries = 0;
-  const maxRetries = 2;
-
-  while (retries <= maxRetries) {
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
-      const response = await fetch(url, {
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeout);
-
-      if (!response.ok) {
-        throw new Error(`Google Places API error: ${response.status}`);
-      }
-
-      const data = await response.json();
-
-      // Handle rate limiting
-      if (data.status === "OVER_QUERY_LIMIT" || response.status === 429) {
-        if (retries < maxRetries) {
-          const backoffMs = Math.pow(2, retries) * 1000; // Exponential backoff
-          await delay(backoffMs);
-          retries++;
-          continue;
-        }
-        throw new Error("Google Places API rate limit exceeded");
-      }
-
-      // ZERO_RESULTS is not an error
-      if (data.status === "ZERO_RESULTS") {
-        const emptyResult: Place[] = [];
-        searchCache.set(cacheKey, emptyResult);
-        return emptyResult;
-      }
-
-      if (data.status !== "OK") {
-        throw new Error(`Google Places API error: ${data.status}`);
-      }
-
-      // Parse results
-      const places: Place[] = (data.results || []).map((result: any) => ({
-        place_id: result.place_id,
-        name: result.name,
-        types: result.types || [],
-        vicinity: result.vicinity,
-        formatted_address: result.formatted_address,
-        location: {
-          lat: result.geometry.location.lat,
-          lng: result.geometry.location.lng,
-        },
-        rating: result.rating,
-        user_ratings_total: result.user_ratings_total,
-        opening_hours: result.opening_hours
-          ? {
-              open_now: result.opening_hours.open_now,
-            }
-          : undefined,
-        googleMapsUrl: `https://www.google.com/maps/place/?q=place_id:${result.place_id}`,
-        sourceKeywords: [keyword],
-        categoriesMatched: [],
-      }));
-
-      // Cache result
-      searchCache.set(cacheKey, places);
-
-      return places;
-    } catch (error: any) {
-      if (error.name === "AbortError") {
-        throw new Error("Google Places API request timeout");
-      }
-      if (retries < maxRetries) {
-        const backoffMs = Math.pow(2, retries) * 1000;
-        await delay(backoffMs);
-        retries++;
-        continue;
-      }
-      throw error;
-    }
-  }
-
-  return [];
+  const url = `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${location}&radius=${radiusMeters}&keyword=${encodeURIComponent(keyword)}&language=${language}&region=${region}&key=${apiKey}`;
+  const { results } = await fetchNearbyJson(url, log, "nearby_keyword", keyword);
+  const places = results.map((item) =>
+    mapPlaceResult(item as Parameters<typeof mapPlaceResult>[0], [keyword], [])
+  );
+  searchCache.set(cacheKey, places);
+  return places;
 }
 
-/**
- * Fetch places by Google Place type (second pass: big-box retailers).
- * Uses Nearby Search with type= parameter (no keyword).
- */
 async function fetchPlacesByType(
   placeType: string,
   lat: number,
   lng: number,
   radiusMeters: number,
   language: string = "sl",
-  region: string = "si"
+  region: string = "si",
+  log: GooglePlacesRequestLog[] = []
 ): Promise<Place[]> {
-  if (!process.env.GOOGLE_MAPS_API_KEY) {
-    throw new Error("GOOGLE_MAPS_API_KEY not configured");
-  }
-
+  const apiKey = requireMapsKey();
   const cacheKey = getCacheKeyForType(lat, lng, radiusMeters / 1000, placeType, language, region);
   const cached = searchCache.get(cacheKey);
-  if (cached) return cached;
+  if (cached) {
+    log.push({ kind: "nearby_type", query: placeType, cacheHit: true, resultCount: cached.length });
+    return cached;
+  }
 
   const location = `${lat},${lng}`;
-  const url = `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${location}&radius=${radiusMeters}&type=${encodeURIComponent(placeType)}&language=${language}&region=${region}&key=${process.env.GOOGLE_MAPS_API_KEY}`;
-
-  let retries = 0;
-  const maxRetries = 2;
-
-  while (retries <= maxRetries) {
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-      const response = await fetch(url, { signal: controller.signal });
-      clearTimeout(timeout);
-
-      if (!response.ok) throw new Error(`Google Places API error: ${response.status}`);
-      const data = await response.json();
-
-      if (data.status === "OVER_QUERY_LIMIT" || response.status === 429) {
-        if (retries < maxRetries) {
-          await delay(Math.pow(2, retries) * 1000);
-          retries++;
-          continue;
-        }
-        throw new Error("Google Places API rate limit exceeded");
-      }
-
-      if (data.status === "ZERO_RESULTS") {
-        searchCache.set(cacheKey, []);
-        return [];
-      }
-      if (data.status !== "OK") throw new Error(`Google Places API error: ${data.status}`);
-
-      const places: Place[] = (data.results || []).map((result: any) => ({
-        place_id: result.place_id,
-        name: result.name,
-        types: result.types || [],
-        vicinity: result.vicinity,
-        formatted_address: result.formatted_address,
-        location: {
-          lat: result.geometry.location.lat,
-          lng: result.geometry.location.lng,
-        },
-        rating: result.rating,
-        user_ratings_total: result.user_ratings_total,
-        opening_hours: result.opening_hours ? { open_now: result.opening_hours.open_now } : undefined,
-        googleMapsUrl: `https://www.google.com/maps/place/?q=place_id:${result.place_id}`,
-        sourceKeywords: [],
-        categoriesMatched: [placeType],
-      }));
-      searchCache.set(cacheKey, places);
-      return places;
-    } catch (error: any) {
-      if (error.name === "AbortError") throw new Error("Google Places API request timeout");
-      if (retries < maxRetries) {
-        await delay(Math.pow(2, retries) * 1000);
-        retries++;
-        continue;
-      }
-      throw error;
-    }
-  }
-  return [];
+  const url = `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${location}&radius=${radiusMeters}&type=${encodeURIComponent(placeType)}&language=${language}&region=${region}&key=${apiKey}`;
+  const { results } = await fetchNearbyJson(url, log, "nearby_type", placeType);
+  const places = results.map((item) =>
+    mapPlaceResult(item as Parameters<typeof mapPlaceResult>[0], [placeType], [])
+  );
+  searchCache.set(cacheKey, places);
+  return places;
 }
 
 /**
@@ -920,57 +713,38 @@ async function fetchPlacesByType(
  * Stores: multiple keyword-based searches per category, then type-based pass.
  * Contractors: single keyword search.
  */
-function planMultiPassStoresAndContractors(params: SearchParams): {
-  storesKeywordQueries: Array<{ keyword: string; language: string }>;
-  storesTypeQueries: Array<{ type: string }>;
-  contractorsQueries: Array<{ keyword: string; language: string }>;
-} {
-  if (params.mode === "brand" && params.brandKeywords && params.brandKeywords.length > 0) {
-    const kw = params.brandKeywords.slice(0, 2).join(" ");
-    return {
-      storesKeywordQueries: [{ keyword: kw, language: "sl" }],
-      storesTypeQueries: STORE_TYPES_FOR_SEARCH.map((t) => ({ type: t })),
-      contractorsQueries: CONTRACTORS_QUERY_KEYWORDS.map((keyword) => ({ keyword, language: "sl" })),
-    };
+function resolveStorePlan(params: SearchParams): StoreDiscoveryPlan {
+  if (params.storePlan) return params.storePlan;
+  if (params.retailRequirements && params.retailRequirements.length > 0) {
+    return buildStoreDiscoveryPlan(params.retailRequirements);
   }
-  return {
-    storesKeywordQueries: STORE_CATEGORY_KEYWORDS.map((keyword) => ({ keyword, language: "sl" })),
-    storesTypeQueries: STORE_TYPES_FOR_SEARCH.map((t) => ({ type: t })),
-    contractorsQueries: CONTRACTORS_QUERY_KEYWORDS.map((keyword) => ({ keyword, language: "sl" })),
-  };
+  return defaultStoreDiscoveryPlan();
 }
 
 /**
- * Merge and deduplicate places
+ * Plan store searches from the requirement-driven taxonomy.
+ * Canonical product discovery never uses retailer brand names.
  */
-function mergePlaces(
-  allPlaces: Array<{ place: Place; keyword: string; category?: string }>
-): Place[] {
-  const placeMap = new Map<string, Place>();
-
-  for (const { place, keyword, category } of allPlaces) {
-    const existing = placeMap.get(place.place_id);
-
-    if (existing) {
-      // Merge: add keyword and category
-      if (!existing.sourceKeywords.includes(keyword)) {
-        existing.sourceKeywords.push(keyword);
-      }
-      if (category && !existing.categoriesMatched.includes(category)) {
-        existing.categoriesMatched.push(category);
-      }
-    } else {
-      // New place
-      const merged: Place = {
-        ...place,
-        sourceKeywords: [keyword],
-        categoriesMatched: category ? [category] : [],
-      };
-      placeMap.set(place.place_id, merged);
-    }
-  }
-
-  return Array.from(placeMap.values());
+function planMultiPassStoresAndContractors(params: SearchParams): {
+  storePlan: StoreDiscoveryPlan;
+  storesKeywordQueries: Array<{ keyword: string; language: string; categories: string[] }>;
+  storesTypeQueries: Array<{ type: string; categories: string[] }>;
+  contractorsQueries: Array<{ keyword: string; language: string }>;
+} {
+  const storePlan = resolveStorePlan(params);
+  const includeContractors = params.includeContractors === true;
+  return {
+    storePlan,
+    storesKeywordQueries: storePlan.queries
+      .filter((q): q is Extract<typeof q, { kind: "keyword" }> => q.kind === "keyword")
+      .map((q) => ({ keyword: q.keyword, language: q.language, categories: q.categories })),
+    storesTypeQueries: storePlan.queries
+      .filter((q): q is Extract<typeof q, { kind: "type" }> => q.kind === "type")
+      .map((q) => ({ type: q.type, categories: q.categories })),
+    contractorsQueries: includeContractors
+      ? CONTRACTORS_QUERY_KEYWORDS.map((keyword) => ({ keyword, language: "sl" }))
+      : [],
+  };
 }
 
 /**
@@ -1006,9 +780,10 @@ export async function searchPlaces(params: SearchParams): Promise<SearchResult> 
   const clampedRadiusKm = Math.max(1, Math.min(50, radiusKm));
   const radiusMeters = Math.round(clampedRadiusKm * 1000);
 
-  const { storesKeywordQueries, storesTypeQueries, contractorsQueries } = planMultiPassStoresAndContractors(params);
+  const { storePlan, storesKeywordQueries, storesTypeQueries, contractorsQueries } =
+    planMultiPassStoresAndContractors(params);
   const plannedQueries = [
-    ...storesKeywordQueries.map((q) => `stores: ${q.keyword} (${q.language})`),
+    ...storesKeywordQueries.map((q) => `stores[${q.categories.join(",")}]: ${q.keyword} (${q.language})`),
     ...contractorsQueries.map((q) => `contractors: ${q.keyword} (${q.language})`),
   ];
   const plannedTypes = storesTypeQueries.map((q) => q.type);
@@ -1022,7 +797,11 @@ export async function searchPlaces(params: SearchParams): Promise<SearchResult> 
         fallbacksUsed: 0,
         plannedQueries,
         plannedTypes,
-        executionNotes: ["Dry run mode - no API calls made", "API debug: D)"],
+        executionNotes: [
+          "Dry run mode - no API calls made",
+          "API debug: D)",
+          `Retail categories: ${storePlan.categories.join(", ") || "(none)"}`,
+        ],
         debugVersion: "D",
         debugVersionLabel: "D)",
       },
@@ -1034,6 +813,7 @@ export async function searchPlaces(params: SearchParams): Promise<SearchResult> 
       allowlistDomainsContractors: [],
       domainCategoryMapStores: undefined,
       status: 200,
+      outcome: "OK",
     };
   }
 
@@ -1041,40 +821,111 @@ export async function searchPlaces(params: SearchParams): Promise<SearchResult> 
   let requestsMade = 0;
   let cacheHits = 0;
   const executionNotes: string[] = [];
+  const googlePlacesRequests: GooglePlacesRequestLog[] = [];
 
-  // Pass 1: store category keyword searches (merge, dedupe by place_id later)
   for (const query of storesKeywordQueries) {
     await executeWithConcurrency(async () => {
       const cacheKey = getCacheKey(lat, lng, clampedRadiusKm, query.keyword, query.language, "si");
       const cached = searchCache.get(cacheKey);
       if (cached) {
         cacheHits++;
-        cached.forEach((place) => allPlaces.push({ place, intent: "store" }));
+        cached.forEach((place) =>
+          allPlaces.push({
+            place: {
+              ...place,
+              sourceKeywords: [...new Set([...(place.sourceKeywords ?? []), query.keyword])],
+              categoriesMatched: [...new Set([...(place.categoriesMatched ?? []), ...query.categories])],
+            },
+            intent: "store",
+          })
+        );
+        googlePlacesRequests.push({
+          kind: "nearby_keyword",
+          query: query.keyword,
+          cacheHit: true,
+          resultCount: cached.length,
+        });
         return;
       }
       requestsMade++;
-      const places = await fetchPlaces(query.keyword, lat, lng, radiusMeters, query.language, "si");
-      places.forEach((place) => allPlaces.push({ place, intent: "store" }));
+      try {
+        const places = await fetchPlaces(
+          query.keyword,
+          lat,
+          lng,
+          radiusMeters,
+          query.language,
+          "si",
+          googlePlacesRequests
+        );
+        places.forEach((place) =>
+          allPlaces.push({
+            place: {
+              ...place,
+              categoriesMatched: [...new Set([...(place.categoriesMatched ?? []), ...query.categories])],
+            },
+            intent: "store",
+          })
+        );
+      } catch (error) {
+        rethrowFatalPlacesError(error);
+        executionNotes.push(`Nearby keyword search failed: ${query.keyword}`);
+      }
     });
   }
 
-  // Pass 2: store type-based searches (big-box retailers)
   for (const typeQuery of storesTypeQueries) {
     await executeWithConcurrency(async () => {
       const cacheKey = getCacheKeyForType(lat, lng, clampedRadiusKm, typeQuery.type, "sl", "si");
       const cached = searchCache.get(cacheKey);
       if (cached) {
         cacheHits++;
-        cached.forEach((place) => allPlaces.push({ place, intent: "store" }));
+        cached.forEach((place) =>
+          allPlaces.push({
+            place: {
+              ...place,
+              sourceKeywords: [...new Set([...(place.sourceKeywords ?? []), typeQuery.type])],
+              categoriesMatched: [...new Set([...(place.categoriesMatched ?? []), ...typeQuery.categories])],
+            },
+            intent: "store",
+          })
+        );
+        googlePlacesRequests.push({
+          kind: "nearby_type",
+          query: typeQuery.type,
+          cacheHit: true,
+          resultCount: cached.length,
+        });
         return;
       }
       requestsMade++;
-      const places = await fetchPlacesByType(typeQuery.type, lat, lng, radiusMeters, "sl", "si");
-      places.forEach((place) => allPlaces.push({ place, intent: "store" }));
+      try {
+        const places = await fetchPlacesByType(
+          typeQuery.type,
+          lat,
+          lng,
+          radiusMeters,
+          "sl",
+          "si",
+          googlePlacesRequests
+        );
+        places.forEach((place) =>
+          allPlaces.push({
+            place: {
+              ...place,
+              sourceKeywords: [...new Set([...(place.sourceKeywords ?? []), typeQuery.type])],
+              categoriesMatched: [...new Set([...(place.categoriesMatched ?? []), ...typeQuery.categories])],
+            },
+            intent: "store",
+          })
+        );
+      } catch (error) {
+        rethrowFatalPlacesError(error);
+        executionNotes.push(`Nearby type search failed: ${typeQuery.type}`);
+      }
     });
   }
 
-  // Contractors: single keyword search
   for (const query of contractorsQueries) {
     await executeWithConcurrency(async () => {
       const cacheKey = getCacheKey(lat, lng, clampedRadiusKm, query.keyword, query.language, "si");
@@ -1085,15 +936,40 @@ export async function searchPlaces(params: SearchParams): Promise<SearchResult> 
         return;
       }
       requestsMade++;
-      const places = await fetchPlaces(query.keyword, lat, lng, radiusMeters, query.language, "si");
-      places.forEach((place) => allPlaces.push({ place, intent: "contractor" }));
+      try {
+        const places = await fetchPlaces(
+          query.keyword,
+          lat,
+          lng,
+          radiusMeters,
+          query.language,
+          "si",
+          googlePlacesRequests
+        );
+        places.forEach((place) => allPlaces.push({ place, intent: "contractor" }));
+      } catch (error) {
+        rethrowFatalPlacesError(error);
+        executionNotes.push(`Contractor search failed: ${query.keyword}`);
+      }
     });
   }
 
   // Dedupe by place_id: keep first (store then contractor); keep intent for classification prior
   const placeById = new Map<string, { place: Place; intent: "store" | "contractor" }>();
   for (const { place, intent } of allPlaces) {
-    if (!placeById.has(place.place_id)) placeById.set(place.place_id, { place, intent });
+    const existing = placeById.get(place.place_id);
+    if (!existing) {
+      placeById.set(place.place_id, { place, intent });
+      continue;
+    }
+    const categoriesMatched = [
+      ...new Set([...(existing.place.categoriesMatched ?? []), ...(place.categoriesMatched ?? [])]),
+    ];
+    const sourceKeywords = [
+      ...new Set([...(existing.place.sourceKeywords ?? []), ...(place.sourceKeywords ?? [])]),
+    ];
+    existing.place = { ...existing.place, categoriesMatched, sourceKeywords };
+    if (existing.intent !== "store" && intent === "store") existing.intent = "store";
   }
   const mergedWithIntent = Array.from(placeById.values());
 
@@ -1128,40 +1004,44 @@ export async function searchPlaces(params: SearchParams): Promise<SearchResult> 
 
   const candidatesFound = filteredPlaces.length;
   let detailsFetched = 0;
-  const onlyWithWebsite = params.onlyWithWebsite !== false;
   const debugMode = params.debug === true;
 
   const storesDropped: Array<{ name: string; place_id?: string; reason: string }> = [];
-  const contractorsDropped: Array<{ name: string; place_id?: string; reason: string }> = [];
+  const contractorsDropped: Array<{ name: string; place_id?: string; reason: string } > = [];
   const scoringNotes: string[] = [];
+  const pipeline: PlacePipelineDebugRow[] = [];
 
-  // Enrich all (no pre-classification drop); classify after details with intent as prior
   const toEnrich = limitedWithIntent.slice(0, MAX_DETAILS_PER_SEARCH);
   type EnrichedPlace = Place & {
     types: string[];
     website?: string;
     websiteDomain?: string;
     distanceKm: number;
-    bucket: "store" | "contractor";
+    bucket: "store" | "contractor" | null;
     formatted_phone_number?: string;
+    catalogSignal?: CatalogSignalResult | "not_probed";
   };
   const enriched: EnrichedPlace[] = [];
 
   for (let i = 0; i < toEnrich.length; i += DETAILS_CONCURRENCY) {
     const batch = toEnrich.slice(i, i + DETAILS_CONCURRENCY);
-    const detailsResults = await Promise.all(batch.map(({ place }) => getPlaceDetails(place.place_id)));
+    const detailsResults = await Promise.all(
+      batch.map(({ place }) => getPlaceDetails(place.place_id, googlePlacesRequests))
+    );
     detailsFetched += batch.length;
     for (let j = 0; j < batch.length; j++) {
       const { place, intent } = batch[j];
       const details = detailsResults[j];
       const types = details?.types?.length ? details.types : place.types;
-      const website = details?.website && String(details.website).trim() ? String(details.website).trim() : undefined;
+      const website =
+        details?.website && String(details.website).trim() ? String(details.website).trim() : undefined;
       const websiteDomain = website ? normalizeDomainToRoot(website) : undefined;
       const phone = details?.formatted_phone_number;
-      let bucket = classifyPlaceBucket(types, place.name, websiteDomain);
-      if (bucket === null) bucket = intent;
-      else if (bucket === "contractor") bucket = "contractor";
-      else if (bucket === "store" && intent === "contractor") bucket = "contractor";
+      let bucket = classifyPlaceBucket(types, place.name, websiteDomain, {
+        sourceKeywords: place.sourceKeywords,
+        categoriesMatched: place.categoriesMatched,
+      });
+      if (bucket === null && intent === "contractor") bucket = "contractor";
       enriched.push({
         ...place,
         types,
@@ -1170,60 +1050,148 @@ export async function searchPlaces(params: SearchParams): Promise<SearchResult> 
         distanceKm: place.distanceKm ?? 0,
         bucket,
         formatted_phone_number: phone,
+        catalogSignal: "not_probed",
       });
     }
   }
 
-  // onlyWithWebsite applies only to domain allowlist; do NOT drop stores/contractors without website from lists
   const storeEnriched = enriched.filter((p) => p.bucket === "store");
   const contractorEnriched = enriched.filter((p) => p.bucket === "contractor");
 
-  const storeByDomain = new Map<string, typeof enriched[0]>();
-  const contractorByDomain = new Map<string, typeof enriched[0]>();
+  const storeByDomain = new Map<string, (typeof enriched)[0]>();
+  const contractorByDomain = new Map<string, (typeof enriched)[0]>();
+  let discardedNoWebsiteStores = 0;
+  let discardedDomainNotOfficialStores = 0;
 
   for (const p of storeEnriched) {
-    if (!p.website || !p.websiteDomain) continue; // domain allowlist: only places with website
-    if (isRejectedDomain(p.websiteDomain)) {
-      storesDropped.push({ name: p.name, place_id: p.place_id, reason: "domain_rejected" });
+    const storeScore = computeStoreScore(p.types, p.rating, p.user_ratings_total);
+    let catalogSignal: CatalogSignalResult | "not_probed" = "not_probed";
+    const needsCatalogEvidence =
+      Boolean(p.website) &&
+      !hasStrongStoreType(p.types) &&
+      !isOfficialDomain(p.websiteDomain ?? "", p.name);
+    if (needsCatalogEvidence && p.website) {
+      const probed = await checkProductCatalogSignal(p.website);
+      catalogSignal = probed.signal;
+      p.catalogSignal = catalogSignal;
+    }
+
+    const gate = evaluateStoreDomainGate({
+      name: p.name,
+      types: p.types,
+      website: p.website,
+      websiteDomain: p.websiteDomain,
+      storeScore,
+      sourceKeywords: p.sourceKeywords,
+      categoriesMatched: p.categoriesMatched,
+      catalogSignal: catalogSignal === "not_probed" ? undefined : catalogSignal,
+    });
+
+    const row: PlacePipelineDebugRow = {
+      name: p.name,
+      place_id: p.place_id,
+      sourceKeywords: p.sourceKeywords,
+      googleTypes: p.types,
+      sourceRetailCategories: p.categoriesMatched ?? [],
+      afterRadiusFilter: true,
+      detailsFetched: true,
+      hasWebsite: Boolean(p.website && p.websiteDomain),
+      websiteDomain: p.websiteDomain,
+      classifyPlaceBucket: p.bucket,
+      storeScore,
+      officialDomain: gate.officialDomain,
+      catalogPath: gate.catalogPath,
+      catalogSignal,
+      rejectionReason: gate.accept ? null : gate.reason,
+      acceptedStoreDomain: gate.accept,
+    };
+    pipeline.push(row);
+
+    if (!p.website || !p.websiteDomain) {
+      discardedNoWebsiteStores += 1;
+      storesDropped.push({ name: p.name, place_id: p.place_id, reason: "no_website" });
       continue;
     }
-    const official = isOfficialDomain(p.websiteDomain, p.name);
-    const catalogPath = hasCatalogPathSignal(p.website);
-    const storeScore = computeStoreScore(p.types, p.rating, p.user_ratings_total);
-    const includeDomain = official && (catalogPath || storeScore >= 0.7);
-    if (!includeDomain) {
-      storesDropped.push({ name: p.name, place_id: p.place_id, reason: official ? "no_catalog_signal" : "domain_not_official" });
+    if (!gate.accept) {
+      if (gate.reason === "domain_not_official") discardedDomainNotOfficialStores += 1;
+      storesDropped.push({ name: p.name, place_id: p.place_id, reason: gate.reason ?? "filtered" });
       continue;
     }
     const d = p.websiteDomain.toLowerCase();
     const existing = storeByDomain.get(d);
-    if (!existing || (p.user_ratings_total ?? 0) > (existing.user_ratings_total ?? 0)) storeByDomain.set(d, p);
+    const categoriesMatched = [
+      ...new Set([...(existing?.categoriesMatched ?? []), ...(p.categoriesMatched ?? [])]),
+    ];
+    const keep =
+      !existing || (p.user_ratings_total ?? 0) > (existing.user_ratings_total ?? 0) ? p : existing;
+    storeByDomain.set(d, { ...keep, categoriesMatched });
   }
 
   for (const p of contractorEnriched) {
     if (!p.website || !p.websiteDomain) continue;
     if (isRejectedDomain(p.websiteDomain)) {
-      contractorsDropped.push({ name: p.name, place_id: p.place_id, reason: "domain_rejected" });
+      contractorsDropped.push({ name: p.name, place_id: p.place_id, reason: "social_or_directory_website" });
       continue;
     }
     const official = isOfficialDomain(p.websiteDomain, p.name);
     const servicePath = hasServicePathSignal(p.website);
     const serviceType = p.types.some((t) => (SERVICE_TYPES as readonly string[]).includes(t.toLowerCase()));
-    const nameMatchesContractor = CONTRACTOR_NAME_KEYWORDS_SL.some((kw) => (p.name ?? "").toLowerCase().includes(kw));
+    const nameMatchesContractor = CONTRACTOR_NAME_KEYWORDS_SL.some((kw) =>
+      (p.name ?? "").toLowerCase().includes(kw)
+    );
     const domainServiceHeuristic = isServiceDomainByHeuristic(p.websiteDomain);
     const hasPhone = !!p.formatted_phone_number && String(p.formatted_phone_number).trim().length > 0;
-    const contractorSignal = servicePath || serviceType || nameMatchesContractor || domainServiceHeuristic || hasPhone;
+    const contractorSignal =
+      servicePath || serviceType || nameMatchesContractor || domainServiceHeuristic || hasPhone;
     if (!official || !contractorSignal) {
-      contractorsDropped.push({ name: p.name, place_id: p.place_id, reason: official ? "no_contractor_signal" : "domain_not_official" });
+      contractorsDropped.push({
+        name: p.name,
+        place_id: p.place_id,
+        reason: official ? "no_contractor_signal" : "domain_not_official",
+      });
       continue;
     }
     const d = p.websiteDomain.toLowerCase();
     const existing = contractorByDomain.get(d);
-    if (!existing || (p.user_ratings_total ?? 0) > (existing.user_ratings_total ?? 0)) contractorByDomain.set(d, p);
+    if (!existing || (p.user_ratings_total ?? 0) > (existing.user_ratings_total ?? 0)) {
+      contractorByDomain.set(d, p);
+    }
+  }
+
+  for (const p of enriched.filter((item) => item.bucket !== "store")) {
+    pipeline.push({
+      name: p.name,
+      place_id: p.place_id,
+      sourceKeywords: p.sourceKeywords,
+      googleTypes: p.types,
+      sourceRetailCategories: p.categoriesMatched ?? [],
+      afterRadiusFilter: true,
+      detailsFetched: true,
+      hasWebsite: Boolean(p.website && p.websiteDomain),
+      websiteDomain: p.websiteDomain,
+      classifyPlaceBucket: p.bucket,
+      storeScore: computeStoreScore(p.types, p.rating, p.user_ratings_total),
+      officialDomain: Boolean(p.websiteDomain && isOfficialDomain(p.websiteDomain, p.name)),
+      catalogPath: Boolean(p.website && hasCatalogPathSignal(p.website)),
+      catalogSignal: "not_probed",
+      rejectionReason:
+        p.bucket === "contractor" ? "classified_contractor" : "not_classified_as_store",
+      acceptedStoreDomain: false,
+    });
   }
 
   function toPlaceResult(
-    p: { name: string; place_id: string; rating?: number; user_ratings_total?: number; distanceKm: number; website?: string; websiteDomain?: string; types: string[] },
+    p: {
+      name: string;
+      place_id: string;
+      rating?: number;
+      user_ratings_total?: number;
+      distanceKm: number;
+      website?: string;
+      websiteDomain?: string;
+      types: string[];
+      categoriesMatched?: string[];
+    },
     bucket: "store" | "contractor",
     qualityFlags: QualityFlags
   ): PlaceResult {
@@ -1239,6 +1207,7 @@ export async function searchPlaces(params: SearchParams): Promise<SearchResult> 
       websiteDomain: dom,
       categoryBucket: bucket,
       types: p.types,
+      matchedRetailCategories: p.categoriesMatched ?? [],
       qualityFlags,
     };
   }
@@ -1268,7 +1237,7 @@ export async function searchPlaces(params: SearchParams): Promise<SearchResult> 
   let stores: PlaceResult[] = sortedStoresAll.map((p) =>
     toPlaceResult(p, "store", {
       officialSite: !!(p.websiteDomain && isOfficialDomain(p.websiteDomain, p.name)),
-      hasCatalogSignal: !!(p.website && hasCatalogPathSignal(p.website)),
+      hasCatalogSignal: !!(p.website && (hasCatalogPathSignal(p.website) || p.catalogSignal === true || hasStrongStoreType(p.types))),
       isDirectoryOrSocial: !!(p.websiteDomain && isRejectedDomain(p.websiteDomain)),
       isAggregator: false,
     })
@@ -1310,7 +1279,19 @@ export async function searchPlaces(params: SearchParams): Promise<SearchResult> 
   scoringNotes.push(`Stores: ${stores.length} places, ${domainsStores.length} domains (cap ${MAX_DOMAINS_PER_LIST})`);
   scoringNotes.push(`Contractors: ${contractors.length} places, ${domainsContractors.length} domains (cap ${MAX_DOMAINS_PER_LIST})`);
 
-  if (!dryRun) executionNotes.push("API debug: D)");
+  if (!dryRun) {
+    executionNotes.push("API debug: D)");
+    executionNotes.push(`Retail categories: ${storePlan.categories.join(", ") || "(none)"}`);
+  }
+
+  const storesWithWebsite = storeEnriched.filter((p) => p.website && p.websiteDomain).length;
+  const outcome = placesOutcomeFromCounts({
+    rawCandidates: beforeFilterCount,
+    afterRadius: candidatesFound,
+    storeBucketCount: storeEnriched.length,
+    storesWithWebsite,
+    validStoreDomains: domainsStores.length,
+  });
 
   const result: SearchResult = {
     meta: {
@@ -1326,13 +1307,14 @@ export async function searchPlaces(params: SearchParams): Promise<SearchResult> 
       candidatesFound,
       detailsFetched,
       discardedOutOfRadius: filteredOutCount,
-      discardedNoWebsiteStores: 0,
-      discardedDomainNotOfficialStores: 0,
+      discardedNoWebsiteStores,
+      discardedDomainNotOfficialStores,
       discardedLowStoreScore: 0,
       discardedLowServiceScore: 0,
       reclassifiedToServices: 0,
       debugVersion: "D",
       debugVersionLabel: "D)",
+      outcome,
     },
     places: [],
     stores,
@@ -1342,12 +1324,15 @@ export async function searchPlaces(params: SearchParams): Promise<SearchResult> 
     allowlistDomainsContractors: domainsContractors,
     domainCategoryMapStores: Object.keys(domainCategoryMapStores).length > 0 ? domainCategoryMapStores : undefined,
     status: 200,
+    outcome,
   };
   if (debugMode) {
     result.debug = {
       storesDropped,
       contractorsDropped,
       scoringNotes,
+      pipeline,
+      googlePlacesRequests,
     };
   }
   return result;
@@ -1356,19 +1341,20 @@ export async function searchPlaces(params: SearchParams): Promise<SearchResult> 
 /**
  * Fetch place details (lazy loading)
  */
-export async function getPlaceDetails(placeId: string): Promise<PlaceDetails | null> {
-  if (!process.env.GOOGLE_MAPS_API_KEY) {
-    throw new Error("GOOGLE_MAPS_API_KEY not configured");
-  }
+export async function getPlaceDetails(
+  placeId: string,
+  log: GooglePlacesRequestLog[] = []
+): Promise<PlaceDetails | null> {
+  const apiKey = requireMapsKey();
 
-  // Check cache
   const cached = detailsCache.get(placeId);
   if (cached) {
+    log.push({ kind: "details", query: placeId, cacheHit: true, resultCount: 1 });
     return cached;
   }
 
   const fields = "place_id,name,formatted_address,geometry,rating,user_ratings_total,formatted_phone_number,website,opening_hours,url,types";
-  const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&fields=${fields}&language=sl&region=si&key=${process.env.GOOGLE_MAPS_API_KEY}`;
+  const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&fields=${fields}&language=sl&region=si&key=${apiKey}`;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -1380,11 +1366,31 @@ export async function getPlaceDetails(placeId: string): Promise<PlaceDetails | n
 
     clearTimeout(timeout);
 
+    if (isPlacesRateLimitedStatus(response.status) || isPlacesQuotaStatus(response.status)) {
+      log.push({ kind: "details", query: placeId, httpStatus: response.status, providerStatus: "HTTP_ERROR" });
+      throw placesErrorFromHttp(response.status);
+    }
     if (!response.ok) {
-      throw new Error(`Google Places Details API error: ${response.status}`);
+      log.push({ kind: "details", query: placeId, httpStatus: response.status });
+      throw placesErrorFromHttp(response.status);
     }
 
     const data = await response.json();
+    const providerStatus = String(data.status ?? "");
+    log.push({
+      kind: "details",
+      query: placeId,
+      httpStatus: response.status,
+      providerStatus,
+      resultCount: data.result ? 1 : 0,
+    });
+
+    if (
+      isPlacesQuotaStatus(response.status, providerStatus) ||
+      isPlacesRateLimitedStatus(response.status, providerStatus)
+    ) {
+      throw placesErrorFromHttp(response.status, providerStatus);
+    }
 
     if (data.status !== "OK" || !data.result) {
       return null;
@@ -1420,15 +1426,16 @@ export async function getPlaceDetails(placeId: string): Promise<PlaceDetails | n
       categoriesMatched: [],
     };
 
-    // Cache details
     detailsCache.set(placeId, details);
 
     return details;
-  } catch (error: any) {
+  } catch (error: unknown) {
     clearTimeout(timeout);
-    if (error.name === "AbortError") {
-      throw new Error("Google Places Details API request timeout");
+    if (error instanceof PlacesError) throw error;
+    const name = error instanceof Error ? error.name : "";
+    if (name === "AbortError") {
+      throw new PlacesError(PLACES_ERROR_CODES.PLACES_PROVIDER_ERROR, "Places details timeout");
     }
-    throw error;
+    throw new PlacesError(PLACES_ERROR_CODES.PLACES_PROVIDER_ERROR, "Places details error");
   }
 }
