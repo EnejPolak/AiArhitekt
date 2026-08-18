@@ -6,6 +6,7 @@ import { RoomRenovationFlow } from "./room-renovation/RoomRenovationFlow";
 import { updateWizardStep } from "@/lib/projects/actions";
 import { MVP_PROJECT_TYPE, type ProjectType } from "@/lib/projects/types";
 import type { RoomAnalysisView } from "@/lib/analysis/types";
+import type { ProductDiscoveryView, ProductSelectionView } from "@/lib/discovery/types";
 
 export interface WorkspaceAreaProps {
   projectId: string | null;
@@ -13,6 +14,10 @@ export interface WorkspaceAreaProps {
   currentStepKey?: string;
   roomPhoto?: { previewUrl: string | null; filename: string | null } | null;
   roomAnalysis?: RoomAnalysisView | null;
+  productDiscovery?: {
+    discovery: ProductDiscoveryView;
+    selections: ProductSelectionView[];
+  } | null;
   className?: string;
 }
 
@@ -22,6 +27,7 @@ export const WorkspaceArea: React.FC<WorkspaceAreaProps> = ({
   currentStepKey,
   roomPhoto,
   roomAnalysis = null,
+  productDiscovery = null,
   className,
 }) => {
   const persistStep = (key: string) => {
@@ -50,6 +56,7 @@ export const WorkspaceArea: React.FC<WorkspaceAreaProps> = ({
           onStepChange={persistStep}
           roomPhoto={roomPhoto}
           roomAnalysis={roomAnalysis}
+          productDiscovery={productDiscovery}
         />
       ) : projectId ? (
         <div className="flex-1 flex items-center justify-center px-6">

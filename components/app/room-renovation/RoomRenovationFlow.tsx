@@ -20,6 +20,7 @@ import { Step9dContractors } from "./steps/Step9dContractors";
 import { Step10FinalReport } from "./steps/Step10FinalReport";
 import { stepIndexFromKey, stepKeyFromIndex } from "@/lib/projects/steps";
 import type { RoomAnalysisView } from "@/lib/analysis/types";
+import type { ProductDiscoveryView, ProductSelectionView } from "@/lib/discovery/types";
 
 export interface RoomRenovationData {
   roomType: "kitchen" | "bathroom" | "bedroom" | "living-room" | "other" | null;
@@ -105,6 +106,10 @@ export interface RoomRenovationFlowProps {
   onStepChange?: (key: string) => void;
   roomPhoto?: { previewUrl: string | null; filename: string | null } | null;
   roomAnalysis?: RoomAnalysisView | null;
+  productDiscovery?: {
+    discovery: ProductDiscoveryView;
+    selections: ProductSelectionView[];
+  } | null;
 }
 
 export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
@@ -114,9 +119,16 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
   onStepChange,
   roomPhoto,
   roomAnalysis = null,
+  productDiscovery = null,
 }) => {
   const [currentAnalysis, setCurrentAnalysis] = React.useState<RoomAnalysisView | null>(
     roomAnalysis
+  );
+  const [persistedDiscovery, setPersistedDiscovery] = React.useState<ProductDiscoveryView | null>(
+    productDiscovery?.discovery ?? null
+  );
+  const [persistedSelections, setPersistedSelections] = React.useState<ProductSelectionView[]>(
+    productDiscovery?.selections ?? []
   );
   const [hasPersistedPhoto, setHasPersistedPhoto] = React.useState(
     Boolean(roomPhoto?.previewUrl || roomPhoto?.filename)
@@ -272,11 +284,9 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
   };
 
   const nextStep = () => {
-    setCurrentStep((prev) => {
-      const next = Math.min(prev + 1, 16);
-      onStepChange?.(stepKeyFromIndex("room-renovation", next));
-      return next;
-    });
+    const next = Math.min(currentStep + 1, 16);
+    setCurrentStep(next);
+    onStepChange?.(stepKeyFromIndex("room-renovation", next));
   };
 
   // Cleanup typing timers on unmount
@@ -332,8 +342,8 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
       6: "Great. Tell me your preferences (colors, floor, heating, key furniture) so I don’t guess.",
       7: "To find products in local stores near you, share your location.",
       11: "I'll allocate your budget into category caps so we don't overspend.",
-      12: "Finding local stores within 50 km that match your needs…",
-      13: "Now I'll pull real products (price + link + image) from local stores, staying within your category caps.",
+      12: "When you are ready, I will search nearby stores for real products from the room analysis. This does not generate a render.",
+      13: "Review the persisted products. Confirm the ones to use in the future design.",
       14: "Building a final shopping list that stays within your total budget…",
       15: "Do you want me to find local contractors (painters, flooring, assembly) within 50 km?",
       16: "Your renovation project is ready.",
@@ -493,10 +503,12 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
             budget={data.budgetLevel!}
             preferences={data.preferences}
             observation={data.aiObservation}
+            onContinueWithoutRender={() => {
+              addAIMessage("The room visualization comes after real products are selected.");
+              nextStep();
+            }}
             onDesignsGenerated={(designs) => {
               updateData({ generatedDesigns: designs });
-              // Avoid duplicating the image grid here (it exists in the next step with zoom).
-              addAIMessage("Here are your redesigned room concepts.\n\nChoose the one you like most to continue.");
               nextStep();
             }}
           />
@@ -506,6 +518,9 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
           <Step7FinalDesignSelection
             designs={data.generatedDesigns}
             selectedDesign={data.selectedDesign}
+            onContinueWithoutRender={() => {
+              nextStep();
+            }}
             onSelect={(design) => {
               addUserMessage("Selected design concept");
               updateData({ selectedDesign: design });
@@ -652,12 +667,28 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
       case 12:
         return (
           <Step9aStoreDiscovery
-            location={data.location!}
+            projectId={projectId}
+            location={data.location}
             radiusKm={data.radiusKm}
-            roomType={data.roomType!}
-            onStoresFound={(stores) => {
-              updateData({ localStores: stores });
-              addAIMessage(`Found ${stores.length} local stores within ${data.radiusKm} km.`);
+            initialDiscovery={persistedDiscovery}
+            initialSelections={persistedSelections}
+            shoppingPreferences={{
+              selectedStyles: data.selectedStyles,
+              wallMainColor: data.preferences?.wallMainColor ?? "",
+              wallAccentColor: data.preferences?.wallAccentColor ?? "",
+              flooring: data.preferences?.flooring ?? "keep",
+              underfloorHeating: data.preferences?.underfloorHeating ?? false,
+              bedType: data.preferences?.bedType ?? "none",
+              keepExistingWalls: false,
+            }}
+            onComplete={({ discovery, selections }) => {
+              setPersistedDiscovery(discovery);
+              setPersistedSelections(selections);
+              addAIMessage(
+                selections.length > 0
+                  ? `Found ${selections.length} real product${selections.length === 1 ? "" : "s"} from nearby stores.`
+                  : "No matching products were found for this search."
+              );
               nextStep();
             }}
           />
@@ -665,15 +696,20 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
       case 13:
         return (
           <Step9bProductSourcing
-            roomType={data.roomType!}
-            selectedDesign={data.selectedDesign}
-            preferences={data.preferences}
-            budgetPlan={data.budgetPlan!}
-            localStores={data.localStores!}
-            onProductsFound={(candidates) => {
-              updateData({ productCandidates: candidates });
-              const totalCandidates = Object.values(candidates).reduce((sum, arr) => sum + arr.length, 0);
-              addAIMessage(`Found ${totalCandidates} product candidates across all categories.`);
+            projectId={projectId}
+            selections={persistedSelections}
+            preferences={{
+              selectedStyles: data.selectedStyles,
+              budgetLevel: data.budgetLevel,
+              wallMainColor: data.preferences?.wallMainColor ?? "",
+              wallAccentColor: data.preferences?.wallAccentColor ?? "",
+              flooring: data.preferences?.flooring ?? "keep",
+              underfloorHeating: data.preferences?.underfloorHeating ?? false,
+              bedType: data.preferences?.bedType ?? "none",
+              notes: data.preferences?.notes ?? "",
+            }}
+            roomPhotoPreviewUrl={roomPhoto?.previewUrl ?? null}
+            onContinue={() => {
               nextStep();
             }}
           />
@@ -681,8 +717,8 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
       case 14:
         return (
           <Step9cShoppingList
-            productCandidates={data.productCandidates!}
-            budgetPlan={data.budgetPlan!}
+            productCandidates={data.productCandidates ?? {}}
+            budgetPlan={data.budgetPlan ?? { caps: {}, reservedBufferRatio: 0, totalBudget: 0 }}
             onShoppingListComplete={(shoppingList) => {
               updateData({ shoppingList });
               // Add shopping list to conversation

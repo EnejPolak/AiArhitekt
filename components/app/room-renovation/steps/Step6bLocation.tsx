@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { cn } from "@/lib/utils";
+import { locationLabelFromGeocode } from "@/lib/geocode/locationLabel";
 
 export interface Step6bLocationProps {
   location: { lat: number; lng: number; label: string } | null;
@@ -48,7 +49,12 @@ export const Step6bLocation: React.FC<Step6bLocationProps> = ({
           }
 
           const data = await response.json();
-          const label = data.address || `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
+          if (data?.ok !== true) {
+            throw new Error("Failed to get address");
+          }
+          const label =
+            locationLabelFromGeocode(data, { latitude, longitude }) ??
+            `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
           
           onLocationSet(
             { lat: latitude, lng: longitude, label },
@@ -90,9 +96,14 @@ export const Step6bLocation: React.FC<Step6bLocationProps> = ({
       }
 
       const data = await response.json();
-      
+      if (data?.ok !== true || typeof data.lat !== "number" || typeof data.lng !== "number") {
+        throw new Error("Failed to geocode address");
+      }
+      const label =
+        locationLabelFromGeocode(data) ?? addressInput.trim();
+
       onLocationSet(
-        { lat: data.lat, lng: data.lng, label: addressInput.trim() },
+        { lat: data.lat, lng: data.lng, label },
         parseInt(radiusInput) || 50
       );
     } catch (err: any) {

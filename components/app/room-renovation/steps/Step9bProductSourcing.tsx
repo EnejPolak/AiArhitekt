@@ -1,108 +1,45 @@
 "use client";
 
 import * as React from "react";
+import type { ProductSelectionView } from "@/lib/discovery/types";
+import type { RoomRenderPreferences } from "@/lib/render/preferences";
+import { FinalRoomRenderPanel } from "../FinalRoomRenderPanel";
 
 export interface Step9bProductSourcingProps {
-  roomType: string;
-  selectedDesign: string | null;
-  preferences: any;
-  budgetPlan: {
-    caps: Record<string, { max: number; qty: number }>;
-    reservedBufferRatio: number;
-    totalBudget: number;
-  };
-  localStores: Array<{
-    name: string;
-    address: string;
-    website: string | null;
-    placeId: string;
-    categoriesHint: string[];
-  }>;
-  onProductsFound: (candidates: Record<string, Array<{
-    name: string;
-    price: number;
-    url: string;
-    imageUrl: string | null;
-    store: string;
-  }>>) => void;
+  projectId: string;
+  selections: ProductSelectionView[];
+  preferences: RoomRenderPreferences;
+  roomPhotoPreviewUrl: string | null;
+  onContinue: () => void;
 }
 
 export const Step9bProductSourcing: React.FC<Step9bProductSourcingProps> = ({
-  roomType,
-  selectedDesign,
+  projectId,
+  selections,
   preferences,
-  budgetPlan,
-  localStores,
-  onProductsFound,
+  roomPhotoPreviewUrl,
+  onContinue,
 }) => {
-  const [isLoading, setIsLoading] = React.useState(true);
-  const [error, setError] = React.useState<string | null>(null);
-  const lastRunKeyRef = React.useRef<string>("");
-
-  React.useEffect(() => {
-    const runKey = `${roomType}|${JSON.stringify(budgetPlan.caps)}|${localStores.length}`;
-    if (lastRunKeyRef.current === runKey) return;
-    lastRunKeyRef.current = runKey;
-
-    const sourceProducts = async () => {
-      setIsLoading(true);
-      setError(null);
-
-      try {
-        const response = await fetch("/api/search-products", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            roomType,
-            selectedDesign,
-            preferences,
-            budgetPlan,
-            localStores,
-          }),
-        });
-
-        if (!response.ok) {
-          throw new Error("Failed to source products");
-        }
-
-        const data = await response.json();
-        onProductsFound(data.candidatesByCategory || {});
-      } catch (err: any) {
-        console.error("Error sourcing products:", err);
-        setError(err.message || "Failed to source products");
-        // Continue with empty object
-        onProductsFound({});
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    sourceProducts();
-  }, [roomType, selectedDesign, preferences, budgetPlan, localStores, onProductsFound]);
-
-  if (isLoading) {
-    return (
-      <div className="flex justify-start mb-6">
-        <div className="max-w-[85%] rounded-[16px] px-6 py-5 bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.08)]">
-          <div className="text-[15px] text-[rgba(255,255,255,0.85)] leading-relaxed">
-            Pulling real products (price + link + image) from local stores, staying within your category caps…
-          </div>
+  return (
+    <div className="flex justify-start mb-6">
+      <div className="max-w-[92%] rounded-[16px] px-6 py-5 bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.08)] space-y-4">
+        <div className="text-[15px] text-[rgba(255,255,255,0.85)] leading-relaxed">
+          Generate a room visualization from your confirmed products. The shopping list stays the real persisted selections — not anything read from the image.
         </div>
+        <FinalRoomRenderPanel
+          projectId={projectId}
+          selections={selections}
+          preferences={preferences}
+          roomPhotoPreviewUrl={roomPhotoPreviewUrl}
+        />
+        <button
+          type="button"
+          onClick={onContinue}
+          className="text-[14px] text-[rgba(0,230,204,0.85)] hover:text-[rgba(0,230,204,1)]"
+        >
+          Continue
+        </button>
       </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="flex justify-start mb-6">
-        <div className="max-w-[85%] rounded-[16px] px-6 py-5 bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.08)]">
-          <div className="text-[15px] text-[rgba(255,255,255,0.85)] leading-relaxed">
-            {error}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  return null;
+    </div>
+  );
 };

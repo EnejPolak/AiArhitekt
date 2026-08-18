@@ -7,14 +7,35 @@ export interface Step7FinalDesignSelectionProps {
   designs: string[];
   selectedDesign: string | null;
   onSelect: (design: string) => void;
+  onContinueWithoutRender?: () => void;
 }
 
 export const Step7FinalDesignSelection: React.FC<Step7FinalDesignSelectionProps> = ({
   designs,
   selectedDesign,
   onSelect,
+  onContinueWithoutRender,
 }) => {
   const [preview, setPreview] = React.useState<string | null>(null);
+
+  if (designs.length === 0) {
+    return (
+      <div className="flex justify-start mb-6">
+        <div className="max-w-[85%] rounded-[16px] px-6 py-5 bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.08)] space-y-4">
+          <div className="text-[15px] text-[rgba(255,255,255,0.85)] leading-relaxed">
+            Room concepts are generated after real products are confirmed. Continue to product discovery.
+          </div>
+          <button
+            type="button"
+            onClick={() => onContinueWithoutRender?.()}
+            className="text-[14px] text-[rgba(0,230,204,0.85)] hover:text-[rgba(0,230,204,1)]"
+          >
+            Continue
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
