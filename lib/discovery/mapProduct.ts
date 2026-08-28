@@ -21,6 +21,7 @@ export function usableProductImageUrl(value: string | null | undefined): string 
 
 export type CanonicalSelectionFields = {
   productTitle: string;
+  productSnippet: string | null;
   productUrl: string;
   productImageUrl: string | null;
   price: number | null;
@@ -56,10 +57,56 @@ export function mapCanonicalPickedToSelection(
 
   return {
     productTitle: title,
+    productSnippet: parsed.data.snippet?.trim() ? parsed.data.snippet.trim() : null,
     productUrl: parsed.data.url,
     productImageUrl: image,
     price,
     currency: parsed.data.currency === "EUR" ? "EUR" : null,
+    retailerDomain: domain,
+    retailerName: retailer?.name?.trim() ? retailer.name.trim() : null,
+    hasReferenceImage: image !== null,
+  };
+}
+
+type TopCandidateSource = {
+  title: string;
+  url: string;
+  domain: string;
+  snippet?: string | null;
+  score: number;
+  image?: string | null;
+  price?: number | null;
+  currency?: "EUR" | null;
+};
+
+export function mapTopCandidateToSelection(
+  candidate: TopCandidateSource,
+  stores: PlaceResult[]
+): CanonicalSelectionFields | null {
+  if (!isHttpUrl(candidate.url)) return null;
+  const title = candidate.title.trim();
+  if (!title) return null;
+
+  const image = usableProductImageUrl(candidate.image);
+  const domain =
+    normalizeDomainToRoot(candidate.domain) || normalizeDomainToRoot(candidate.url);
+  if (!domain) return null;
+
+  const retailer = stores.find(
+    (store) => normalizeDomainToRoot(store.websiteDomain) === domain
+  );
+  const price =
+    typeof candidate.price === "number" && Number.isFinite(candidate.price)
+      ? candidate.price
+      : null;
+
+  return {
+    productTitle: title,
+    productSnippet: candidate.snippet?.trim() ? candidate.snippet.trim() : null,
+    productUrl: candidate.url,
+    productImageUrl: image,
+    price,
+    currency: candidate.currency === "EUR" ? "EUR" : null,
     retailerDomain: domain,
     retailerName: retailer?.name?.trim() ? retailer.name.trim() : null,
     hasReferenceImage: image !== null,

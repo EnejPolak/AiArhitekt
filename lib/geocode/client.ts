@@ -54,6 +54,16 @@ function mapGoogleStatus(status: string): GeocodeFailure | null {
   }
 }
 
+function extractCountryCode(result: {
+  address_components?: Array<{ short_name?: string; types?: string[] }>;
+}): string | null {
+  const components = result.address_components;
+  if (!Array.isArray(components)) return null;
+  const country = components.find((component) => component.types?.includes("country"));
+  const code = (country?.short_name ?? "").trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(code) ? code : null;
+}
+
 /**
  * Call Google Geocoding once. Caller must ensure the feature is enabled and an API key exists.
  * Does not retry. Does not include provider error_message in the result.
@@ -123,6 +133,7 @@ export async function fetchGoogleGeocode(
       formattedAddress: first.formatted_address,
       lat: location.lat,
       lng: location.lng,
+      countryCode: extractCountryCode(first),
     };
   } catch (error: unknown) {
     const name = error && typeof error === "object" && "name" in error ? String(error.name) : "";

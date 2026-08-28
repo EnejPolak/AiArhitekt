@@ -11,6 +11,7 @@ function jsonResult(result: GeocodeResult): NextResponse {
       formattedAddress: result.formattedAddress,
       lat: result.lat,
       lng: result.lng,
+      countryCode: result.countryCode,
     });
   }
   return NextResponse.json(

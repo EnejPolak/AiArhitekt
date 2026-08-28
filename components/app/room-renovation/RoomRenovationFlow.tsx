@@ -21,6 +21,7 @@ import { Step10FinalReport } from "./steps/Step10FinalReport";
 import { stepIndexFromKey, stepKeyFromIndex } from "@/lib/projects/steps";
 import type { RoomAnalysisView } from "@/lib/analysis/types";
 import type { ProductDiscoveryView, ProductSelectionView } from "@/lib/discovery/types";
+import { loadStoredShoppingPreferenceSnapshot, shoppingPreferenceInputFromSnapshot } from "@/lib/discovery/preferences";
 import { saveProjectRoomPreferencesAction } from "@/lib/project-preferences/actions";
 import { projectRoomPreferencesToShoppingPreferences } from "@/lib/project-preferences/adapter";
 import {
@@ -347,8 +348,16 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
     }
   };
 
-  const shoppingPreferences = projectRoomPreferencesToShoppingPreferences(
-    roomPrefs ?? {
+  const shoppingPreferences = React.useMemo(() => {
+    if (roomPrefs) {
+      return projectRoomPreferencesToShoppingPreferences(roomPrefs);
+    }
+    if (persistedDiscovery?.sourcePreferences) {
+      return shoppingPreferenceInputFromSnapshot(
+        loadStoredShoppingPreferenceSnapshot(persistedDiscovery.sourcePreferences)
+      );
+    }
+    return projectRoomPreferencesToShoppingPreferences({
       ...EMPTY_PROJECT_ROOM_PREFERENCES,
       selectedStyles: data.selectedStyles,
       wallMainColor: data.preferences?.wallMainColor ?? "",
@@ -357,8 +366,8 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
       underfloorHeating: data.preferences?.underfloorHeating ?? false,
       bedType: data.preferences?.bedType ?? "none",
       keepExistingWalls: data.preferences?.keepExistingWalls ?? false,
-    }
-  );
+    });
+  }, [roomPrefs, persistedDiscovery?.sourcePreferences, data.selectedStyles, data.preferences]);
 
   const nextStep = () => {
     const next = Math.min(currentStep + 1, 16);
@@ -766,6 +775,10 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
             initialDiscovery={persistedDiscovery}
             initialSelections={persistedSelections}
             shoppingPreferences={shoppingPreferences}
+            onDiscoveryUpdated={({ discovery, selections }) => {
+              setPersistedDiscovery(discovery);
+              setPersistedSelections(selections);
+            }}
             onComplete={({ discovery, selections }) => {
               setPersistedDiscovery(discovery);
               setPersistedSelections(selections);

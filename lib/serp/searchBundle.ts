@@ -51,7 +51,8 @@ const MUST_HIT_RULES: Array<{ pattern: RegExp; tokens: string[] }> = [
   { pattern: /ogledal|mirror/i, tokens: ["ogledal", "mirror", "ogledalo"] },
   { pattern: /preprog|tepih|rug/i, tokens: ["preprog", "tepih", "preproga", "rug"] },
   { pattern: /zaves|zagrinjal|ogrinjal|curtain/i, tokens: ["zaves", "zagrinjal", "ogrinjal", "zavesa", "curtain"] },
-  { pattern: /\bdesk\b|workstation|pisalna\s+miza/i, tokens: ["desk", "workstation"] },
+  { pattern: /\bdesk\b|workstation|pisalna\s+miza|računalniška\s+miza|racunalniska\s+miza/i, tokens: ["desk", "workstation", "miza"] },
+  { pattern: /office\s+chair|pisarniški\s+stol|računalniški\s+stol|racunalniski\s+stol/i, tokens: ["chair", "stol"] },
 ];
 
 function getMustTokensForItem(itemSpec: string): string[] {

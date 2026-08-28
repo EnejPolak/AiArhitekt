@@ -51,8 +51,19 @@ describe("queryGen", () => {
 });
 
 describe("desk taxonomy", () => {
+  const allowlist = ["merkur.si", "jysk.si"];
+
   it("classifies computer desk as furniture", () => {
     expect(itemSpecToCategory("large computer desk multiple monitors")).toBe("furniture");
     expect(itemSpecToCategory("computer desk")).toBe("furniture");
+  });
+
+  it("keeps Slovenian letters in site-scoped keywords", () => {
+    const keywords = itemSpecToKeywords("računalniška miza za več monitorjev", allowlist);
+    expect(keywords).toContain("računalniška");
+    expect(keywords).toContain("miza");
+    expect(keywords).not.toMatch(/racunalniska/);
+    const { flat } = buildPlannedQueries(["računalniška miza"], allowlist);
+    expect(flat.some((row) => row.query.includes("računalniška miza"))).toBe(true);
   });
 });

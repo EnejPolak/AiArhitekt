@@ -25,16 +25,24 @@ export type SaveProjectRoomPreferencesResult =
 
 function fail(
   code: ProjectPreferencesError["code"],
-  message?: string
+  message?: string,
+  op: "load" | "mutate" = "mutate"
 ): ProjectPreferencesActionFail {
-  return { ok: false, code, message: message ?? projectPreferencesErrorMessage(code) };
+  return {
+    ok: false,
+    code,
+    message: message ?? projectPreferencesErrorMessage(code, op),
+  };
 }
 
-function fromCaught(error: unknown): ProjectPreferencesActionFail {
+function fromCaught(
+  error: unknown,
+  op: "load" | "mutate" = "mutate"
+): ProjectPreferencesActionFail {
   if (error instanceof ProjectPreferencesError) {
-    return fail(error.code, error.message);
+    return fail(error.code, error.message, op);
   }
-  return fail("failed");
+  return fail("failed", undefined, op);
 }
 
 async function requireOwnedRoomProject(projectId: string) {
@@ -70,7 +78,7 @@ export async function loadProjectRoomPreferencesAction(input: {
     const preferences = await getProjectRoomPreferences(supabase, parsed.data.projectId);
     return { ok: true, preferences };
   } catch (error) {
-    return fromCaught(error);
+    return fromCaught(error, "load");
   }
 }
 

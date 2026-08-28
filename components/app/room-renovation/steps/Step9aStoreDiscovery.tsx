@@ -9,7 +9,15 @@ import type { ProductDiscoveryView, ProductSelectionView } from "@/lib/discovery
 import {
   discoveryMatchesShoppingSource,
 } from "@/lib/discovery/stale";
-import type { ShoppingPreferenceInput } from "@/lib/discovery/preferences";
+import {
+  loadStoredShoppingPreferenceSnapshot,
+  shoppingPreferenceInputFromSnapshot,
+  type ShoppingPreferenceInput,
+} from "@/lib/discovery/preferences";
+import {
+  resolvedRequirementUiLabel,
+  unmatchedRequirementDisplayLabel,
+} from "@/lib/discovery/requirementLabels";
 
 export interface Step9aStoreDiscoveryProps {
   projectId: string;
@@ -22,19 +30,19 @@ export interface Step9aStoreDiscoveryProps {
     discovery: ProductDiscoveryView;
     selections: ProductSelectionView[];
   }) => void;
+  onDiscoveryUpdated?: (state: {
+    discovery: ProductDiscoveryView;
+    selections: ProductSelectionView[];
+  }) => void;
 }
 
 type Phase = "ready" | "finding_stores" | "searching_products" | "results" | "error";
 
 function requirementLabel(selection: ProductSelectionView): string {
-  const snap = selection.requirementSnapshot as { category?: unknown; surface?: unknown } | null;
-  if (snap && typeof snap.category === "string") {
-    if (selection.requirementType === "material" && typeof snap.surface === "string") {
-      return `${snap.surface}: ${snap.category}`;
-    }
-    return snap.category;
-  }
-  return selection.itemSpec;
+  return resolvedRequirementUiLabel({
+    itemSpec: selection.itemSpec,
+    requirementSnapshot: selection.requirementSnapshot,
+  });
 }
 
 function formatPrice(price: number | null, currency: "EUR" | null): string {
@@ -58,6 +66,7 @@ export const Step9aStoreDiscovery: React.FC<Step9aStoreDiscoveryProps> = ({
   initialSelections,
   shoppingPreferences,
   onComplete,
+  onDiscoveryUpdated,
 }) => {
   const [discovery, setDiscovery] = React.useState<ProductDiscoveryView | null>(initialDiscovery);
   const [selections, setSelections] = React.useState<ProductSelectionView[]>(initialSelections);
@@ -78,12 +87,24 @@ export const Step9aStoreDiscovery: React.FC<Step9aStoreDiscoveryProps> = ({
   const [busy, setBusy] = React.useState(false);
   const inFlight = React.useRef(false);
 
+  const effectiveShoppingPreferences = React.useMemo(
+    () =>
+      shoppingPreferences ??
+      (discovery?.sourcePreferences
+        ? shoppingPreferenceInputFromSnapshot(
+            loadStoredShoppingPreferenceSnapshot(discovery.sourcePreferences)
+          )
+        : undefined),
+    [shoppingPreferences, discovery?.sourcePreferences]
+  );
+
   const locationInput = address.trim() || location?.label || discovery?.locationInput || "";
   const shoppingCurrent = Boolean(
     discovery &&
+      effectiveShoppingPreferences &&
       discoveryMatchesShoppingSource(discovery, {
         locationInput,
-        preferences: shoppingPreferences,
+        preferences: effectiveShoppingPreferences,
       })
   );
   const isStale = Boolean(discovery) && !shoppingCurrent;
@@ -104,6 +125,18 @@ export const Step9aStoreDiscovery: React.FC<Step9aStoreDiscoveryProps> = ({
     setError(null);
     setPhase("finding_stores");
 
+    const attemptId = crypto.randomUUID();
+    const clientStarted = Date.now();
+
+    if (process.env.NODE_ENV !== "production") {
+      console.info("[discovery-client]", {
+        attemptId,
+        phase: "started",
+        refresh,
+        startedAt: new Date(clientStarted).toISOString(),
+      });
+    }
+
     const searchingTimer = window.setTimeout(() => {
       setPhase("searching_products");
     }, 900);
@@ -114,16 +147,46 @@ export const Step9aStoreDiscovery: React.FC<Step9aStoreDiscoveryProps> = ({
         locationInput,
         radiusKm,
         refresh,
+        attemptId,
       });
+      const elapsedMs = Date.now() - clientStarted;
       if (!result.ok) {
+        if (process.env.NODE_ENV !== "production") {
+          console.error("[discovery-client]", {
+            attemptId,
+            phase: "resolved_error",
+            code: result.code,
+            message: result.message,
+            elapsedMs,
+          });
+        }
         setPhase(shoppingCurrent ? "results" : "error");
         setError(result.message);
         return;
       }
+      if (process.env.NODE_ENV !== "production") {
+        console.info("[discovery-client]", {
+          attemptId,
+          phase: "resolved_ok",
+          reused: result.reused,
+          elapsedMs,
+        });
+      }
       setDiscovery(result.discovery);
       setSelections(result.selections);
+      onDiscoveryUpdated?.({ discovery: result.discovery, selections: result.selections });
       setPhase("results");
-    } catch {
+    } catch (error) {
+      const elapsedMs = Date.now() - clientStarted;
+      if (process.env.NODE_ENV !== "production") {
+        console.error("[discovery-client]", {
+          attemptId,
+          phase: "rejected",
+          errorName: error instanceof Error ? error.name : "unknown",
+          message: error instanceof Error ? error.message : String(error),
+          elapsedMs,
+        });
+      }
       setPhase(shoppingCurrent ? "results" : "error");
       setError("Could not find products. Try again.");
     } finally {
@@ -248,7 +311,7 @@ export const Step9aStoreDiscovery: React.FC<Step9aStoreDiscoveryProps> = ({
                   <div className="text-[12px] text-[rgba(255,255,255,0.50)] mt-1">
                     {selection.retailerName ?? selection.retailerDomain}
                   </div>
-                  {!selection.hasReferenceImage ? (
+                  {!selection.isConfirmed ? (
                     <div className="text-[11px] text-[rgba(255,255,255,0.40)] mt-1">
                       Not yet reference-ready for the future render
                     </div>
@@ -280,7 +343,7 @@ export const Step9aStoreDiscovery: React.FC<Step9aStoreDiscoveryProps> = ({
         {showResults && unmatchedNotFound.length > 0 ? (
           <div className="text-[13px] text-[rgba(255,255,255,0.55)]">
             No valid product for:{" "}
-            {unmatchedNotFound.map((item) => item.itemSpec).join(", ")}
+            {unmatchedNotFound.map((item) => unmatchedRequirementDisplayLabel(item)).join(", ")}
           </div>
         ) : null}
 

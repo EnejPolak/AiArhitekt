@@ -15,7 +15,7 @@ type Client = SupabaseClient<Database>;
 type PreferenceRow = Database["public"]["Tables"]["project_room_preferences"]["Row"];
 
 function asPreferences(row: PreferenceRow): ProjectRoomPreferences {
-  return projectRoomPreferencesRowSchema.parse({
+  const parsed = projectRoomPreferencesRowSchema.safeParse({
     projectId: row.project_id,
     roomType: row.room_type,
     selectedStyles: Array.isArray(row.selected_styles) ? row.selected_styles : [],
@@ -30,6 +30,14 @@ function asPreferences(row: PreferenceRow): ProjectRoomPreferences {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });
+  if (!parsed.success) {
+    console.error("[project-preferences] invalid_row");
+    throw new ProjectPreferencesError(
+      "failed",
+      projectPreferencesErrorMessage("failed", "load")
+    );
+  }
+  return parsed.data;
 }
 
 export async function getProjectRoomPreferences(
@@ -45,7 +53,7 @@ export async function getProjectRoomPreferences(
     .eq("project_id", parsed.data)
     .maybeSingle();
 
-  if (error) throw mapProjectPreferencesDbError(error);
+  if (error) throw mapProjectPreferencesDbError(error, "load");
   if (!data) return null;
   return asPreferences(data);
 }
@@ -104,6 +112,6 @@ export async function upsertProjectRoomPreferences(
     .select("*")
     .single();
 
-  if (error || !data) throw mapProjectPreferencesDbError(error);
+  if (error || !data) throw mapProjectPreferencesDbError(error, "mutate");
   return asPreferences(data);
 }

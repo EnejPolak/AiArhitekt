@@ -106,7 +106,9 @@ export async function checkDailyCap(): Promise<{
 }
 
 /**
- * Increment daily usage counter
+ * Increment daily usage counter.
+ * Called once per live SerpAPI HTTP attempt dispatched (success or provider error).
+ * Not called for cache hits or pre-dispatch skips (budget/deadline).
  */
 export async function incrementDailyUsage(): Promise<void> {
   const usage = await loadDailyUsage();

@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { validRoomAnalysisResult } from "@/lib/analysis/fixtures";
 import { MAX_ITEM_SPEC_LENGTH, MAX_PRODUCT_DISCOVERY_ITEMS } from "./constants";
 import {
-  buildSearchableRequirements,
   furnitureItemSpec,
   furnitureQueryPlan,
   furnitureRequirementKey,
@@ -10,6 +9,7 @@ import {
   materialRequirementKey,
   slugRequirementPart,
 } from "./itemSpecs";
+import { resolveShoppingRequirements } from "./resolveRequirements";
 
 describe("deterministic requirement → item spec", () => {
   it("builds a furniture spec from trusted fields only", () => {
@@ -86,10 +86,12 @@ describe("deterministic requirement → item spec", () => {
       finishDirection: null,
       constraints: [],
     }));
-    const { searched, notSearched } = buildSearchableRequirements({
-      ...validRoomAnalysisResult.designRequirements,
-      furnitureNeeds,
-      materialNeeds,
+    const { searched, notSearched } = resolveShoppingRequirements({
+      analysisRequirements: {
+        ...validRoomAnalysisResult.designRequirements,
+        furnitureNeeds,
+        materialNeeds,
+      },
     });
     expect(searched).toHaveLength(MAX_PRODUCT_DISCOVERY_ITEMS);
     expect(notSearched).toHaveLength(3);
@@ -98,16 +100,21 @@ describe("deterministic requirement → item spec", () => {
   });
 
   it("uses analysis order: furniture needs then material needs", () => {
-    const { searched } = buildSearchableRequirements(validRoomAnalysisResult.designRequirements);
+    const { searched } = resolveShoppingRequirements({
+      analysisRequirements: validRoomAnalysisResult.designRequirements,
+    });
     expect(searched.map((item) => item.requirementType)).toEqual(["furniture", "material"]);
     expect(searched[0].itemSpec).toContain("sofa");
     expect(searched[1].itemSpec).toContain("flooring");
   });
 
   it("adds both explicit wall-paint requirements from user colors", () => {
-    const { searched } = buildSearchableRequirements(validRoomAnalysisResult.designRequirements, {
-      wallMainColor: "metallic black",
-      wallAccentColor: "olive green",
+    const { searched } = resolveShoppingRequirements({
+      analysisRequirements: validRoomAnalysisResult.designRequirements,
+      preferences: {
+        wallMainColor: "metallic black",
+        wallAccentColor: "olive green",
+      },
     });
     const paintSpecs = searched
       .filter((item) => item.requirementType === "material" && /paint/i.test(item.itemSpec))
@@ -121,17 +128,17 @@ describe("deterministic requirement → item spec", () => {
   });
 
   it("does not search paint when the user keeps existing walls", () => {
-    const { searched } = buildSearchableRequirements(
-      {
+    const { searched } = resolveShoppingRequirements({
+      analysisRequirements: {
         ...validRoomAnalysisResult.designRequirements,
         materialNeeds: [],
       },
-      {
+      preferences: {
         wallMainColor: "metallic black",
         wallAccentColor: "olive green",
         keepExistingWalls: true,
-      }
-    );
+      },
+    });
     expect(searched.every((item) => !/paint/i.test(item.itemSpec))).toBe(true);
   });
 

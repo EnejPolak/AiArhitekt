@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { canonicalShoppingPreferences } from "./preferences";
+import {
+  canonicalShoppingPreferences,
+  DISCOVERY_PREFERENCE_SCHEMA_VERSION,
+  loadStoredShoppingPreferenceSnapshot,
+  shoppingPreferenceInputFromSnapshot,
+  shoppingPreferencesMatch,
+} from "./preferences";
 import { shoppingPreferenceHash } from "./preferenceHash";
 
 describe("canonical shopping preferences", () => {
@@ -22,5 +28,17 @@ describe("canonical shopping preferences", () => {
     });
     expect(a).toBe(b);
     expect(canonicalShoppingPreferences({ flooring: "not-a-floor" }).flooring).toBe("keep");
+  });
+
+  it("preserves noteShoppingIntents when reloading persisted discovery snapshot", () => {
+    const snapshot = canonicalShoppingPreferences({
+      notes: "gaming chair",
+      flooring: "marble",
+      wallMainColor: "matte black",
+      wallAccentColor: "olive green",
+    });
+    const reloaded = loadStoredShoppingPreferenceSnapshot(snapshot);
+    expect(reloaded.noteShoppingIntents).toEqual(["gaming_chair"]);
+    expect(shoppingPreferencesMatch(snapshot, reloaded)).toBe(true);
   });
 });

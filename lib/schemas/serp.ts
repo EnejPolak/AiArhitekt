@@ -67,6 +67,7 @@ export const serpPickedSchema = z.object({
   score: z.number(),
   confidence: z.number(),
   reasons: z.array(z.string()),
+  snippet: z.string().nullable().optional(),
 });
 
 export const serpSearchResponseSchema = z.object({
@@ -75,6 +76,24 @@ export const serpSearchResponseSchema = z.object({
   plannedTotalQueries: z.number(),
   effectiveMaxRequests: z.number(),
   executedCount: z.number(),
+  providerRequests: z.number().optional(),
+  providerAttempts: z.number().optional(),
+  providerSuccesses: z.number().optional(),
+  providerFailures: z.number().optional(),
+  cacheHits: z.number().optional(),
+  logicalQueries: z.number().optional(),
+  queryFailures: z
+    .array(
+      z.object({
+        item: z.string(),
+        query: z.string(),
+        code: z.enum(["provider_timeout", "provider_5xx", "network_error", "invalid_response"]),
+        message: z.string(),
+        providerStatus: z.number().optional(),
+      })
+    )
+    .optional(),
+  stoppedReason: z.enum(["budget", "deadline", "daily_cap"]).nullable().optional(),
   dailyUsed: z.number(),
   dailyRemaining: z.number(),
   results: z.array(

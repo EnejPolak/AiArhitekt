@@ -24,6 +24,7 @@ export function projectRoomPreferencesToShoppingPreferences(
     | "underfloorHeating"
     | "bedType"
     | "keepExistingWalls"
+    | "notes"
   > | null
 ): ShoppingPreferenceInput {
   const source = row ?? EMPTY_PROJECT_ROOM_PREFERENCES;
@@ -35,6 +36,7 @@ export function projectRoomPreferencesToShoppingPreferences(
     underfloorHeating: source.underfloorHeating,
     bedType: source.bedType,
     keepExistingWalls: source.keepExistingWalls,
+    notes: source.notes,
   };
 }
 

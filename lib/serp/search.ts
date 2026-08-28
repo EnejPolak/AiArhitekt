@@ -30,9 +30,10 @@ export type CanonicalSerpPicked = {
   confidence: number;
   reasons: string[];
   domain: string;
+  snippet: string | null;
 };
 
-type TopCandidateApi = {
+export type CanonicalSerpTopCandidate = {
   title: string;
   url: string;
   domain: string;
@@ -51,9 +52,23 @@ type TopCandidateApi = {
 export type CanonicalSerpItemResult = {
   item: string;
   category?: string;
-  topCandidates: TopCandidateApi[];
+  topCandidates: CanonicalSerpTopCandidate[];
   picked?: CanonicalSerpPicked | null;
   executedQueries?: string[];
+};
+
+export type SerpQueryFailureCode =
+  | "provider_timeout"
+  | "provider_5xx"
+  | "network_error"
+  | "invalid_response";
+
+export type SerpQueryFailure = {
+  item: string;
+  query: string;
+  code: SerpQueryFailureCode;
+  message: string;
+  providerStatus?: number;
 };
 
 export type CanonicalSerpResponse = {
@@ -63,12 +78,28 @@ export type CanonicalSerpResponse = {
   effectiveMaxRequests: number;
   domainsPerItemUsed?: number;
   variantsUsed?: string;
+  /** Live SerpAPI calls attempted (success + failure; excludes cache hits). */
   executedCount: number;
+  /** Alias for executedCount — live provider attempts only. */
+  providerRequests: number;
+  /** Alias for providerRequests — counts dispatched attempts including failures. */
+  providerAttempts: number;
+  providerSuccesses: number;
+  providerFailures: number;
+  /** Logical queries satisfied from cache without a provider call. */
+  cacheHits: number;
+  /** Total logical queries attempted (provider + cache). */
+  logicalQueries: number;
+  /** Per-query provider failures; successful queries are omitted. */
+  queryFailures: SerpQueryFailure[];
   dailyUsed: number;
   dailyRemaining: number;
   results: CanonicalSerpItemResult[];
   status: number;
   executedQueriesPerItem?: Record<string, string[]>;
+  stoppedReason?: "budget" | "deadline" | "daily_cap" | null;
+  /** Present when Step C uses OpenAI product discovery (api-debug). */
+  productDiscoveryResults?: import("@/lib/productDiscovery/types").ProductDiscoveryResult[];
 };
 
 export type CanonicalSerpSearchInput = {
@@ -80,6 +111,14 @@ export type CanonicalSerpSearchInput = {
   domainCategoryMap?: Record<string, string[]>;
   preferredDomains?: string[] | string;
   debug?: boolean;
+  /** Wall-clock ms timestamp — do not start new provider calls near this deadline. */
+  deadlineAt?: number;
+  /** Minimum ms that must remain before starting another provider call. */
+  minRemainingBeforeRequestMs?: number;
+  /** Per-request timeout passed to fetchSerp. */
+  providerTimeoutMs?: number;
+  /** When false, skip automatic retry on provider timeout. */
+  retryOnTimeout?: boolean;
 };
 
 export type CanonicalSerpSearchOutcome =
@@ -98,6 +137,78 @@ function normalizeItems(items: unknown): string[] {
     .map((i) => (i as string).trim())
     .filter((i) => i.length > 0);
 }
+
+type ClassifiedSerpQueryError = {
+  code: SerpQueryFailureCode;
+  message: string;
+  providerStatus?: number;
+  systemic: boolean;
+};
+
+function classifySerpQueryError(error: unknown): ClassifiedSerpQueryError {
+  const message = error instanceof Error ? error.message : String(error);
+  const bounded = message.slice(0, 200);
+
+  if (/429|quota|rate limit/i.test(message)) {
+    return { code: "provider_5xx", message: bounded, providerStatus: 429, systemic: true };
+  }
+  if (/401|403|unauthorized|forbidden/i.test(message)) {
+    return { code: "provider_5xx", message: bounded, providerStatus: 403, systemic: true };
+  }
+  if (/timeout|abort/i.test(message)) {
+    return { code: "provider_timeout", message: bounded, systemic: false };
+  }
+  const httpMatch = message.match(/SERP API error:\s*(\d{3})/i);
+  if (httpMatch) {
+    const status = parseInt(httpMatch[1]!, 10);
+    if (status === 429) {
+      return { code: "provider_5xx", message: bounded, providerStatus: 429, systemic: true };
+    }
+    if (status >= 500) {
+      return { code: "provider_5xx", message: bounded, providerStatus: status, systemic: false };
+    }
+    if (status >= 400) {
+      return { code: "invalid_response", message: bounded, providerStatus: status, systemic: false };
+    }
+  }
+  if (/network|fetch failed|ECONNREFUSED|ENOTFOUND/i.test(message)) {
+    return { code: "network_error", message: bounded, systemic: false };
+  }
+  return { code: "invalid_response", message: bounded, systemic: false };
+}
+
+function logSerpQueryError(event: {
+  item: string;
+  query: string;
+  code: SerpQueryFailureCode;
+  message: string;
+  providerStatus?: number;
+  elapsedMs: number;
+}): void {
+  if (process.env.NODE_ENV === "production") return;
+  console.error("[serp-query-error]", event);
+}
+
+type QuerySettlement =
+  | {
+      status: "success";
+      item: string;
+      query: string;
+      organic: SerpOrganicResult[];
+      fromCache: boolean;
+    }
+  | {
+      status: "failed";
+      item: string;
+      query: string;
+      failure: SerpQueryFailure;
+    }
+  | {
+      status: "systemic";
+      httpStatus: number;
+      error: string;
+      details: string;
+    };
 
 /**
  * Canonical C-module search used by POST /api/serp/search and P1.6 discovery.
@@ -139,9 +250,14 @@ export async function runCanonicalSerpSearch(
 
   const dryRun = input.dryRun === true;
   const fastMode = input.fastMode === true;
+  const explicitMaxRequests = input.maxRequests != null;
   const userMaxRequests = clampNumber(input.maxRequests ?? 10, 1, 80);
   const maxCandidates = 8;
   const debug = input.debug === true;
+  const deadlineAt = input.deadlineAt;
+  const minRemainingBeforeRequestMs = input.minRemainingBeforeRequestMs ?? 0;
+  const providerTimeoutMs = input.providerTimeoutMs;
+  const retryOnTimeout = input.retryOnTimeout !== false;
 
   try {
     let rankedDomains = await rankDomainsBySuccess(allowlistDomains);
@@ -195,7 +311,9 @@ export async function runCanonicalSerpSearch(
       ? Math.min(flat.length, items.length * 4)
       : Math.min(flat.length, Math.max(items.length * 6, 12));
     const cap = fastMode ? 50 : 80;
-    const effectiveMaxRequests = Math.min(cap, Math.max(userMaxRequests, suggestedMaxRequests));
+    const effectiveMaxRequests = explicitMaxRequests
+      ? Math.min(cap, flat.length, userMaxRequests)
+      : Math.min(cap, Math.max(userMaxRequests, suggestedMaxRequests));
     const toExecute = flat.slice(0, effectiveMaxRequests);
 
     const candidatesByItem = new Map<string, Map<string, SerpOrganicResult>>();
@@ -207,15 +325,38 @@ export async function runCanonicalSerpSearch(
       topCandidates: [],
       picked: null,
     }));
-    let executedCount = 0;
+    let providerAttempts = 0;
+    let providerSuccesses = 0;
+    let providerFailures = 0;
+    let cacheHits = 0;
+    let logicalQueries = 0;
+    const queryFailures: SerpQueryFailure[] = [];
+    let stoppedReason: CanonicalSerpResponse["stoppedReason"] = null;
 
     const concurrency = fastMode ? 2 : 1;
 
+    const deadlineInsufficient = (): boolean => {
+      if (!deadlineAt) return false;
+      return Date.now() >= deadlineAt - minRemainingBeforeRequestMs;
+    };
+
     if (!dryRun) {
       for (let i = 0; i < toExecute.length; i += concurrency) {
+        if (providerAttempts >= effectiveMaxRequests) {
+          stoppedReason = "budget";
+          break;
+        }
+        if (deadlineInsufficient()) {
+          stoppedReason = "deadline";
+          break;
+        }
+
         const batch = toExecute.slice(i, i + concurrency);
         const liveCap = await checkDailyCap();
-        if (!liveCap.allowed) break;
+        if (!liveCap.allowed) {
+          stoppedReason = "daily_cap";
+          break;
+        }
 
         const processOne = async ({
           item,
@@ -223,37 +364,118 @@ export async function runCanonicalSerpSearch(
         }: {
           item: string;
           query: string;
-        }): Promise<{ item: string; query: string; organic: SerpOrganicResult[] }> => {
+        }): Promise<QuerySettlement> => {
+          logicalQueries++;
           const cacheKey = serpCacheKey(query, rankedDomains);
           const cached = getSerpCachedByKey(cacheKey);
           if (cached?.organic?.length) {
-            return { item, query, organic: cached.organic as SerpOrganicResult[] };
+            cacheHits++;
+            return {
+              status: "success",
+              item,
+              query,
+              organic: cached.organic as SerpOrganicResult[],
+              fromCache: true,
+            };
           }
+          if (providerAttempts >= effectiveMaxRequests || deadlineInsufficient()) {
+            return {
+              status: "failed",
+              item,
+              query,
+              failure: {
+                item,
+                query,
+                code: "network_error",
+                message: "Skipped: budget or deadline exhausted",
+              },
+            };
+          }
+
           await waitForRateLimit();
-          const organic = await fetchSerp(query, {
-            allowedDomains: rankedDomains,
-            timeoutMs: fastMode ? 10000 : undefined,
-          });
-          setSerpCachedByKey(cacheKey, {
-            organic: organic.map((r) => ({
-              title: r.title,
-              link: r.link,
-              snippet: r.snippet ?? "",
-              price: r.price,
-              image: r.image,
-            })),
-          });
-          await incrementDailyUsage();
-          return { item, query, organic };
+          const started = Date.now();
+          try {
+            const organic = await fetchSerp(query, {
+              allowedDomains: rankedDomains,
+              timeoutMs: providerTimeoutMs ?? (fastMode ? 10000 : undefined),
+              retryOnTimeout,
+            });
+            // Count every dispatched live provider HTTP attempt (success or failure).
+            await incrementDailyUsage();
+            providerAttempts++;
+            providerSuccesses++;
+            setSerpCachedByKey(cacheKey, {
+              organic: organic.map((r) => ({
+                title: r.title,
+                link: r.link,
+                snippet: r.snippet ?? "",
+                price: r.price,
+                image: r.image,
+              })),
+            });
+            return { status: "success", item, query, organic, fromCache: false };
+          } catch (error: unknown) {
+            const classified = classifySerpQueryError(error);
+            if (classified.systemic) {
+              return {
+                status: "systemic",
+                httpStatus: classified.providerStatus ?? 429,
+                error:
+                  classified.providerStatus === 429
+                    ? "Daily SERP cap reached"
+                    : "SERP provider error",
+                details: classified.message,
+              };
+            }
+            await incrementDailyUsage();
+            providerAttempts++;
+            providerFailures++;
+            logSerpQueryError({
+              item,
+              query,
+              code: classified.code,
+              message: classified.message,
+              providerStatus: classified.providerStatus,
+              elapsedMs: Date.now() - started,
+            });
+            return {
+              status: "failed",
+              item,
+              query,
+              failure: {
+                item,
+                query,
+                code: classified.code,
+                message: classified.message,
+                providerStatus: classified.providerStatus,
+              },
+            };
+          }
         };
 
-        const outcomes = await Promise.all(batch.map(processOne));
+        const settlements = await Promise.all(batch.map(processOne));
 
-        for (const { item, query, organic } of outcomes) {
+        for (const settlement of settlements) {
+          if (settlement.status === "systemic") {
+            return {
+              ok: false,
+              httpStatus: settlement.httpStatus,
+              error: settlement.error,
+              details: settlement.details,
+            };
+          }
+          if (settlement.status === "failed") {
+            if (settlement.failure.message !== "Skipped: budget or deadline exhausted") {
+              queryFailures.push(settlement.failure);
+            }
+            continue;
+          }
+
+          const { item, query, organic } = settlement;
+          if (!organic.length) continue;
           const list = executedQueriesByItem.get(item) ?? [];
           list.push(query);
           executedQueriesByItem.set(item, list);
-          executedCount++;
           const itemMap = candidatesByItem.get(item) ?? new Map<string, SerpOrganicResult>();
           for (const result of organic) {
             if (!result.link) continue;
@@ -325,6 +547,7 @@ export async function runCanonicalSerpSearch(
             confidence: picked.confidence,
             reasons: picked.reasons,
             domain: picked.domain,
+            snippet: picked.snippet?.trim() ? picked.snippet.trim() : null,
           };
 
           await recordDomainOutcome(picked.domain, true);
@@ -351,11 +574,19 @@ export async function runCanonicalSerpSearch(
       effectiveMaxRequests,
       domainsPerItemUsed,
       variantsUsed,
-      executedCount,
+      executedCount: providerAttempts,
+      providerRequests: providerAttempts,
+      providerAttempts,
+      providerSuccesses,
+      providerFailures,
+      cacheHits,
+      logicalQueries,
+      queryFailures,
       dailyUsed: quota.used,
       dailyRemaining: quota.remaining,
       results,
       status: 200,
+      stoppedReason,
     };
     if (debug) {
       const executedQueriesPerItem: Record<string, string[]> = {};

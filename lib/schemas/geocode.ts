@@ -10,6 +10,17 @@ export const googleGeocodeResponseSchema = z
         z
           .object({
             formatted_address: z.string().optional(),
+            address_components: z
+              .array(
+                z
+                  .object({
+                    long_name: z.string().optional(),
+                    short_name: z.string().optional(),
+                    types: z.array(z.string()).optional(),
+                  })
+                  .passthrough()
+              )
+              .optional(),
             geometry: z
               .object({
                 location: z

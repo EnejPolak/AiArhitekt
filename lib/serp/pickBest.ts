@@ -2,6 +2,7 @@
  * Ranking/picking module for SERP results (per item spec).
  */
 
+import { foldDiacritics } from "@/lib/text/diacritics";
 import { normalizeDomainToRoot } from "./domains";
 
 export type SerpOrganicResult = {
@@ -190,7 +191,7 @@ function getTokenOverlapScore(
   const normalizedHaystack = normalizeText(haystack);
   let matched = 0;
   for (const token of tokens) {
-    if (normalizedHaystack.includes(token)) matched++;
+    if (normalizedHaystack.includes(foldDiacritics(token).toLowerCase())) matched++;
   }
   const ratio = matched / tokens.length;
   const score = Math.round(ratio * 25);

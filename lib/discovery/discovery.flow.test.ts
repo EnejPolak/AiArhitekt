@@ -169,7 +169,31 @@ function placesResult(domain = "localhome.si"): SearchResult {
 }
 
 function geocodeOk(): GeocodeResult {
-  return { ok: true, formattedAddress: "Ljubljana, Slovenia", lat: 46.0569, lng: 14.5058 };
+  return {
+    ok: true,
+    formattedAddress: "Ljubljana, Slovenia",
+    lat: 46.0569,
+    lng: 14.5058,
+    countryCode: "SI",
+  };
+}
+
+function semanticSerpTitle(query: string): string {
+  const folded = query.normalize("NFC").toLowerCase();
+  if (/olivno|olive green|olive/.test(folded)) return "Olivno zelena notranja barva za stene 10L";
+  if (/mat črna|matte black|mat .*barva/.test(folded)) return "Črna mat notranja zidna barva";
+  if (/metallic black|metalik/.test(folded)) return "Metalik črna notranja barva za stene 10L";
+  if (/črna|black|interior wall paint metallic|interior wall paint matte/.test(folded)) {
+    return "Metalik črna notranja barva za stene 10L";
+  }
+  if (/marmor|marble|marmorne/.test(folded)) return "Marmorne talne ploščice 60x60";
+  if (/garnitura|kavč|sofa/.test(folded)) return "Sedežna garnitura moderna";
+  if (/gaming stol|gaming chair|igričarski/.test(folded)) return "Ergonomski gaming stol";
+  if (/pisarn|office chair|računalniški stol/.test(folded)) return "Pisarniški stol črn";
+  if (/računalniška miza|computer desk|desk|miza/.test(folded)) return "Računalniška miza bela";
+  if (/floor|taln|oblog|wood|parket|laminat/.test(folded)) return "Lesena talna obloga";
+  if (/barva|paint|stenska/.test(folded)) return "Notranja barva za stene";
+  return `Real ${query}`;
 }
 
 function serpOutcome(
@@ -196,7 +220,7 @@ function serpOutcome(
           item,
           topCandidates: [],
           picked: {
-            title: pick === "null-price" ? "Sofa without price" : `Real ${item}`,
+            title: pick === "null-price" ? "Sofa without price" : semanticSerpTitle(item),
             url: `https://www.localhome.si/p/${index + 1}`,
             image: pick === "null-price" ? null : `https://cdn.localhome.si/${index + 1}.jpg`,
             price: pick === "null-price" ? null : 249 + index,
@@ -205,6 +229,7 @@ function serpOutcome(
             confidence: 0.8,
             reasons: ["product-like"],
             domain: "localhome.si",
+            snippet: null,
           },
         };
       }),
@@ -515,6 +540,8 @@ describe("product discovery pipeline (local, mocked providers)", () => {
     });
     expect(geocodeFn).toHaveBeenCalledTimes(1);
     expect(placesFn).toHaveBeenCalledTimes(1);
+    const serpCallsAfterFirst = serpFn.mock.calls.length;
+    expect(serpCallsAfterFirst).toBeGreaterThan(0);
 
     const reused = await discoverProjectProducts(
       userA.client,
@@ -534,7 +561,7 @@ describe("product discovery pipeline (local, mocked providers)", () => {
     expect(reused.reused).toBe(true);
     expect(geocodeFn).toHaveBeenCalledTimes(1);
     expect(placesFn).toHaveBeenCalledTimes(1);
-    expect(serpFn.mock.calls.length).toBe(1);
+    expect(serpFn.mock.calls.length).toBe(serpCallsAfterFirst);
   });
 
   it("becomes stale when flooring changes from marble to wood without provider calls", async () => {

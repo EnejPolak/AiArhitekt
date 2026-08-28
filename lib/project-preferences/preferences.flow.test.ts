@@ -157,7 +157,27 @@ function placesResult(domain = "localhome.si"): SearchResult {
 }
 
 function geocodeOk(): GeocodeResult {
-  return { ok: true, formattedAddress: "Ljubljana, Slovenia", lat: 46.0569, lng: 14.5058 };
+  return {
+    ok: true,
+    formattedAddress: "Ljubljana, Slovenia",
+    lat: 46.0569,
+    lng: 14.5058,
+    countryCode: "SI",
+  };
+}
+
+function semanticSerpTitle(query: string): string {
+  const folded = query.normalize("NFC").toLowerCase();
+  if (/olivno|olive green|olive/.test(folded)) return "Olivno zelena notranja barva za stene 10L";
+  if (/mat črna|matte black|mat .*barva/.test(folded)) return "Črna mat notranja zidna barva";
+  if (/metallic black|metalik/.test(folded)) return "Metalik črna notranja barva za stene 10L";
+  if (/črna|black|interior wall paint metallic|interior wall paint matte/.test(folded)) {
+    return "Metalik črna notranja barva za stene 10L";
+  }
+  if (/marmor|marble|marmorne/.test(folded)) return "Marmorne talne ploščice 60x60";
+  if (/garnitura|kavč|sofa/.test(folded)) return "Sedežna garnitura moderna";
+  if (/barva|paint|stenska/.test(folded)) return "Notranja barva za stene";
+  return `Real ${query}`;
 }
 
 function serpOutcome(items: string[]): CanonicalSerpSearchOutcome {
@@ -176,7 +196,7 @@ function serpOutcome(items: string[]): CanonicalSerpSearchOutcome {
         item,
         topCandidates: [],
         picked: {
-          title: `Real ${item}`,
+          title: semanticSerpTitle(item),
           url: `https://www.localhome.si/p/${index + 1}`,
           image: `https://cdn.localhome.si/${index + 1}.jpg`,
           price: 249 + index,
@@ -185,6 +205,7 @@ function serpOutcome(items: string[]): CanonicalSerpSearchOutcome {
           confidence: 0.8,
           reasons: ["product-like"],
           domain: "localhome.si",
+          snippet: null,
         },
       })),
     },
@@ -272,7 +293,7 @@ describe("persisted room preferences + discovery (local, mocked providers)", () 
     ).toBe(true);
     expect(geocodeFn).toHaveBeenCalledTimes(1);
     expect(placesFn).toHaveBeenCalledTimes(1);
-    expect(serpFn).toHaveBeenCalledTimes(1);
+    expect(serpFn.mock.calls.length).toBeGreaterThan(0);
   });
 
   it("marks discovery stale after hardwood change without provider calls", async () => {

@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { getVerifiedUser } from "@/lib/auth/session";
+import { ProjectPreferencesError } from "./errors";
 import { getProjectRoomPreferences } from "./queries";
 import type { ProjectRoomPreferences } from "./types";
 
@@ -10,5 +11,11 @@ export async function loadPersistedProjectRoomPreferences(
   const user = await getVerifiedUser();
   if (!user) return null;
   const supabase = await createClient();
-  return getProjectRoomPreferences(supabase, projectId);
+  try {
+    return await getProjectRoomPreferences(supabase, projectId);
+  } catch (error) {
+    const code = error instanceof ProjectPreferencesError ? error.code : "unknown";
+    console.error("[project-preferences] load_failed", { code });
+    return null;
+  }
 }

@@ -41,7 +41,7 @@ const ITEM_KEYWORDS_TO_CATEGORY: Array<{ keywords: string[]; category: TaxonomyC
   { keywords: ["postelj", "vzmetnic", "omar", "nočn", "polic", "miz", "stol", "sedež", "pohištv", "furniture", "bed", "wardrobe", "shelf", "table", "chair", "sofa", "desk", "workstation"], category: "furniture" },
   { keywords: ["svetil", "luč", "led", "razsvetljav", "lighting", "lamp", "panel"], category: "lighting" },
   { keywords: ["sanitar", "kopalnic", "kopal", "pipe", "bathroom", "faucet", "toilet", "umival"], category: "bathroom_plumbing" },
-  { keywords: ["laminat", "vinil", "parket", "taln", "oblog", "flooring", "floor"], category: "flooring" },
+  { keywords: ["laminat", "vinil", "parket", "taln", "oblog", "flooring", "floor", "marmor", "marble"], category: "flooring" },
   { keywords: ["barv", "sten", "premaz", "lazur", "paint", "wall", "coating"], category: "paint_walls" },
   { keywords: ["gradben", "železnin", "orodj", "hardware", "diy", "tool"], category: "diy_hardware" },
   { keywords: ["tekstil", "dekor", "zaves", "decor", "textile", "curtain"], category: "decor_textiles" },

@@ -7,6 +7,7 @@
 import crypto from "crypto";
 import { normalizeDomainToRoot } from "./domains";
 import { itemSpecToCategory, type TaxonomyCategory } from "./taxonomy";
+import { foldDiacritics, preserveSearchLetters } from "@/lib/text/diacritics";
 
 const MAX_DOMAINS_PER_ITEM = 4;
 
@@ -79,7 +80,7 @@ const NOISE_TOKENS = new Set([
 
 /** Color-like tokens to strip for relaxed query (reduce drift to seasonal/other). */
 const COLOR_TOKENS = new Set([
-  "bela", "bel", "white", "black", "crna", "siva", "gray", "grey",
+  "bela", "bel", "white", "black", "crna", "črna", "siva", "gray", "grey",
   "brown", "rjava", "wood", "les", "natural", "naravna",
   "advent", "adventni", "vencki", "venec", "christmas", "seasonal",
 ]);
@@ -100,18 +101,12 @@ const SYNONYM_ADDITIONS: Array<{ pattern: RegExp; extra: string[] }> = [
   { pattern: /ogrinjal|zaves|zagrinjal/i, extra: ["zavesa", "zagrinjalo", "ogrinjalo"] },
 ];
 
-const diacriticsMap: Record<string, string> = {
-  č: "c", ć: "c", đ: "d", š: "s", ž: "z",
-  Č: "c", Ć: "c", Đ: "d", Š: "s", Ž: "z",
-};
+function foldToken(token: string): string {
+  return foldDiacritics(token).toLowerCase().replace(/[^\p{L}\p{N}.x]/gu, "");
+}
 
 function normalizeText(text: string): string {
-  let s = text.toLowerCase().trim();
-  for (const [d, r] of Object.entries(diacriticsMap)) {
-    s = s.replace(new RegExp(d, "g"), r);
-  }
-  s = s.replace(/[^\w\s.x€]/g, " ");
-  return s;
+  return preserveSearchLetters(text);
 }
 
 /**
@@ -129,10 +124,10 @@ export function stripStoreNamesAndDomainsFromItem(item: string, allowlistDomains
   const parts = normalized.split(/\s+/).map((t) => t.trim()).filter(Boolean);
   const kept: string[] = [];
   for (const raw of parts) {
-    const t = raw.replace(/[^\w.x]/g, "");
+    const t = foldToken(raw);
     if (!t) continue;
-    if (domainTokens.has(t)) continue;
-    if (STORE_NAME_TOKENS.has(t)) continue;
+    if (domainTokens.has(t) || domainTokens.has(raw)) continue;
+    if (STORE_NAME_TOKENS.has(t) || STORE_NAME_TOKENS.has(raw)) continue;
     kept.push(raw);
   }
   return kept.join(" ").trim();
@@ -170,13 +165,13 @@ export function itemSpecToKeywords(item: string, allowlistDomains: string[] = []
   for (let i = 0; i < parts.length; i++) {
     const raw = parts[i];
     if (!raw) continue;
-    const t = raw.replace(/[^\w.x]/g, "");
+    const t = foldToken(raw);
     if (!t) continue;
-    const next = parts[i + 1]?.replace(/[^\w]/g, "") ?? "";
-    if (domainTokens.has(t)) continue;
-    if (STORE_NAME_TOKENS.has(t)) continue;
-    if (STOPWORDS.has(t)) continue;
-    if (NOISE_TOKENS.has(t.toLowerCase())) continue;
+    const next = foldToken(parts[i + 1] ?? "") || parts[i + 1]?.replace(/[^\p{L}\p{N}]/gu, "") || "";
+    if (domainTokens.has(t) || domainTokens.has(raw)) continue;
+    if (STORE_NAME_TOKENS.has(t) || STORE_NAME_TOKENS.has(raw)) continue;
+    if (STOPWORDS.has(t) || STOPWORDS.has(raw)) continue;
+    if (NOISE_TOKENS.has(t) || NOISE_TOKENS.has(raw.toLowerCase())) continue;
     if (isNoiseToken(t, next)) continue;
     if (t.length === 1 && !/^\d$/.test(t)) continue;
 
@@ -196,7 +191,7 @@ export function itemSpecToKeywords(item: string, allowlistDomains: string[] = []
       tokens.push(t.toLowerCase());
       continue;
     }
-    if (t.length >= 2) tokens.push(t);
+    if (t.length >= 2) tokens.push(raw);
   }
 
   return tokens.join(" ");

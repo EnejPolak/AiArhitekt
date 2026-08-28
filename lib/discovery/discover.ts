@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/database.types";
 import { geocodeAddress } from "@/lib/geocode/service";
@@ -16,17 +17,22 @@ import { projectIdSchema } from "@/lib/projects/schema";
 import { claimProductDiscoverySlot } from "./claim";
 import {
   DEFAULT_DISCOVERY_RADIUS_KM,
+  DISCOVERY_DEADLINE_MS,
+  DISCOVERY_SERP_TIMEOUT_MS,
   MAX_DISCOVERY_RADIUS_KM,
   MAX_LOCATION_INPUT_LENGTH,
   MIN_LOCATION_INPUT_LENGTH,
+  PER_DISCOVERY_SERP_BUDGET,
 } from "./constants";
-import { DiscoveryError, discoveryErrorMessage } from "./errors";
+import { DiscoveryError, discoveryErrorMessage, logDiscoveryAttempt, logDiscoveryError, logDiscoveryTiming } from "./errors";
 import {
-  buildSearchableRequirements,
   unmatchedRequirementSchema,
   type UnmatchedRequirement,
 } from "./itemSpecs";
+import { resolveShoppingRequirements } from "./resolveRequirements";
+import { localizeSearchableRequirements } from "./locales";
 import { resolveProductsForRequirements } from "./resolveProducts";
+import { enrichDiscoveryWinners } from "./enrichWinners";
 import {
   deleteProjectProductDiscovery,
   getProjectProductDiscovery,
@@ -46,6 +52,7 @@ export type DiscoverProjectProductsOptions = {
   ownerUserId: string;
   persistClient: Client;
   preferences?: ShoppingPreferenceInput | null;
+  attemptId?: string;
   geocodeAddress?: typeof geocodeAddress;
   searchPlaces?: typeof searchPlaces;
   searchSerp?: (input: CanonicalSerpSearchInput) => Promise<CanonicalSerpSearchOutcome>;
@@ -163,24 +170,41 @@ export async function discoverProjectProducts(
 
   await claimProductDiscoverySlot(client, parsedId.data);
 
+  const attemptId = options.attemptId ?? randomUUID();
+  const startedAt = new Date().toISOString();
+  const discoveryStarted = Date.now();
+  const deadlineAt = discoveryStarted + DISCOVERY_DEADLINE_MS;
+  logDiscoveryAttempt({ attemptId, phase: "started", startedAt });
+
+  let geocodeMs = 0;
+  let placesMs = 0;
+  let serpMs = 0;
+  let persistMs = 0;
+  let providerRequests = 0;
+  let cacheHits = 0;
+  let logicalQueries = 0;
+
   const geocode = options.geocodeAddress ?? geocodeAddress;
   const placesSearch = options.searchPlaces ?? searchPlaces;
   const serpSearch = options.searchSerp ?? runCanonicalSerpSearch;
 
+  const geoStarted = Date.now();
   const geo = await geocode(locationInput);
+  geocodeMs = Date.now() - geoStarted;
   if (!geo.ok) {
     throw mapGeocodeFailure(geo.code);
   }
 
-  const { searched, notSearched } = buildSearchableRequirements(
-    analysis.design_requirements,
-    options.preferences
-  );
+  const { searched, notSearched } = resolveShoppingRequirements({
+    analysisRequirements: analysis.design_requirements,
+    preferences: options.preferences,
+  });
   const unmatched: UnmatchedRequirement[] = notSearched.map((item) =>
     unmatchedRequirementSchema.parse({
       requirementKey: item.requirementKey,
       requirementType: item.requirementType,
       itemSpec: item.itemSpec,
+      displayLabel: item.displayLabel,
       reason: "not_searched" as const,
     })
   );
@@ -212,6 +236,7 @@ export async function discoverProjectProducts(
 
   const storePlan = buildStoreDiscoveryPlan(searched);
   let places: SearchResult;
+  const placesStarted = Date.now();
   try {
     places = await placesSearch({
       lat: geo.lat,
@@ -229,24 +254,122 @@ export async function discoverProjectProducts(
     }
     throw new DiscoveryError("places_failed", discoveryErrorMessage("places_failed"));
   }
+  placesMs = Date.now() - placesStarted;
 
   const allowlistDomains = storeAllowlist(places);
   if (allowlistDomains.length === 0) {
     throw mapEmptyPlacesOutcome(places);
   }
 
-  const resolved = await resolveProductsForRequirements(
+  const searchedForSerp = localizeSearchableRequirements(
     searched,
-    serpSearch,
-    {
-      allowlistDomains,
-      domainCategoryMap: places.domainCategoryMapStores,
-    },
-    places.stores
+    geo.countryCode,
+    options.preferences?.selectedStyles
   );
-  unmatched.push(...resolved.unmatched);
-  const selections = resolved.selections;
 
+  const serpStarted = Date.now();
+  let resolved;
+  try {
+    resolved = await resolveProductsForRequirements(
+      searchedForSerp,
+      serpSearch,
+      {
+        allowlistDomains,
+        domainCategoryMap: places.domainCategoryMapStores,
+        retryOnTimeout: false,
+        providerTimeoutMs: DISCOVERY_SERP_TIMEOUT_MS,
+      },
+      places.stores,
+      {
+        serpBudget: PER_DISCOVERY_SERP_BUDGET,
+        deadlineAt,
+        onSerpUsage: (usage) => {
+          providerRequests = usage.providerAttempts;
+          cacheHits = usage.cacheHits;
+          logicalQueries = usage.logicalQueries;
+        },
+      }
+    );
+  } catch (error) {
+    serpMs = Date.now() - serpStarted;
+    const totalMs = Date.now() - discoveryStarted;
+    logDiscoveryTiming({
+      geocodeMs,
+      placesMs,
+      serpMs,
+      persistMs: 0,
+      totalMs,
+      serpRequests: providerRequests,
+      cacheHits,
+      logicalQueries,
+      attemptId,
+      resultType: "failed",
+    });
+    logDiscoveryAttempt({
+      attemptId,
+      phase: "failed",
+      startedAt,
+      completedAt: new Date().toISOString(),
+      totalMs,
+      errorCode: error instanceof DiscoveryError ? error.code : "failed",
+      message: error instanceof Error ? error.message : String(error),
+    });
+    if (error instanceof DiscoveryError) {
+      logDiscoveryError(error, {
+        stage: "resolve_products",
+        elapsedMs: totalMs,
+        serpRequests: providerRequests,
+        attemptId,
+        cacheHits,
+        logicalQueries,
+        ...error.details,
+      });
+    }
+    throw error;
+  }
+  serpMs = Date.now() - serpStarted;
+
+  if (resolved.unmatched.some((item) => item.reason === "search_interrupted")) {
+    const code: DiscoveryError["code"] =
+      resolved.stopReason === "deadline"
+        ? "discovery_timeout"
+        : resolved.stopReason === "budget"
+          ? "discovery_budget_exhausted"
+          : "search_interrupted";
+    const typedError = new DiscoveryError(code, discoveryErrorMessage(code), undefined, {
+      stage: "serp",
+      serpRequests: resolved.serpUsage.providerAttempts,
+      providerAttempts: resolved.serpUsage.providerAttempts,
+      elapsedMs: Date.now() - discoveryStarted,
+      attemptId,
+      cacheHits: resolved.serpUsage.cacheHits,
+      logicalQueries: resolved.serpUsage.logicalQueries,
+    });
+    logDiscoveryError(typedError, typedError.details ?? {});
+    logDiscoveryAttempt({
+      attemptId,
+      phase: "failed",
+      startedAt,
+      completedAt: new Date().toISOString(),
+      totalMs: Date.now() - discoveryStarted,
+      errorCode: code,
+      message: typedError.message,
+    });
+    throw typedError;
+  }
+
+  unmatched.push(...resolved.unmatched);
+  let selections = resolved.selections;
+
+  const enrichmentStarted = Date.now();
+  const enrichedWinners = await enrichDiscoveryWinners(selections, {
+    allowlistDomains,
+    deadlineAt,
+  });
+  selections = enrichedWinners.selections;
+  const enrichmentMs = Date.now() - enrichmentStarted;
+
+  const persistStarted = Date.now();
   const persisted = await persistProductDiscoveryResult(
     options.persistClient,
     options.ownerUserId,
@@ -268,6 +391,29 @@ export async function discoverProjectProducts(
     },
     client
   );
+  persistMs = Date.now() - persistStarted;
+
+  const totalMs = Date.now() - discoveryStarted;
+  logDiscoveryTiming({
+    geocodeMs,
+    placesMs,
+    serpMs,
+    persistMs,
+    totalMs,
+    serpRequests: resolved.serpUsage.providerAttempts,
+    cacheHits: resolved.serpUsage.cacheHits,
+    logicalQueries: resolved.serpUsage.logicalQueries,
+    attemptId,
+    resultType: "success",
+  });
+  logDiscoveryAttempt({
+    attemptId,
+    phase: "completed",
+    startedAt,
+    completedAt: new Date().toISOString(),
+    totalMs,
+    resultType: "success",
+  });
 
   return { ...persisted, reused: false };
 }

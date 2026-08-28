@@ -20,6 +20,7 @@ describe("POST /api/geocode", () => {
       formattedAddress: "Velenje, Slovenia",
       lat: 46.3644,
       lng: 15.1117,
+      countryCode: "SI",
     });
 
     const response = await POST(
@@ -37,6 +38,7 @@ describe("POST /api/geocode", () => {
       formattedAddress: "Velenje, Slovenia",
       lat: 46.3644,
       lng: 15.1117,
+      countryCode: "SI",
     });
     expect(body).not.toHaveProperty("address");
     expect(reverseGeocodeMock).toHaveBeenCalledWith(46.3644, 15.1117);

@@ -12,6 +12,8 @@ export interface FetchSerpOptions {
   allowedDomains?: string[];
   /** Request timeout in ms (default 18000). Use 10000 for fast mode. */
   timeoutMs?: number;
+  /** Retry once on timeout (default true). Discovery sets false. */
+  retryOnTimeout?: boolean;
 }
 
 /**
@@ -25,7 +27,7 @@ export async function fetchSerp(
     throw new Error("SERPAPI_KEY not configured");
   }
 
-  const results = await fetchSerpInternal(query, false, options.timeoutMs);
+  const results = await fetchSerpInternal(query, false, options.timeoutMs, options.retryOnTimeout !== false);
   const { allowedDomains } = options;
   if (!allowedDomains || allowedDomains.length === 0) {
     return results;
@@ -45,7 +47,8 @@ const DEFAULT_TIMEOUT_MS = 18000; // 18s — SerpAPI can be slow under load
 async function fetchSerpInternal(
   query: string,
   retried = false,
-  timeoutMs: number = DEFAULT_TIMEOUT_MS
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+  retryOnTimeout = true
 ): Promise<SerpOrganicResult[]> {
   const encodedQuery = encodeURIComponent(query);
   const url = `https://serpapi.com/search.json?engine=google&q=${encodedQuery}&location=Slovenia&hl=sl&gl=si&num=10&api_key=${process.env.SERPAPI_KEY}`;
@@ -69,8 +72,8 @@ async function fetchSerpInternal(
   } catch (error: any) {
     clearTimeout(timeout);
     if (error.name === "AbortError") {
-      if (!retried) {
-        return fetchSerpInternal(query, true, timeoutMs);
+      if (retryOnTimeout && !retried) {
+        return fetchSerpInternal(query, true, timeoutMs, retryOnTimeout);
       }
       throw new Error("SERP API request timeout");
     }

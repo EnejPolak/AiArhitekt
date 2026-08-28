@@ -18,6 +18,8 @@ export type GeocodeSuccess = {
   formattedAddress: string;
   lat: number;
   lng: number;
+  /** ISO 3166-1 alpha-2 from Google address_components, or null if absent. */
+  countryCode: string | null;
 };
 
 export type GeocodeFailure = {

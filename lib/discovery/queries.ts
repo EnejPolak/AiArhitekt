@@ -8,7 +8,7 @@ import type { ProductDiscoveryView, ProductSelectionView } from "./types";
 import type { CanonicalSelectionFields } from "./mapProduct";
 import type { FurnitureNeed, MaterialNeed } from "./itemSpecs";
 import type { ShoppingPreferenceInput, ShoppingPreferenceSnapshot } from "./preferences";
-import { canonicalShoppingPreferences } from "./preferences";
+import { canonicalShoppingPreferences, loadStoredShoppingPreferenceSnapshot } from "./preferences";
 import { removeProductReferenceStorageObjects } from "@/lib/references/storageCleanup";
 
 type Client = SupabaseClient<Database>;
@@ -41,9 +41,7 @@ function asDiscovery(
     notSearchedCount: row.not_searched_count,
     allowlistDomains: asAllowlist(row.allowlist_domains),
     unmatchedRequirements: asUnmatched(row.unmatched_requirements),
-    sourcePreferences: canonicalShoppingPreferences(
-      row.source_preferences as unknown as ShoppingPreferenceInput
-    ),
+    sourcePreferences: loadStoredShoppingPreferenceSnapshot(row.source_preferences),
     sourcePreferencesHash: String(row.source_preferences_hash ?? ""),
     createdAt: row.created_at,
     updatedAt: row.updated_at,

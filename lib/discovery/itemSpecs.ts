@@ -6,6 +6,20 @@ import {
 } from "@/lib/analysis/schema";
 import { MAX_ITEM_SPEC_LENGTH, MAX_PRODUCT_DISCOVERY_ITEMS } from "./constants";
 import type { ShoppingPreferenceInput } from "./preferences";
+import type { SearchLocale, ProductConcept } from "./locales/types";
+
+export type RequirementSource = "user_structured" | "user_notes" | "analysis";
+
+export type RequirementProvenance = {
+  source: RequirementSource;
+  concept: ProductConcept;
+  sourceField?: string;
+  matchedPhrase?: string;
+  originalUserValue?: string;
+  paintHue?: string;
+  paintFinish?: string | null;
+  paintRaw?: string;
+};
 
 export type FurnitureNeed = z.infer<typeof furnitureNeedSchema>;
 export type MaterialNeed = z.infer<typeof materialNeedSchema>;
@@ -17,9 +31,15 @@ export type DiscoveryPreferenceOverlay = ShoppingPreferenceInput;
 export type SearchableRequirement = {
   requirementType: DiscoveryRequirementType;
   requirementKey: string;
+  /** Canonical English requirement description. Not a localized SERP query. */
   itemSpec: string;
   queryPlan: string[];
   snapshot: FurnitureNeed | MaterialNeed;
+  searchLocale?: SearchLocale;
+  searchCountryCode?: string | null;
+  displayLabel?: string;
+  provenance?: RequirementProvenance;
+  selectedStyles?: string[];
 };
 
 function normalizeWhitespace(value: string): string {
@@ -52,7 +72,7 @@ function tokens(parts: Array<string | null | undefined>): string[] {
   return out;
 }
 
-function uniqueQueryPlan(specs: string[]): string[] {
+export function uniqueQueryPlan(specs: string[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const spec of specs) {
@@ -273,46 +293,12 @@ export function explicitWallPaintNeeds(
   return needs;
 }
 
-export function buildSearchableRequirements(
-  requirements: DesignRequirements,
-  preferences?: DiscoveryPreferenceOverlay | null
-): {
-  searched: SearchableRequirement[];
-  notSearched: SearchableRequirement[];
-} {
-  const furniture = requirements.furnitureNeeds.map((raw, index) => {
-    const snapshot = furnitureNeedSchema.parse(raw);
-    return toFurnitureRequirement(snapshot, index);
-  });
-
-  const userPaints = explicitWallPaintNeeds(preferences).map((need, index) =>
-    toMaterialRequirement(
-      need,
-      index,
-      `material:wall:interior-wall-paint:${index === 0 ? "main" : "accent"}`
-    )
-  );
-
-  const analysisMaterials = requirements.materialNeeds
-    .map((raw, index) => {
-      const snapshot = materialNeedSchema.parse(raw);
-      return { snapshot, index };
-    })
-    .filter(({ snapshot }) => !(userPaints.length > 0 && isWallPaintMaterial(snapshot)))
-    .map(({ snapshot, index }) => toMaterialRequirement(snapshot, index));
-
-  const ordered = [...furniture, ...userPaints, ...analysisMaterials];
-  return {
-    searched: ordered.slice(0, MAX_PRODUCT_DISCOVERY_ITEMS),
-    notSearched: ordered.slice(MAX_PRODUCT_DISCOVERY_ITEMS),
-  };
-}
-
 export const unmatchedRequirementSchema = z.object({
   requirementKey: z.string().min(1).max(160),
   requirementType: z.enum(["furniture", "material"]),
   itemSpec: z.string().min(1).max(120),
-  reason: z.enum(["not_searched", "no_valid_product"]),
+  displayLabel: z.string().min(1).max(120).optional(),
+  reason: z.enum(["not_searched", "no_valid_product", "search_interrupted"]),
 });
 
 export type UnmatchedRequirement = z.infer<typeof unmatchedRequirementSchema>;

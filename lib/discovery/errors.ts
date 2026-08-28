@@ -17,18 +17,46 @@ export type DiscoveryErrorCode =
   | "serp_quota"
   | "serp_unconfigured"
   | "serp_failed"
+  | "search_interrupted"
+  | "discovery_budget_exhausted"
+  | "discovery_timeout"
+  | "provider_timeout"
   | "rate_limited"
   | "failed";
+
+export type DiscoveryErrorDetails = {
+  stage?: string;
+  errorCode?: string;
+  requirementKey?: string;
+  queryLevel?: number;
+  elapsedMs?: number;
+  serpRequests?: number;
+  providerAttempts?: number;
+  providerStatus?: number;
+  attemptId?: string;
+  resultType?: string;
+  cacheHits?: number;
+  logicalQueries?: number;
+  canonicalError?: string;
+  canonicalDetails?: unknown;
+};
 
 export class DiscoveryError extends Error {
   readonly code: DiscoveryErrorCode;
   readonly retryAfterSeconds?: number;
+  readonly details?: DiscoveryErrorDetails;
 
-  constructor(code: DiscoveryErrorCode, message: string, retryAfterSeconds?: number) {
+  constructor(
+    code: DiscoveryErrorCode,
+    message: string,
+    retryAfterSeconds?: number,
+    details?: DiscoveryErrorDetails
+  ) {
     super(message);
     this.name = "DiscoveryError";
     this.code = code;
     this.retryAfterSeconds = retryAfterSeconds;
+    this.details = details;
   }
 }
 
@@ -67,6 +95,14 @@ export function discoveryErrorMessage(code: DiscoveryErrorCode): string {
       return "Product search is not configured.";
     case "serp_failed":
       return "Could not search products. Try again.";
+    case "search_interrupted":
+      return "Product search was interrupted. Your previous results were kept.";
+    case "discovery_budget_exhausted":
+      return "Product search reached its request limit. Try again later.";
+    case "discovery_timeout":
+      return "Product search timed out before finishing. Your previous results were kept.";
+    case "provider_timeout":
+      return "Product search timed out. Try again.";
     case "rate_limited":
       return "Please wait a moment before searching products again.";
     default:
@@ -86,4 +122,51 @@ export function mapDiscoveryDbError(error: { message?: string; code?: string } |
     return new DiscoveryError("not_found", discoveryErrorMessage("not_found"));
   }
   return new DiscoveryError("failed", discoveryErrorMessage("failed"));
+}
+
+export function logDiscoveryError(error: DiscoveryError, context: DiscoveryErrorDetails = {}): void {
+  if (process.env.NODE_ENV === "production") return;
+  console.error("[discovery-error]", {
+    stage: context.stage ?? "unknown",
+    errorCode: error.code,
+    message: error.message,
+    requirementKey: context.requirementKey,
+    queryLevel: context.queryLevel,
+    elapsedMs: context.elapsedMs,
+    serpRequests: context.serpRequests ?? context.providerAttempts,
+    providerAttempts: context.providerAttempts ?? context.serpRequests,
+    providerStatus: context.providerStatus,
+    canonicalError: context.canonicalError,
+    canonicalDetails: context.canonicalDetails,
+  });
+}
+
+export function logDiscoveryTiming(timing: {
+  geocodeMs: number;
+  placesMs: number;
+  serpMs: number;
+  persistMs: number;
+  totalMs: number;
+  serpRequests: number;
+  cacheHits?: number;
+  logicalQueries?: number;
+  attemptId?: string;
+  resultType?: string;
+}): void {
+  if (process.env.NODE_ENV === "production") return;
+  console.info("[discovery-timing]", timing);
+}
+
+export function logDiscoveryAttempt(event: {
+  attemptId: string;
+  phase: "started" | "completed" | "failed";
+  resultType?: string;
+  startedAt?: string;
+  completedAt?: string;
+  totalMs?: number;
+  errorCode?: string;
+  message?: string;
+}): void {
+  if (process.env.NODE_ENV === "production") return;
+  console.info("[discovery-attempt]", event);
 }

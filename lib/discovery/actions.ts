@@ -9,7 +9,7 @@ import { projectIdInputSchema } from "@/lib/projects/schema";
 import { createPersistClient } from "@/lib/supabase/persist";
 import { acquireProductReferenceAsset } from "@/lib/references/acquire";
 import { discoverProjectProducts, loadCurrentProductDiscovery } from "./discover";
-import { DiscoveryError, discoveryErrorMessage } from "./errors";
+import { DiscoveryError, discoveryErrorMessage, logDiscoveryError } from "./errors";
 import { getOwnedSelection, setSelectionConfirmed } from "./queries";
 import type { ProductDiscoveryView, ProductSelectionView } from "./types";
 import { getProjectRoomPreferences } from "@/lib/project-preferences/queries";
@@ -29,7 +29,7 @@ export type DiscoveryActionOk = {
   reused: boolean;
 };
 
-export type DiscoveryActionFail = { ok: false; code: string; message: string };
+export type DiscoveryActionFail = { ok: false; code: string; message: string; attemptId?: string };
 
 export type DiscoveryActionResult = DiscoveryActionOk | DiscoveryActionFail;
 
@@ -46,6 +46,7 @@ const discoverInputSchema = z.object({
     .max(MAX_LOCATION_INPUT_LENGTH),
   radiusKm: z.number().int().min(1).max(MAX_DISCOVERY_RADIUS_KM).optional(),
   refresh: z.boolean().optional(),
+  attemptId: z.string().uuid().optional(),
 });
 
 const confirmInputSchema = z.object({
@@ -55,16 +56,27 @@ const confirmInputSchema = z.object({
 
 function fail(
   code: DiscoveryError["code"],
-  message?: string
+  message?: string,
+  attemptId?: string
 ): DiscoveryActionFail {
-  return { ok: false, code, message: message ?? discoveryErrorMessage(code) };
+  return { ok: false, code, message: message ?? discoveryErrorMessage(code), attemptId };
 }
 
-function fromCaught(error: unknown): DiscoveryActionFail {
+function fromCaught(error: unknown, attemptId?: string): DiscoveryActionFail {
   if (error instanceof DiscoveryError) {
-    return fail(error.code, error.message);
+    logDiscoveryError(error, { stage: "server_action", attemptId, ...error.details });
+    return fail(error.code, error.message, attemptId);
   }
-  return fail("failed");
+  if (process.env.NODE_ENV !== "production") {
+    console.error("[discovery-error]", {
+      stage: "server_action",
+      attemptId,
+      errorCode: "failed",
+      message: error instanceof Error ? error.message : String(error),
+      errorName: error instanceof Error ? error.name : "unknown",
+    });
+  }
+  return fail("failed", undefined, attemptId);
 }
 
 async function requireOwnedRoomProject(projectId: string) {
@@ -103,9 +115,12 @@ export async function discoverProjectProductsAction(input: {
   locationInput: string;
   radiusKm?: number;
   refresh?: boolean;
+  attemptId?: string;
 }): Promise<DiscoveryActionResult> {
   const parsed = discoverInputSchema.safeParse(input);
   if (!parsed.success) return fail("invalid_input");
+
+  const attemptId = parsed.data.attemptId;
 
   try {
     const { supabase, project } = await requireOwnedRoomProject(parsed.data.projectId);
@@ -124,6 +139,7 @@ export async function discoverProjectProductsAction(input: {
         ownerUserId: project.user_id,
         persistClient,
         preferences,
+        attemptId,
       }
     );
     return {
@@ -133,7 +149,7 @@ export async function discoverProjectProductsAction(input: {
       reused: result.reused,
     };
   } catch (error) {
-    return fromCaught(error);
+    return fromCaught(error, attemptId);
   }
 }
 

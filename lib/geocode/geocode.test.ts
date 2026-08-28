@@ -87,6 +87,7 @@ describe("geocode", () => {
       formattedAddress: "Velenje, Slovenia",
       lat: 46.3592,
       lng: 15.1103,
+      countryCode: null,
     });
     expect(fetchFn).toHaveBeenCalledTimes(1);
     const url = String(fetchFn.mock.calls[0][0]);
@@ -195,7 +196,35 @@ describe("geocode", () => {
       formattedAddress: "Velenje, Slovenia",
       lat: 46.3592,
       lng: 15.1103,
+      countryCode: null,
     });
     expect(result).not.toHaveProperty("address");
+  });
+
+  it("extracts ISO country code from Google address_components without a second request", async () => {
+    fetchFn.mockResolvedValue(
+      jsonResponse({
+        status: "OK",
+        results: [
+          {
+            formatted_address: "Velenje, Slovenia",
+            address_components: [
+              { long_name: "Velenje", short_name: "Velenje", types: ["locality"] },
+              { long_name: "Slovenia", short_name: "SI", types: ["country", "political"] },
+            ],
+            geometry: { location: { lat: 46.3592, lng: 15.1103 } },
+          },
+        ],
+      })
+    );
+    const result = await geocodeAddress("Velenje", fetchFn);
+    expect(result).toEqual({
+      ok: true,
+      formattedAddress: "Velenje, Slovenia",
+      lat: 46.3592,
+      lng: 15.1103,
+      countryCode: "SI",
+    });
+    expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 });

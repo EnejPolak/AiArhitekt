@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { RateLimiter, getClientIP } from "@/lib/rateLimit";
 import { serpSearchRequestSchema } from "@/lib/schemas/serp";
-import { runCanonicalSerpSearch } from "@/lib/serp/search";
+import { runOpenAIProductDiscovery } from "@/lib/productDiscovery/search";
 
 // Node runtime required: lib/serp/domains uses Node crypto for cache key hash (no Edge).
 export const runtime = "nodejs";
@@ -32,7 +32,7 @@ export async function POST(req: Request) {
       );
     }
     const body = parsedBody.data;
-    const outcome = await runCanonicalSerpSearch({
+    const outcome = await runOpenAIProductDiscovery({
       items: body.items,
       allowlistDomains: body.allowlistDomains ?? [],
       dryRun: body.dryRun,
@@ -57,7 +57,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json(outcome.response);
   } catch (error: unknown) {
-    console.error("SERP search error:", error);
+    console.error("Product discovery search error:", error);
     const message = error instanceof Error ? error.message : "Internal server error";
     return NextResponse.json(
       { error: "Internal server error", details: message, status: 500 },

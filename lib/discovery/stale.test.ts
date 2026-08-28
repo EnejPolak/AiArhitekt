@@ -158,7 +158,7 @@ describe("discovery shopping source identity", () => {
 
   it("keeps the empty snapshot hash stable for backfill", () => {
     expect(EMPTY_SHOPPING_PREFERENCE_HASH).toBe(
-      "e4c7458abb77f59d62720fa17e2e3a041739c6c6a884f9938447753345f4122f"
+      "55b1c94ff5ba8f92fd175b9f1b63ca4fb5563daa3711ab0d952f5127607a5c4c"
     );
   });
 });
