@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
 import { getPlaceDetails } from "@/lib/places/placesService";
+import { requireSpendRouteAuth } from "@/lib/api/spendAuth";
+import { sanitizedInternalErrorResponse } from "@/lib/api/publicError";
 
 export const runtime = "nodejs";
 
 export async function GET(req: Request) {
+  const auth = await requireSpendRouteAuth();
+  if (!auth.ok) return auth.response;
   try {
     const { searchParams } = new URL(req.url);
     const placeId = searchParams.get("placeId");
@@ -26,15 +30,7 @@ export async function GET(req: Request) {
     }
 
     return NextResponse.json(details);
-  } catch (error: any) {
-    console.error("Places details error:", error);
-    return NextResponse.json(
-      {
-        error: "Internal server error",
-        details: error.message,
-        status: 500,
-      },
-      { status: 500 }
-    );
+  } catch (error: unknown) {
+    return sanitizedInternalErrorResponse("Places details error:", error);
   }
 }

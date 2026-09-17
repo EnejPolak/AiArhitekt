@@ -21,6 +21,13 @@ import { Step10FinalReport } from "./steps/Step10FinalReport";
 import { stepIndexFromKey, stepKeyFromIndex } from "@/lib/projects/steps";
 import type { RoomAnalysisView } from "@/lib/analysis/types";
 import type { ProductDiscoveryView, ProductSelectionView } from "@/lib/discovery/types";
+import { DEFAULT_DISCOVERY_RADIUS_KM } from "@/lib/discovery/constants";
+import { toProjectProductShoppingState } from "@/lib/discovery/shoppingState";
+import {
+  parseProjectLocation,
+  projectLocationLabel,
+  type ProjectLocation,
+} from "@/lib/project-location/parse";
 import { loadStoredShoppingPreferenceSnapshot, shoppingPreferenceInputFromSnapshot } from "@/lib/discovery/preferences";
 import { saveProjectRoomPreferencesAction } from "@/lib/project-preferences/actions";
 import { projectRoomPreferencesToShoppingPreferences } from "@/lib/project-preferences/adapter";
@@ -157,6 +164,14 @@ function wizardStateFromPreferences(prefs: ProjectRoomPreferences | null): Pick<
   };
 }
 
+function wizardLocationFromProject(location: ProjectLocation) {
+  return {
+    lat: location.latitude,
+    lng: location.longitude,
+    label: projectLocationLabel(location),
+  };
+}
+
 export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
   projectId,
   onComplete,
@@ -184,6 +199,7 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
   );
   const [conversation, setConversation] = React.useState<ConversationEntry[]>([]);
   const restored = wizardStateFromPreferences(initialRoomPreferences);
+  const initialProjectLocation = parseProjectLocation(initialRoomPreferences);
   const [roomPrefs, setRoomPrefs] = React.useState<ProjectRoomPreferences | null>(
     initialRoomPreferences
   );
@@ -200,8 +216,8 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
     selectedDesign: null,
     costEstimate: null,
     materialSuggestions: null,
-    location: null,
-    radiusKm: 50,
+    location: initialProjectLocation ? wizardLocationFromProject(initialProjectLocation) : null,
+    radiusKm: initialProjectLocation?.radiusKm ?? DEFAULT_DISCOVERY_RADIUS_KM,
     budgetPlan: null,
     localStores: null,
     productCandidates: null,
@@ -368,6 +384,16 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
       keepExistingWalls: data.preferences?.keepExistingWalls ?? false,
     });
   }, [roomPrefs, persistedDiscovery?.sourcePreferences, data.selectedStyles, data.preferences]);
+
+  const productShoppingState = React.useMemo(
+    () => toProjectProductShoppingState(persistedDiscovery, persistedSelections),
+    [persistedDiscovery, persistedSelections]
+  );
+  const persistedProjectLocation = parseProjectLocation(roomPrefs);
+  const searchLocation = persistedProjectLocation
+    ? wizardLocationFromProject(persistedProjectLocation)
+    : data.location;
+  const searchRadiusKm = persistedProjectLocation?.radiusKm ?? data.radiusKm;
 
   const nextStep = () => {
     const next = Math.min(currentStep + 1, 16);
@@ -587,11 +613,18 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
       case 7:
         return (
           <Step6bLocation
-            location={data.location}
-            radiusKm={data.radiusKm}
-            onLocationSet={(location, radiusKm) => {
-              addUserMessage(`Location: ${location.label} (${radiusKm} km radius)`);
-              updateData({ location, radiusKm });
+            projectId={projectId}
+            location={searchLocation}
+            radiusKm={searchRadiusKm}
+            onLocationSaved={(location, preferences) => {
+              addUserMessage(
+                `Location: ${projectLocationLabel(location)} (${location.radiusKm} km radius)`
+              );
+              setRoomPrefs(preferences);
+              updateData({
+                location: wizardLocationFromProject(location),
+                radiusKm: location.radiusKm,
+              });
               nextStep();
             }}
           />
@@ -770,8 +803,8 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
         return (
           <Step9aStoreDiscovery
             projectId={projectId}
-            location={data.location}
-            radiusKm={data.radiusKm}
+            location={searchLocation}
+            radiusKm={searchRadiusKm}
             initialDiscovery={persistedDiscovery}
             initialSelections={persistedSelections}
             shoppingPreferences={shoppingPreferences}
@@ -815,75 +848,17 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
       case 14:
         return (
           <Step9cShoppingList
-            productCandidates={data.productCandidates ?? {}}
-            budgetPlan={data.budgetPlan ?? { caps: {}, reservedBufferRatio: 0, totalBudget: 0 }}
-            onShoppingListComplete={(shoppingList) => {
-              updateData({ shoppingList });
-              // Add shopping list to conversation
-              const formatCurrency = (amount: number) =>
-                new Intl.NumberFormat("sl-SI", {
-                  style: "currency",
-                  currency: "EUR",
-                  minimumFractionDigits: 0,
-                }).format(amount);
-              
-              const total = shoppingList.reduce((sum, item) => sum + item.price * item.qty, 0);
-              
-              setConversation((prev) => [
-                ...prev,
-                {
-                  id: `step14-shopping-list-${Date.now()}-${Math.random()}`,
-                  type: "ai",
-                  content: (
-                    <div>
-                      <div className="mb-4">
-                        Final shopping list ({shoppingList.length} items):
-                      </div>
-                      <div className="space-y-3 mt-4">
-                        {shoppingList.map((item, idx) => (
-                          <div key={idx} className="border border-[rgba(255,255,255,0.10)] rounded-lg p-3">
-                            <div className="flex items-start gap-3">
-                              {item.imageUrl && (
-                                <img
-                                  src={item.imageUrl}
-                                  alt={item.name}
-                                  className="w-16 h-16 object-cover rounded"
-                                />
-                              )}
-                              <div className="flex-1">
-                                <div className="text-[14px] font-medium text-white">{item.name}</div>
-                                <div className="text-[12px] text-[rgba(255,255,255,0.60)] mt-1">
-                                  {item.store}
-                                </div>
-                                <div className="flex justify-between items-center mt-2">
-                                  <span className="text-[14px] text-white font-medium">
-                                    {formatCurrency(item.price)}
-                                  </span>
-                                  <a
-                                    href={item.url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-[12px] text-[#3B82F6] hover:underline"
-                                  >
-                                    View product →
-                                  </a>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                        <div className="pt-3 border-t border-[rgba(255,255,255,0.1)] mt-3">
-                          <div className="flex justify-between text-[16px] font-medium">
-                            <span className="text-white">Total:</span>
-                            <span className="text-white">{formatCurrency(total)}</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ),
-                  timestamp: new Date(),
-                },
-              ]);
+            shoppingState={productShoppingState}
+            onContinue={() => {
+              addAIMessage(
+                productShoppingState.foundSelections.length > 0
+                  ? `Shopping list saved: ${productShoppingState.foundSelections.length} found product${productShoppingState.foundSelections.length === 1 ? "" : "s"}${
+                      productShoppingState.missingRequirements.length > 0
+                        ? `, ${productShoppingState.missingRequirements.length} unresolved`
+                        : ""
+                    }.`
+                  : "No verified products were found for these requirements."
+              );
               nextStep();
             }}
           />
@@ -891,8 +866,8 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
       case 15:
         return (
           <Step9dContractors
-            location={data.location!}
-            radiusKm={data.radiusKm}
+            location={searchLocation}
+            radiusKm={searchRadiusKm}
             roomType={data.roomType!}
             preferences={data.preferences}
             onContractorsFound={(contractors) => {
@@ -914,6 +889,7 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
           <Step10FinalReport
             projectId={projectId}
             data={data}
+            shoppingState={productShoppingState}
             onStartAnother={onComplete ?? (() => {})}
           />
         );
@@ -923,10 +899,10 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-hidden bg-background">
+    <div className="flex-1 flex flex-col h-full min-h-0 min-w-0 overflow-hidden bg-background">
       {/* Conversation Timeline */}
       <div className="flex-1 overflow-y-auto">
-        <div className="max-w-[900px] mx-auto px-6 md:px-8 py-6 md:py-8">
+        <div className="max-w-[900px] mx-auto px-4 md:px-8 py-6 md:py-8 min-w-0">
           {/* Conversation History */}
           {conversation.map((entry) => {
             // For AI messages with string content, use displayedText if available

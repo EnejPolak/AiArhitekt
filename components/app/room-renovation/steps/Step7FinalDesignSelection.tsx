@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { cn } from "@/lib/utils";
+import { wizardPanelClass } from "../wizardUi";
 
 export interface Step7FinalDesignSelectionProps {
   designs: string[];
@@ -21,7 +22,7 @@ export const Step7FinalDesignSelection: React.FC<Step7FinalDesignSelectionProps>
   if (designs.length === 0) {
     return (
       <div className="flex justify-start mb-6">
-        <div className="max-w-[85%] rounded-[16px] px-6 py-5 bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.08)] space-y-4">
+        <div className={`${wizardPanelClass} space-y-4`}>
           <div className="text-[15px] text-[rgba(255,255,255,0.85)] leading-relaxed">
             Room concepts are generated after real products are confirmed. Continue to product discovery.
           </div>

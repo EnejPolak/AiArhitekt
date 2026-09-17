@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
+import { requireSpendRouteAuth } from "@/lib/api/spendAuth";
+import {
+  sanitizedInternalErrorResponse,
+  sanitizedRateLimitedResponse,
+} from "@/lib/api/publicError";
 
 export const runtime = "nodejs";
 
@@ -97,6 +102,8 @@ async function with429Backoff<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 export async function POST(req: Request) {
+  const auth = await requireSpendRouteAuth();
+  if (!auth.ok) return auth.response;
   let body: unknown;
   try {
     body = await req.json();
@@ -214,19 +221,19 @@ export async function POST(req: Request) {
       metadata: { provider: "openai", size, n, mode: isEdit ? "edits" : "generations" },
       ...(images.length > 1 ? { images } : {}),
     });
-  } catch (error: any) {
-    const status = error?.status || error?.response?.status || error?.statusCode;
-    const message = error?.message || "Failed to generate image";
+  } catch (error: unknown) {
+    const status =
+      error && typeof error === "object"
+        ? (error as { status?: number; statusCode?: number; response?: { status?: number } }).status ||
+          (error as { response?: { status?: number } }).response?.status ||
+          (error as { statusCode?: number }).statusCode
+        : undefined;
 
     if (status === 429) {
-      return NextResponse.json({ error: "OpenAI rate limit hit. Please retry in a moment." }, { status: 429 });
+      return sanitizedRateLimitedResponse();
     }
 
-    if (status === 400 || status === 401 || status === 403) {
-      return NextResponse.json({ error: message }, { status });
-    }
-
-    return NextResponse.json({ error: message }, { status: 500 });
+    return sanitizedInternalErrorResponse("Render error:", error);
   }
 }
 

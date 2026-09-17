@@ -29,6 +29,12 @@ export const projectRoomPreferencesRowSchema = z.object({
   bedType: renderBedTypeSchema,
   notes: z.string().trim().max(400),
   keepExistingWalls: z.boolean(),
+  locationInput: z.string().trim().min(3).max(500).nullable(),
+  formattedAddress: z.string().trim().max(500).nullable(),
+  latitude: z.number().finite().min(-90).max(90).nullable(),
+  longitude: z.number().finite().min(-180).max(180).nullable(),
+  radiusKm: z.number().int().min(1).max(50).nullable(),
+  countryCode: z.string().trim().length(2).nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -45,10 +51,31 @@ export const projectRoomPreferencesPatchSchema = z
     bedType: renderBedTypeSchema,
     notes: z.string().max(400),
     keepExistingWalls: z.boolean(),
+    locationInput: z.string().trim().min(3).max(500).nullable(),
+    formattedAddress: z.string().trim().max(500).nullable(),
+    latitude: z.number().finite().min(-90).max(90).nullable(),
+    longitude: z.number().finite().min(-180).max(180).nullable(),
+    radiusKm: z.number().int().min(1).max(50).nullable(),
+    countryCode: z.string().trim().length(2).nullable(),
   })
   .partial();
 
 export const saveProjectRoomPreferencesInputSchema = z.object({
   projectId: z.string().uuid(),
   patch: projectRoomPreferencesPatchSchema,
+});
+
+export const saveProjectLocationInputSchema = z.object({
+  projectId: z.string().uuid(),
+  locationInput: z.string().trim().min(3).max(500),
+  formattedAddress: z.string().trim().max(500).nullable().optional(),
+  latitude: z.number().finite().min(-90).max(90),
+  longitude: z.number().finite().min(-180).max(180),
+  radiusKm: z.number().int().min(1).max(50),
+  countryCode: z
+    .string()
+    .trim()
+    .nullable()
+    .optional()
+    .transform((value) => (value ? value : null)),
 });

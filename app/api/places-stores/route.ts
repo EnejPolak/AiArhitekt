@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { TTLCache } from "@/lib/cache";
 import { RateLimiter, getClientIP } from "@/lib/rateLimit";
+import { requireSpendRouteAuth } from "@/lib/api/spendAuth";
+import { sanitizedInternalErrorResponse } from "@/lib/api/publicError";
 
 export const runtime = "nodejs";
 
@@ -26,6 +28,8 @@ const placesCache = new TTLCache<PlacesCacheEntry>(10 * 60 * 1000);
 const rateLimiter = new RateLimiter(30, 60000);
 
 export async function GET(req: Request) {
+  const auth = await requireSpendRouteAuth();
+  if (!auth.ok) return auth.response;
   try {
     // Rate limiting
     const clientIP = getClientIP(req);
@@ -169,15 +173,7 @@ export async function GET(req: Request) {
       }
       throw error;
     }
-  } catch (error: any) {
-    console.error("Places stores error:", error);
-    return NextResponse.json(
-      {
-        error: "Internal server error",
-        details: error.message,
-        status: 500,
-      },
-      { status: 500 }
-    );
+  } catch (error: unknown) {
+    return sanitizedInternalErrorResponse("Places stores error:", error);
   }
 }

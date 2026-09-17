@@ -110,6 +110,66 @@ describe("productIdentity", () => {
     expect(check.verified).toBe(false);
     expect(check.unresolved.join(" ").toLowerCase()).toContain("solid oak");
   });
+
+  it("rejects solid gold when only gold-look ceramic evidence is present", () => {
+    const identity = parseProductIdentity("solid gold floor tiles max 80 EUR / m2");
+    expect(identity.definingRequirements.some((req) => /gold/i.test(req.label))).toBe(true);
+    const check = verifyIdentityRequirements({
+      requestedItem: "solid gold floor tiles max 80 EUR / m2",
+      lists: {
+        matchedRequirements: ["tiles", "gold colour", "zlata"],
+        unmetRequirements: [],
+        unknownRequirements: [],
+      },
+      evidenceHaystack:
+        "Granitogresne ploščice Over (61 x 30,5 cm, Zlata, Mat) porcelain ceramic gold-look tile",
+    });
+    expect(check.verified).toBe(false);
+    expect(check.unresolved.join(" ").toLowerCase()).toMatch(/gold/);
+  });
+
+  it("rejects real marble when only marble-effect evidence is present", () => {
+    const check = verifyIdentityRequirements({
+      requestedItem: "real marble bathroom sink max 300 EUR",
+      lists: {
+        matchedRequirements: ["bathroom sink", "marble effect"],
+        unmetRequirements: [],
+        unknownRequirements: [],
+      },
+      evidenceHaystack: "ceramic bathroom sink with marble-effect finish marmor videz",
+    });
+    expect(check.verified).toBe(false);
+    expect(check.unresolved.join(" ").toLowerCase()).toMatch(/marble/);
+  });
+
+  it("treats gold pendant lamp as color/appearance, not solid-gold material", () => {
+    const identity = parseProductIdentity("gold pendant lamp max 120 EUR");
+    expect(identity.definingRequirements.some((req) => /gold/i.test(req.label))).toBe(false);
+    const check = verifyIdentityRequirements({
+      requestedItem: "gold pendant lamp max 120 EUR",
+      lists: {
+        matchedRequirements: ["pendant lamp", "gold finish", "zlata barva"],
+        unmetRequirements: [],
+        unknownRequirements: [],
+      },
+      evidenceHaystack: "viseča svetilka gold finish zlata barva pendant lamp",
+    });
+    expect(check.verified).toBe(true);
+  });
+
+  it("rejects plain towel holder for heated towel rail category", () => {
+    const identity = parseProductIdentity("chrome heated towel rail width 60cm max 150 EUR");
+    expect(identity.coreCategory).toBe("heated towel rail");
+    expect(
+      verifyCoreCategoryInEvidence(identity, "držalo za brisače krom 60 cm towel holder")
+    ).toBe(false);
+    expect(
+      verifyCoreCategoryInEvidence(
+        identity,
+        "električni kopalniški radiator za brisače 60 cm krom"
+      )
+    ).toBe(true);
+  });
 });
 
 describe("category and budget hardening", () => {
@@ -199,6 +259,41 @@ describe("category and budget hardening", () => {
     });
     expect(finalized.accepted).toBe(false);
     expect(["identity_requirement_unverified", "category_unverified"]).toContain(finalized.reason);
+  });
+
+  it("rejects solid-gold request when evidence is gold-look ceramic tile", () => {
+    const finalized = finalizeAcceptedProduct({
+      source: "targeted",
+      requestedItem: "solid gold floor tiles max 80 EUR / m2",
+      evidenceText: "Granitogresne ploščice Over Zlata Mat porcelain gold colour",
+      product: product({
+        name: "Granitogresne ploščice Over (61 x 30,5 cm, Zlata, Mat)",
+        matchScore: 0.9,
+        price: 29.9,
+        priceEvidence: "web_search",
+        matchedRequirements: ["tiles", "gold", "max 80 EUR / m2"],
+        unknownRequirements: [],
+      }),
+    });
+    expect(finalized.accepted).toBe(false);
+    expect(["identity_requirement_unverified", "category_unverified"]).toContain(finalized.reason);
+  });
+
+  it("accepts gold pendant lamp with gold-finish appearance evidence", () => {
+    const result = evaluateAcceptance({
+      source: "primary",
+      requestedItem: "gold pendant lamp max 120 EUR",
+      evidenceText: "LED pendant lamp gold finish zlata barva",
+      product: product({
+        name: "LED pendant lamp gold finish",
+        matchScore: 0.88,
+        price: 99.99,
+        priceEvidence: "web_search",
+        matchedRequirements: ["gold", "pendant lamp", "max 120 EUR"],
+        unknownRequirements: [],
+      }),
+    });
+    expect(result.accepted).toBe(true);
   });
 
   it("rejects live Admiral mat system even when specs say mat system", () => {

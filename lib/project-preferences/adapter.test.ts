@@ -59,12 +59,16 @@ describe("project room preference adapter", () => {
     });
   });
 
-  it("does not put notes or budget into the shopping identity", () => {
+  it("does not put notes, budget, or location into the shopping identity", () => {
     const a = shoppingPreferenceFingerprint(
       projectRoomPreferencesToShoppingPreferences({
         ...persistedMarble,
         notes: "please make it cozy",
         budgetLevel: "premium",
+        locationInput: "Celje",
+        latitude: 46.2,
+        longitude: 15.2,
+        radiusKm: 25,
       })
     );
     const b = shoppingPreferenceFingerprint(projectRoomPreferencesToShoppingPreferences(persistedMarble));

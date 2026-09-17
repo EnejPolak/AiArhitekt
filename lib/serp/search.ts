@@ -119,6 +119,12 @@ export type CanonicalSerpSearchInput = {
   providerTimeoutMs?: number;
   /** When false, skip automatic retry on provider timeout. */
   retryOnTimeout?: boolean;
+  /** Project-persisted market for OpenAI Step C search. Not used by SerpAPI. */
+  marketContext?: {
+    countryCode?: string | null;
+    formattedLocation?: string | null;
+    merchantDomains?: string[];
+  };
 };
 
 export type CanonicalSerpSearchOutcome =

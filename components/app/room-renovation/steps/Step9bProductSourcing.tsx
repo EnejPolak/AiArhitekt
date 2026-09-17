@@ -4,6 +4,7 @@ import * as React from "react";
 import type { ProductSelectionView } from "@/lib/discovery/types";
 import type { RoomRenderPreferences } from "@/lib/render/preferences";
 import { FinalRoomRenderPanel } from "../FinalRoomRenderPanel";
+import { wizardPanelClass } from "../wizardUi";
 
 export interface Step9bProductSourcingProps {
   projectId: string;
@@ -22,7 +23,7 @@ export const Step9bProductSourcing: React.FC<Step9bProductSourcingProps> = ({
 }) => {
   return (
     <div className="flex justify-start mb-6">
-      <div className="max-w-[92%] rounded-[16px] px-6 py-5 bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.08)] space-y-4">
+      <div className={`${wizardPanelClass} space-y-4`}>
         <div className="text-[15px] text-[rgba(255,255,255,0.85)] leading-relaxed">
           Generate a room visualization from your confirmed products. The shopping list stays the real persisted selections — not anything read from the image.
         </div>

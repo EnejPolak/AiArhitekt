@@ -3,6 +3,8 @@ import OpenAI from "openai";
 import { rulesBundle } from "@/lib/serp/searchBundle";
 import { getSafeCandidates } from "@/lib/serp/safetyFilter";
 import { gptPickJsonSchema } from "@/lib/schemas/ai";
+import { requireSpendRouteAuth } from "@/lib/api/spendAuth";
+import { sanitizedInternalErrorResponse } from "@/lib/api/publicError";
 
 export const runtime = "nodejs";
 
@@ -144,6 +146,8 @@ function safeFallbackBest(itemSpec: string, candidates: CandidateInput[]): Candi
 }
 
 export async function POST(req: Request) {
+  const auth = await requireSpendRouteAuth();
+  if (!auth.ok) return auth.response;
   try {
     if (!process.env.OPENAI_API_KEY) {
       return NextResponse.json(
@@ -427,11 +431,7 @@ Choose the single best candidate or null. Return JSON: { "pickedUrl", "pickedTit
 
     const response: PickCandidatesResponse = { picks };
     return NextResponse.json(response);
-  } catch (error: any) {
-    console.error("pick-candidates error:", error);
-    return NextResponse.json(
-      { error: "Internal server error", details: error.message },
-      { status: 500 }
-    );
+  } catch (error: unknown) {
+    return sanitizedInternalErrorResponse("pick-candidates error:", error);
   }
 }

@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
+import { requireSpendRouteAuth } from "@/lib/api/spendAuth";
+import { sanitizedInternalErrorResponse } from "@/lib/api/publicError";
 
 export const runtime = "nodejs";
 
@@ -39,6 +41,8 @@ interface SummarizeResponse {
 }
 
 export async function POST(req: Request) {
+  const auth = await requireSpendRouteAuth();
+  if (!auth.ok) return auth.response;
   try {
     if (!process.env.OPENAI_API_KEY) {
       return NextResponse.json(
@@ -169,11 +173,7 @@ Produce a clean room-by-room summary in Markdown.`;
       },
     };
     return NextResponse.json(response);
-  } catch (error: any) {
-    console.error("summarize error:", error);
-    return NextResponse.json(
-      { error: "Internal server error", details: error.message },
-      { status: 500 }
-    );
+  } catch (error: unknown) {
+    return sanitizedInternalErrorResponse("summarize error:", error);
   }
 }

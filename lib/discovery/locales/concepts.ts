@@ -45,7 +45,7 @@ export function resolveProductConcept(requirement: SearchableRequirement): Produ
     if (/\bsofa\b|\bcouch\b|sedezn|kavc/.test(blob)) return "sofa";
     if (/\bbed\b|postelj/.test(blob) && !/cover|pregrinjal|sheet/.test(blob)) return "bed";
     if (/wardrobe|storage|garderob|omara|\bomar\b/.test(blob)) return "wardrobe";
-    if (/lamp|\blight|svetil|\bluc\b/.test(blob)) return "lighting";
+    if (/\blamp\b|lighting|svetil|\blight fixture|\blight fitting/.test(blob)) return "lighting";
     if (/\bchair\b|\bstol\b/.test(blob)) return "chair";
     return "other";
   }

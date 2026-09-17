@@ -66,7 +66,7 @@ export function renderErrorMessage(code: RenderErrorCode): string {
     case "provider_unconfigured":
       return "Room visualization is not configured.";
     case "provider_timeout":
-      return "Room visualization timed out. Try again.";
+      return "We couldn't finish the render. Try again.";
     case "provider_busy":
       return "Room visualization is busy. Try again in a moment.";
     case "provider_failed":

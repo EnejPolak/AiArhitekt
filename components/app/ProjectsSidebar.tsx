@@ -73,7 +73,7 @@ export const ProjectsSidebar: React.FC<ProjectsSidebarProps> = ({
   return (
     <aside
       className={cn(
-        "flex h-screen w-[280px] flex-col overflow-hidden bg-background md:w-[320px]",
+        "flex h-full w-[280px] flex-col overflow-hidden bg-background md:w-[320px]",
         className
       )}
     >

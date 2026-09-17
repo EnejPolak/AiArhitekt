@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
 import { searchPlaces } from "@/lib/places/placesService";
 import { placesSearchRequestSchema } from "@/lib/schemas/places";
+import { requireSpendRouteAuth } from "@/lib/api/spendAuth";
+import { sanitizedInternalErrorResponse } from "@/lib/api/publicError";
 
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
+  const auth = await requireSpendRouteAuth();
+  if (!auth.ok) return auth.response;
   try {
     const parsed = placesSearchRequestSchema.safeParse(await req.json().catch(() => ({})));
     if (!parsed.success) {
@@ -77,15 +81,7 @@ export async function POST(req: Request) {
     });
 
     return NextResponse.json(result);
-  } catch (error: any) {
-    console.error("Places search error:", error);
-    return NextResponse.json(
-      {
-        error: "Internal server error",
-        details: error.message,
-        status: 500,
-      },
-      { status: 500 }
-    );
+  } catch (error: unknown) {
+    return sanitizedInternalErrorResponse("Places search error:", error);
   }
 }

@@ -3,6 +3,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/database.types";
 import { geocodeAddress } from "@/lib/geocode/service";
 import { GEOCODING_ERROR_CODES } from "@/lib/geocode/types";
+import {
+  clampSearchRadiusKm,
+  isValidSearchCoordinate,
+  type ProjectLocation,
+} from "@/lib/project-location/parse";
 import { searchPlaces, type SearchResult } from "@/lib/places/placesService";
 import { PlacesError, PLACES_ERROR_CODES } from "@/lib/places/errors";
 import { buildStoreDiscoveryPlan } from "@/lib/places/retailTaxonomy";
@@ -12,14 +17,14 @@ import {
   type CanonicalSerpSearchInput,
   type CanonicalSerpSearchOutcome,
 } from "@/lib/serp/search";
+import { runOpenAIProductDiscovery } from "@/lib/productDiscovery/search";
 import { loadReusableRoomAnalysis } from "@/lib/analysis/analyze";
 import { projectIdSchema } from "@/lib/projects/schema";
 import { claimProductDiscoverySlot } from "./claim";
 import {
-  DEFAULT_DISCOVERY_RADIUS_KM,
   DISCOVERY_DEADLINE_MS,
+  DISCOVERY_OPENAI_MIN_REMAINING_MS,
   DISCOVERY_SERP_TIMEOUT_MS,
-  MAX_DISCOVERY_RADIUS_KM,
   MAX_LOCATION_INPUT_LENGTH,
   MIN_LOCATION_INPUT_LENGTH,
   PER_DISCOVERY_SERP_BUDGET,
@@ -32,6 +37,7 @@ import {
 import { resolveShoppingRequirements } from "./resolveRequirements";
 import { localizeSearchableRequirements } from "./locales";
 import { resolveProductsForRequirements } from "./resolveProducts";
+import { resolveProductsWithOpenAI } from "./resolveProductsOpenAI";
 import { enrichDiscoveryWinners } from "./enrichWinners";
 import {
   deleteProjectProductDiscovery,
@@ -53,14 +59,18 @@ export type DiscoverProjectProductsOptions = {
   persistClient: Client;
   preferences?: ShoppingPreferenceInput | null;
   attemptId?: string;
+  projectLocation?: ProjectLocation | null;
+  persistResolvedLocation?: (location: ProjectLocation) => Promise<void>;
   geocodeAddress?: typeof geocodeAddress;
   searchPlaces?: typeof searchPlaces;
+  /** Customer path default is OpenAI Step C. */
+  searchProducts?: typeof runOpenAIProductDiscovery;
+  /** Legacy test/injection hook for SerpAPI resolver. Not used by the room-renovation wizard. */
   searchSerp?: (input: CanonicalSerpSearchInput) => Promise<CanonicalSerpSearchOutcome>;
 };
 
 function clampRadiusKm(value: number | undefined): number {
-  const n = Number.isFinite(value) ? Math.round(Number(value)) : DEFAULT_DISCOVERY_RADIUS_KM;
-  return Math.min(MAX_DISCOVERY_RADIUS_KM, Math.max(1, n));
+  return clampSearchRadiusKm(value);
 }
 
 function normalizeLocationInput(value: string): string {
@@ -142,8 +152,22 @@ export async function discoverProjectProducts(
   if (!parsedId.success) {
     throw new DiscoveryError("invalid_input", discoveryErrorMessage("invalid_input"));
   }
-  const locationInput = normalizeLocationInput(locationInputRaw);
-  const radiusKm = clampRadiusKm(options.radiusKm);
+  const storedLocation =
+    options.projectLocation &&
+    isValidSearchCoordinate(options.projectLocation.latitude, options.projectLocation.longitude)
+      ? options.projectLocation
+      : null;
+  const rawOrStoredInput =
+    locationInputRaw.trim() || options.projectLocation?.locationInput || "";
+  const locationInput = storedLocation
+    ? storedLocation.locationInput
+    : rawOrStoredInput
+      ? normalizeLocationInput(rawOrStoredInput)
+      : "";
+  if (!locationInput) {
+    throw new DiscoveryError("location_required", discoveryErrorMessage("location_required"));
+  }
+  const radiusKm = clampRadiusKm(storedLocation?.radiusKm ?? options.radiusKm);
   const force = Boolean(options.force);
 
   const analysis = await loadReusableRoomAnalysis(client, parsedId.data);
@@ -160,6 +184,9 @@ export async function discoverProjectProducts(
       existing.sourcePreferencesHash === preferenceFingerprint.hash &&
       isCurrentProductDiscovery(existing, analysis, {
         locationInput,
+        latitude: storedLocation?.latitude,
+        longitude: storedLocation?.longitude,
+        radiusKm,
         preferences: options.preferences,
       })
     ) {
@@ -186,13 +213,51 @@ export async function discoverProjectProducts(
 
   const geocode = options.geocodeAddress ?? geocodeAddress;
   const placesSearch = options.searchPlaces ?? searchPlaces;
+  const useLegacySerp = Boolean(options.searchSerp) && !options.searchProducts;
+  const productSearch = options.searchProducts ?? runOpenAIProductDiscovery;
   const serpSearch = options.searchSerp ?? runCanonicalSerpSearch;
 
+  let geo: { lat: number; lng: number; countryCode: string | null; formattedAddress?: string };
   const geoStarted = Date.now();
-  const geo = await geocode(locationInput);
-  geocodeMs = Date.now() - geoStarted;
-  if (!geo.ok) {
-    throw mapGeocodeFailure(geo.code);
+  if (storedLocation) {
+    geo = {
+      lat: storedLocation.latitude,
+      lng: storedLocation.longitude,
+      countryCode: storedLocation.countryCode,
+      formattedAddress: storedLocation.formattedAddress ?? storedLocation.locationInput,
+    };
+    geocodeMs = 0;
+  } else {
+    if (!locationInput) {
+      throw new DiscoveryError("location_required", discoveryErrorMessage("location_required"));
+    }
+    const geoResult = await geocode(locationInput);
+    geocodeMs = Date.now() - geoStarted;
+    if (!geoResult.ok) {
+      throw mapGeocodeFailure(geoResult.code);
+    }
+    if (!isValidSearchCoordinate(geoResult.lat, geoResult.lng)) {
+      throw new DiscoveryError("location_invalid", discoveryErrorMessage("location_invalid"));
+    }
+    geo = {
+      lat: geoResult.lat,
+      lng: geoResult.lng,
+      countryCode: geoResult.countryCode,
+      formattedAddress: geoResult.formattedAddress,
+    };
+    if (options.persistResolvedLocation) {
+      await options.persistResolvedLocation({
+        locationInput,
+        formattedAddress: geoResult.formattedAddress ?? locationInput,
+        latitude: geoResult.lat,
+        longitude: geoResult.lng,
+        radiusKm,
+        countryCode: geoResult.countryCode,
+      });
+    }
+  }
+  if (!isValidSearchCoordinate(geo.lat, geo.lng)) {
+    throw new DiscoveryError("location_invalid", discoveryErrorMessage("location_invalid"));
   }
 
   const { searched, notSearched } = resolveShoppingRequirements({
@@ -270,26 +335,47 @@ export async function discoverProjectProducts(
   const serpStarted = Date.now();
   let resolved;
   try {
-    resolved = await resolveProductsForRequirements(
-      searchedForSerp,
-      serpSearch,
-      {
-        allowlistDomains,
-        domainCategoryMap: places.domainCategoryMapStores,
-        retryOnTimeout: false,
-        providerTimeoutMs: DISCOVERY_SERP_TIMEOUT_MS,
-      },
-      places.stores,
-      {
-        serpBudget: PER_DISCOVERY_SERP_BUDGET,
-        deadlineAt,
-        onSerpUsage: (usage) => {
-          providerRequests = usage.providerAttempts;
-          cacheHits = usage.cacheHits;
-          logicalQueries = usage.logicalQueries;
+    if (useLegacySerp) {
+      resolved = await resolveProductsForRequirements(
+        searchedForSerp,
+        serpSearch,
+        {
+          allowlistDomains,
+          domainCategoryMap: places.domainCategoryMapStores,
+          retryOnTimeout: false,
+          providerTimeoutMs: DISCOVERY_SERP_TIMEOUT_MS,
         },
-      }
-    );
+        places.stores,
+        {
+          serpBudget: PER_DISCOVERY_SERP_BUDGET,
+          deadlineAt,
+          onSerpUsage: (usage) => {
+            providerRequests = usage.providerAttempts;
+            cacheHits = usage.cacheHits;
+            logicalQueries = usage.logicalQueries;
+          },
+        }
+      );
+    } else {
+      resolved = await resolveProductsWithOpenAI(
+        searchedForSerp,
+        productSearch,
+        {
+          allowlistDomains,
+          deadlineAt,
+          minRemainingBeforeRequestMs: DISCOVERY_OPENAI_MIN_REMAINING_MS,
+          marketContext: {
+            countryCode: geo.countryCode,
+            formattedLocation: geo.formattedAddress ?? locationInput,
+            merchantDomains: allowlistDomains,
+          },
+        },
+        places.stores
+      );
+      providerRequests = resolved.serpUsage.providerAttempts;
+      cacheHits = resolved.serpUsage.cacheHits;
+      logicalQueries = resolved.serpUsage.logicalQueries;
+    }
   } catch (error) {
     serpMs = Date.now() - serpStarted;
     const totalMs = Date.now() - discoveryStarted;
@@ -329,7 +415,10 @@ export async function discoverProjectProducts(
   }
   serpMs = Date.now() - serpStarted;
 
-  if (resolved.unmatched.some((item) => item.reason === "search_interrupted")) {
+  if (
+    useLegacySerp &&
+    resolved.unmatched.some((item) => item.reason === "search_interrupted")
+  ) {
     const code: DiscoveryError["code"] =
       resolved.stopReason === "deadline"
         ? "discovery_timeout"

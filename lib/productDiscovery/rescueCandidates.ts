@@ -1,6 +1,11 @@
 import { normalizeDomainToRoot } from "@/lib/serp/domains";
 import type { CandidateEnrichment } from "./enrichCandidate";
 import { RESCUE_MAX_CANDIDATES } from "./constants";
+import { enrichmentCacheKey } from "./enrichmentCacheKey";
+import {
+  diversifyDiscoveryCandidates,
+  scoreConstraintAwareDiscovery,
+} from "./discoveryScore";
 import { domainAllowed } from "./domains";
 import type { ProductDiscoverySource } from "./types";
 
@@ -12,22 +17,15 @@ export type RescueCandidate = {
   sourceEvidence: string | null;
   preRankScore: number;
   enrichment: CandidateEnrichment | null;
+  /** Serp snippet price when candidate originates from SerpAPI fallback. */
+  serpSnippetPrice?: number | null;
+  serpSnippetCurrency?: string | null;
 };
 
 const PRODUCT_PATH_PATTERN =
   /\/(p|product|products|izdelek|artikel|prod|item|sku|trgovina)\/|\/p\/[^/?#]+/i;
 const JUNK_PATH_PATTERN =
   /(\.pdf$|\/blog\b|\/news\b|\/inspir|\/clanek|\/search\b|\/kategorij|\/category\b|\/c\/\d|\/media\/|\/datoteke\/|\/wp-content\/)/i;
-
-function tokenizeRequestedItem(requestedItem: string): string[] {
-  return requestedItem
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .split(/[^a-z0-9]+/i)
-    .filter((token) => token.length >= 3)
-    .slice(0, 24);
-}
 
 function evidenceFromSource(url: string, title: string | null): string | null {
   const parts: string[] = [];
@@ -72,19 +70,16 @@ export function scoreProductPageLikelihood(url: string, title: string | null): n
 export function scoreCandidateRelevance(
   url: string,
   title: string | null,
-  requestedItem: string
+  requestedItem: string,
+  snippet?: string | null
 ): number {
-  const productScore = scoreProductPageLikelihood(url, title);
-  const terms = tokenizeRequestedItem(requestedItem);
-  const haystack = `${title ?? ""} ${evidenceFromSource(url, title) ?? ""} ${url} ${pathnameOf(url)}`
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
-  let overlap = 0;
-  for (const term of terms) {
-    if (haystack.includes(term)) overlap += 6;
-  }
-  return productScore + overlap;
+  // Constraint-aware discovery score (enrichment priority only — not acceptance).
+  return scoreConstraintAwareDiscovery({
+    url,
+    title,
+    snippet: snippet ?? null,
+    requestedItem,
+  }).score;
 }
 
 export function isConfidentNonProductUrl(url: string): boolean {
@@ -112,14 +107,19 @@ export function buildRescueCandidates(input: {
     if (!domainAllowed(source.url, input.allowlistDomains)) continue;
     if (isConfidentNonProductUrl(source.url)) continue;
 
-    const key = source.url.toLowerCase();
+    const key = enrichmentCacheKey(source.url);
     if (seen.has(key)) continue;
     seen.add(key);
 
     const domain = normalizeDomainToRoot(source.url);
     if (!domain) continue;
 
-    const preRankScore = scoreCandidateRelevance(source.url, source.title, input.requestedItem);
+    const preRankScore = scoreCandidateRelevance(
+      source.url,
+      source.title,
+      input.requestedItem,
+      source.snippet
+    );
     scored.push({
       id: "",
       url: source.url,
@@ -132,7 +132,10 @@ export function buildRescueCandidates(input: {
   }
 
   scored.sort((a, b) => b.preRankScore - a.preRankScore);
-  const top = scored.slice(0, maxCandidates);
+  const top = diversifyDiscoveryCandidates(scored, maxCandidates, {
+    maxPerDomain: 2,
+    maxUnsupported: 2,
+  });
   return top.map((candidate, index) => ({
     ...candidate,
     id: `candidate_${index + 1}`,
@@ -159,6 +162,11 @@ export function merchantEvidenceText(candidate: RescueCandidate): string {
     if (e.price != null && e.currency) parts.push(`Price: ${e.price} ${e.currency}`);
     if (e.availability) parts.push(`Availability: ${e.availability}`);
     if (e.sku) parts.push(`SKU: ${e.sku}`);
+    const labeled = (e.labeledSpecs ?? [])
+      .map((spec) => spec.text)
+      .filter(Boolean)
+      .slice(0, 24);
+    if (labeled.length > 0) parts.push(`Labeled specs: ${labeled.join(" | ")}`);
     if (e.productText) parts.push(`Page text: ${e.productText.slice(0, 2500)}`);
   } else if (e) {
     parts.push(`Merchant enrichment status: ${e.status}`);

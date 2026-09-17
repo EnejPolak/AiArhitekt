@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
+import { requireSpendRouteAuth } from "@/lib/api/spendAuth";
+import { sanitizedInternalErrorResponse } from "@/lib/api/publicError";
 
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
+  const auth = await requireSpendRouteAuth();
+  if (!auth.ok) return auth.response;
   try {
     if (!process.env.OPENAI_API_KEY) {
       return NextResponse.json({ error: "OPENAI_API_KEY not configured" }, { status: 500 });
@@ -114,13 +118,8 @@ export async function POST(req: Request) {
       negativePrompt: negativePrompt ? `${negativePrompt}, ${safetyNegative}` : safetyNegative,
       decisions,
     });
-  } catch (e: any) {
-    const status = e?.status || e?.response?.status || e?.statusCode;
-    const msg = e?.message || "Failed";
-    if (status === 400 || status === 401 || status === 403) {
-      return NextResponse.json({ error: msg }, { status });
-    }
-    return NextResponse.json({ error: msg }, { status: 500 });
+  } catch (e: unknown) {
+    return sanitizedInternalErrorResponse("Prompt room render error:", e);
   }
 }
 

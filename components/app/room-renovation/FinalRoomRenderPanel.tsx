@@ -198,8 +198,8 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
                 <div className="w-16 h-16 rounded-md bg-[rgba(255,255,255,0.04)]" />
               )}
               <div className="min-w-0 flex-1">
-                <div className="text-[14px] text-white truncate">{item.productTitle}</div>
-                <div className="text-[12px] text-[rgba(255,255,255,0.55)]">
+                <div className="text-[14px] text-white break-words">{item.productTitle}</div>
+                <div className="text-[12px] text-[rgba(255,255,255,0.55)] break-words">
                   {formatPrice(item.price, item.currency)} · {item.retailerName ?? item.retailerDomain}
                 </div>
                 <div className="text-[12px] text-[rgba(255,255,255,0.45)]">

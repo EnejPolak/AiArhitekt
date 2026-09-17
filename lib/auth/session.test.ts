@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { getVerifiedUser, requireAppUser } from "./session";
 
 vi.mock("@/lib/supabase/server", () => ({
@@ -55,5 +57,11 @@ describe("getVerifiedUser / requireAppUser", () => {
   it("treats getUser errors as unauthenticated", async () => {
     mockGetUser(null, { message: "Auth session missing" });
     expect(await getVerifiedUser()).toBeNull();
+  });
+
+  it("dedupes getUser within a request via cache()", () => {
+    const source = readFileSync(join(process.cwd(), "lib/auth/session.ts"), "utf8");
+    expect(source).toContain("cache(");
+    expect(source).toContain("getVerifiedUser");
   });
 });

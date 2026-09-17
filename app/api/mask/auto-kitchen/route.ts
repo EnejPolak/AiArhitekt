@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import Replicate from "replicate";
 import { PNG } from "pngjs";
+import { requireSpendRouteAuth } from "@/lib/api/spendAuth";
 
 type AutoKitchenRequest = {
   imageDataUrl: string;
@@ -223,6 +224,8 @@ function makeFallbackRoiMask(width: number, height: number): Uint8Array {
 }
 
 export async function POST(req: Request) {
+  const auth = await requireSpendRouteAuth();
+  if (!auth.ok) return auth.response;
   const isDev = process.env.NODE_ENV !== "production";
   let parsedBody: AutoKitchenRequest | null = null;
   try {

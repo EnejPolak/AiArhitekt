@@ -52,7 +52,7 @@ export const ConversationMessage: React.FC<ConversationMessageProps> = ({
   if (type === "user") {
     return (
       <div className={cn("flex justify-end mb-6", className)}>
-        <div className="max-w-[75%] rounded-[16px] px-5 py-4 bg-[rgba(59,130,246,0.15)] border border-[rgba(59,130,246,0.25)]">
+        <div className="max-w-[85%] min-w-0 break-words rounded-[16px] px-4 py-4 sm:px-5 sm:py-4 bg-[rgba(59,130,246,0.15)] border border-[rgba(59,130,246,0.25)] md:max-w-[75%]">
           <div className="text-[14px] text-white leading-relaxed">
             {typeof content === "string" ? content : content}
           </div>
@@ -64,7 +64,7 @@ export const ConversationMessage: React.FC<ConversationMessageProps> = ({
   // AI message
   return (
     <div className={cn("flex justify-start mb-6", className)}>
-      <div className="max-w-[85%] rounded-[16px] px-6 py-5 bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.08)]">
+      <div className="w-full max-w-full min-w-0 break-words rounded-[16px] px-4 py-4 sm:px-6 sm:py-5 bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.08)] md:max-w-[85%]">
         <div className="text-[15px] text-[rgba(255,255,255,0.85)] leading-relaxed">
           {isStringContent ? (
             <span className="whitespace-pre-wrap">

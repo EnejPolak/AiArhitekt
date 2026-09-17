@@ -259,8 +259,9 @@ describe("discovery budget and deadline (P1.6.6.1)", () => {
   });
 
   it("G: provider timeout maps to typed error message", () => {
-    expect(discoveryErrorMessage("provider_timeout")).toMatch(/timed out/i);
-    expect(discoveryErrorMessage("discovery_timeout")).toMatch(/timed out/i);
+    expect(discoveryErrorMessage("provider_timeout")).toMatch(/couldn't finish searching in time/i);
+    expect(discoveryErrorMessage("discovery_timeout")).toMatch(/project is safe/i);
+    expect(discoveryErrorMessage("provider_timeout")).not.toMatch(/openai|serpapi|google|aborterror|504/i);
     const err = new DiscoveryError("provider_timeout", discoveryErrorMessage("provider_timeout"));
     expect(err.code).toBe("provider_timeout");
   });

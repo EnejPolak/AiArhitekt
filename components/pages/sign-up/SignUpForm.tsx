@@ -58,7 +58,7 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ className }) => {
       setStatus("success");
       if (result.needsEmailConfirmation) {
         setSuccessMessage(
-          "Account created. Check your email to confirm, then sign in."
+          "Check your email to confirm your account."
         );
         return;
       }

@@ -21,9 +21,14 @@ import {
 import { usesExactLanguage } from "./matchPolicy";
 import { downgradeUnsupportedDistinctiveClaims, parseDistinctiveRequirements } from "./distinctiveRequirements";
 import { categoryEvidenceHaystack, verifyIdentityRequirements } from "./productIdentity";
+import { classifyClaimAgainstEvidence } from "./productEvidence";
 import type { PriceEvidence, ProductDiscoveryProduct } from "./types";
 
-export type AcceptanceSource = "primary" | "rescue" | "targeted";
+export type AcceptanceSource = "primary" | "rescue" | "targeted" | "serp_fallback";
+
+function rescueLikeSource(source: AcceptanceSource): boolean {
+  return source === "rescue" || source === "serp_fallback";
+}
 
 export type AcceptanceReason =
   | "accepted"
@@ -40,6 +45,7 @@ export type AcceptanceInput = {
   source: AcceptanceSource;
   requestedItem: string;
   product: ProductDiscoveryProduct;
+  /** Trusted evidence only — never model whyItMatches / model specifications. */
   evidenceText?: string;
 };
 
@@ -52,35 +58,15 @@ export type AcceptanceResult = {
   lists: RequirementLists;
 };
 
-const DIMENSION_CLAIM = /\b(\d+(?:[.,]\d+)?)\s*(?:cm|mm|m)\b/i;
-
-function evidenceHaystack(input: {
+/**
+ * Trusted factual haystack for acceptance.
+ * Intentionally excludes product.whyItMatches and model specifications.
+ */
+function trustedEvidenceHaystack(input: {
   product: ProductDiscoveryProduct;
   evidenceText?: string;
 }): string {
-  const parts = [
-    input.product.name,
-    input.product.whyItMatches,
-    input.evidenceText ?? "",
-    Object.entries(input.product.specifications)
-      .map(([key, value]) => `${key} ${value ?? ""}`)
-      .join(" "),
-  ];
-  return parts.join(" ").toLowerCase();
-}
-
-function dimensionEvidenceHaystack(input: {
-  product: ProductDiscoveryProduct;
-  evidenceText?: string;
-}): string {
-  const parts = [
-    input.product.name,
-    Object.entries(input.product.specifications)
-      .map(([key, value]) => `${key} ${value ?? ""}`)
-      .join(" "),
-    input.evidenceText ?? "",
-  ];
-  return parts.join(" ").toLowerCase();
+  return (input.evidenceText ?? "").toLowerCase();
 }
 
 function claimSupportedByEvidence(
@@ -89,35 +75,14 @@ function claimSupportedByEvidence(
   requestedItem: string,
   dimensionHaystack: string
 ): boolean {
-  const dimensionMatch = claim.match(DIMENSION_CLAIM);
-  if (dimensionMatch?.[1]) {
-    const value = dimensionMatch[1].replace(",", ".");
-    const variants = [value, value.replace(".", ",")];
-    const source = usesExactLanguage(requestedItem) ? dimensionHaystack : haystack;
-    return variants.some((variant) => source.includes(variant));
-  }
-
-  if (/\b(max|budget|under|price)\b/i.test(claim) && /\b(satisf|within|under|below|met)\b/i.test(claim)) {
-    return false;
-  }
-
-  if (/\b(exactly|exact|precisely|must be)\b/i.test(claim) && /\b(width|wide|diameter|dimension|cm|mm)\b/i.test(claim)) {
-    const numeric = claim.match(/(\d+(?:[.,]\d+)?)/);
-    if (numeric?.[1]) {
-      const value = numeric[1].replace(",", ".");
-      return [value, value.replace(".", ",")].some((variant) => dimensionHaystack.includes(variant));
-    }
-    return false;
-  }
-
-  return true;
-}
-
-function attributeEvidenceHaystack(input: {
-  product: ProductDiscoveryProduct;
-  evidenceText?: string;
-}): string {
-  return dimensionEvidenceHaystack(input);
+  return (
+    classifyClaimAgainstEvidence({
+      claim,
+      haystack,
+      requestedItem,
+      dimensionHaystack,
+    }) === "supported"
+  );
 }
 
 export function validateDeterministicClaims(input: {
@@ -125,32 +90,44 @@ export function validateDeterministicClaims(input: {
   product: ProductDiscoveryProduct;
   evidenceText?: string;
 }): RequirementLists {
-  const haystack = evidenceHaystack(input);
-  const dimensionHaystack = dimensionEvidenceHaystack(input);
-  const attributeHaystack = attributeEvidenceHaystack(input);
+  const haystack = trustedEvidenceHaystack(input);
+  const dimensionHaystack = haystack;
   let lists: RequirementLists = {
     matchedRequirements: [...input.product.matchedRequirements],
     unmetRequirements: [...input.product.unmetRequirements],
     unknownRequirements: [...input.product.unknownRequirements],
   };
 
-  const downgraded: string[] = [];
+  const downgradedUnknown: string[] = [];
+  const downgradedUnmet: string[] = [];
+
   lists.matchedRequirements = lists.matchedRequirements.filter((claim) => {
-    const supported = claimSupportedByEvidence(
+    const status = classifyClaimAgainstEvidence({
       claim,
       haystack,
-      input.requestedItem,
-      dimensionHaystack
-    );
-    if (!supported) {
-      downgraded.push(claim);
+      requestedItem: input.requestedItem,
+      dimensionHaystack,
+    });
+    if (status === "supported") return true;
+    if (status === "contradicted") {
+      downgradedUnmet.push(`${claim} (contradicted by merchant evidence)`);
       return false;
     }
-    return true;
+    downgradedUnknown.push(claim);
+    return false;
   });
 
-  for (const claim of downgraded) {
-    if (!lists.unknownRequirements.some((entry) => entry.toLowerCase() === claim.toLowerCase())) {
+  for (const claim of downgradedUnmet) {
+    if (!lists.unmetRequirements.some((entry) => entry.toLowerCase() === claim.toLowerCase())) {
+      lists.unmetRequirements.push(claim);
+    }
+  }
+
+  for (const claim of downgradedUnknown) {
+    if (
+      !lists.unknownRequirements.some((entry) => entry.toLowerCase() === claim.toLowerCase()) &&
+      !lists.unmetRequirements.some((entry) => entry.toLowerCase() === claim.toLowerCase())
+    ) {
       lists.unknownRequirements.push(claim);
     }
   }
@@ -158,12 +135,12 @@ export function validateDeterministicClaims(input: {
   lists = downgradeUnsupportedDistinctiveClaims({
     requestedItem: input.requestedItem,
     lists,
-    evidenceHaystack: attributeHaystack,
+    evidenceHaystack: haystack,
   });
 
   if (input.product.price == null && extractMaxPriceEur(input.requestedItem) != null) {
     lists.matchedRequirements = lists.matchedRequirements.filter(
-      (entry) => !( /max\b/i.test(entry) && /eur|€/i.test(entry))
+      (entry) => !(/max\b/i.test(entry) && /eur|€/i.test(entry))
     );
   }
 
@@ -177,22 +154,26 @@ export function evaluateAcceptance(input: AcceptanceInput): AcceptanceResult {
     unknownRequirements: input.product.unknownRequirements,
   };
 
-  const minScore =
-    input.source === "rescue" ? ACCEPTANCE_RESCUE_MIN_SCORE : ACCEPTANCE_PRIMARY_MIN_SCORE;
-  const minCoverage =
-    input.source === "rescue" ? ACCEPTANCE_RESCUE_MIN_COVERAGE : ACCEPTANCE_PRIMARY_MIN_COVERAGE;
+  const minScore = rescueLikeSource(input.source)
+    ? ACCEPTANCE_RESCUE_MIN_SCORE
+    : ACCEPTANCE_PRIMARY_MIN_SCORE;
+  const minCoverage = rescueLikeSource(input.source)
+    ? ACCEPTANCE_RESCUE_MIN_COVERAGE
+    : ACCEPTANCE_PRIMARY_MIN_COVERAGE;
 
   const requirementCoverage = computeRequirementCoverage(input.requestedItem, lists);
+  // Do not feed model product.name / specifications as category evidence.
+  // Callers must pass trusted evidenceText (URL/title/snippet/merchant).
   const categoryEvidence = categoryEvidenceHaystack({
-    productName: input.product.name,
+    productName: "",
     evidenceText: input.evidenceText,
-    specifications: input.product.specifications,
+    specifications: {},
   });
   const categoryVerified = isCategoryVerified(
     input.requestedItem,
-    input.product.name,
+    "",
     input.evidenceText,
-    input.product.specifications
+    {}
   );
   const matchScore = input.product.matchScore;
   const maxPrice = extractMaxPriceEur(input.requestedItem);
@@ -283,7 +264,7 @@ export function evaluateAcceptance(input: AcceptanceInput): AcceptanceResult {
 
   if (
     onlyBudgetUnknown &&
-    input.source !== "rescue" &&
+    !rescueLikeSource(input.source) &&
     categoryVerified &&
     matchScore >= minScore
   ) {
@@ -434,4 +415,14 @@ export function finalizeAcceptedProduct(input: {
 
 export function priceEvidenceLabel(priceEvidence: PriceEvidence | undefined): PriceEvidence {
   return priceEvidence ?? "none";
+}
+
+/** @deprecated Prefer classifyClaimAgainstEvidence — kept for tests/debug. */
+export function claimSupportedByEvidenceForTests(
+  claim: string,
+  haystack: string,
+  requestedItem: string,
+  dimensionHaystack: string
+): boolean {
+  return claimSupportedByEvidence(claim, haystack, requestedItem, dimensionHaystack);
 }

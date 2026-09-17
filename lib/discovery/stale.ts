@@ -1,7 +1,16 @@
 import type { ProjectRoomAnalysisRow } from "@/lib/analysis/queries";
 import { normalizeGeocodeAddress } from "@/lib/geocode/normalize";
+import { searchLocationsMatch } from "@/lib/project-location/parse";
 import { shoppingPreferencesMatch } from "./preferences";
 import type { ProductDiscoveryView } from "./types";
+
+export type DiscoverySearchContext = {
+  locationInput?: string;
+  latitude?: number;
+  longitude?: number;
+  radiusKm?: number;
+  preferences?: unknown;
+};
 
 export function isDiscoveryAnalysisCurrent(
   discovery: ProductDiscoveryView,
@@ -13,40 +22,55 @@ export function isDiscoveryAnalysisCurrent(
   );
 }
 
-export function discoveryMatchesShoppingSource(
+function discoveryMatchesSearchLocation(
   discovery: ProductDiscoveryView,
-  current: { locationInput: string; preferences?: unknown }
+  current: DiscoverySearchContext
 ): boolean {
-  if (
-    normalizeGeocodeAddress(discovery.locationInput) !==
-    normalizeGeocodeAddress(current.locationInput)
-  ) {
+  if (current.radiusKm !== undefined && discovery.radiusKm !== current.radiusKm) {
     return false;
   }
+  if (
+    typeof current.latitude === "number" &&
+    typeof current.longitude === "number" &&
+    Number.isFinite(current.latitude) &&
+    Number.isFinite(current.longitude)
+  ) {
+    return searchLocationsMatch(
+      {
+        latitude: discovery.latitude,
+        longitude: discovery.longitude,
+        radiusKm: discovery.radiusKm,
+      },
+      {
+        latitude: current.latitude,
+        longitude: current.longitude,
+        radiusKm: current.radiusKm ?? discovery.radiusKm,
+      }
+    );
+  }
+  if (current.locationInput !== undefined) {
+    return (
+      normalizeGeocodeAddress(discovery.locationInput) ===
+      normalizeGeocodeAddress(current.locationInput)
+    );
+  }
+  return true;
+}
+
+export function discoveryMatchesShoppingSource(
+  discovery: ProductDiscoveryView,
+  current: DiscoverySearchContext
+): boolean {
+  if (!discoveryMatchesSearchLocation(discovery, current)) return false;
   return shoppingPreferencesMatch(discovery.sourcePreferences, current.preferences);
 }
 
 export function isCurrentProductDiscovery(
   discovery: ProductDiscoveryView,
   analysis: ProjectRoomAnalysisRow,
-  current?: {
-    locationInput?: string;
-    preferences?: unknown;
-  }
+  current?: DiscoverySearchContext
 ): boolean {
   if (!isDiscoveryAnalysisCurrent(discovery, analysis)) return false;
-  if (current?.locationInput !== undefined) {
-    if (
-      normalizeGeocodeAddress(discovery.locationInput) !==
-      normalizeGeocodeAddress(current.locationInput)
-    ) {
-      return false;
-    }
-  }
-  if (current && "preferences" in current) {
-    if (!shoppingPreferencesMatch(discovery.sourcePreferences, current.preferences)) {
-      return false;
-    }
-  }
-  return true;
+  if (!current) return true;
+  return discoveryMatchesShoppingSource(discovery, current);
 }

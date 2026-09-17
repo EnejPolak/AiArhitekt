@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import Replicate from "replicate";
 import OpenAI from "openai";
+import { requireSpendRouteAuth } from "@/lib/api/spendAuth";
+import {
+  sanitizedInternalErrorResponse,
+  sanitizedRateLimitedResponse,
+} from "@/lib/api/publicError";
 
 type StyleOptions = {
   style: "luxury-modern" | string;
@@ -212,6 +217,8 @@ async function replicateRunSerialWithRetry(
 }
 
 export async function POST(req: Request) {
+  const auth = await requireSpendRouteAuth();
+  if (!auth.ok) return auth.response;
   try {
     if (!process.env.REPLICATE_API_TOKEN) {
       return NextResponse.json({ error: "Replicate API token not configured" }, { status: 500 });
@@ -379,11 +386,12 @@ export async function POST(req: Request) {
           }
         : {}),
     });
-  } catch (error: any) {
-    console.error("[RENOVATE-KITCHEN] Error:", error);
-    const msg = error?.message || "Kitchen renovation failed";
-    const status = msg.includes("Rate limit") ? 429 : 500;
-    return NextResponse.json({ error: msg }, { status });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : "";
+    if (msg.includes("Rate limit")) {
+      return sanitizedRateLimitedResponse();
+    }
+    return sanitizedInternalErrorResponse("[RENOVATE-KITCHEN] Error:", error);
   }
 }
 

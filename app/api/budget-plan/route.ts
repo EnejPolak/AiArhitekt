@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 import { budgetPlanSchema } from "@/lib/schemas/ai";
+import { requireSpendRouteAuth } from "@/lib/api/spendAuth";
+import { sanitizedInternalErrorResponse } from "@/lib/api/publicError";
 
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
+  const auth = await requireSpendRouteAuth();
+  if (!auth.ok) return auth.response;
   try {
     if (!process.env.OPENAI_API_KEY) {
       return NextResponse.json({ error: "OPENAI_API_KEY not configured" }, { status: 500 });
@@ -90,8 +94,7 @@ Create a budget allocation plan with category caps.`;
     }
 
     return NextResponse.json(parsed);
-  } catch (error: any) {
-    console.error("Budget plan error:", error);
-    return NextResponse.json({ error: error.message || "Budget planning failed" }, { status: 500 });
+  } catch (error: unknown) {
+    return sanitizedInternalErrorResponse("Budget plan error:", error);
   }
 }

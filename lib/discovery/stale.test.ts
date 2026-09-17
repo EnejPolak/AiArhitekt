@@ -156,6 +156,41 @@ describe("discovery shopping source identity", () => {
     ).toBe(false);
   });
 
+  it("is stale when coordinates change", () => {
+    const row = discovery();
+    expect(
+      isCurrentProductDiscovery(row, analysis, {
+        locationInput: "Velenje, Slovenia",
+        latitude: 46.05,
+        longitude: 14.5,
+        radiusKm: 50,
+        preferences: marblePrefs,
+      })
+    ).toBe(false);
+  });
+
+  it("is stale when only radius changes", () => {
+    const row = discovery();
+    expect(
+      isCurrentProductDiscovery(row, analysis, {
+        locationInput: "Velenje, Slovenia",
+        latitude: 46.3592,
+        longitude: 15.1103,
+        radiusKm: 10,
+        preferences: marblePrefs,
+      })
+    ).toBe(false);
+    expect(
+      isCurrentProductDiscovery(row, analysis, {
+        locationInput: "Velenje, Slovenia",
+        latitude: 46.3592,
+        longitude: 15.1103,
+        radiusKm: 50,
+        preferences: marblePrefs,
+      })
+    ).toBe(true);
+  });
+
   it("keeps the empty snapshot hash stable for backfill", () => {
     expect(EMPTY_SHOPPING_PREFERENCE_HASH).toBe(
       "55b1c94ff5ba8f92fd175b9f1b63ca4fb5563daa3711ab0d952f5127607a5c4c"

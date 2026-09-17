@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import Replicate from "replicate";
 import { PNG } from "pngjs";
 import zlib from "zlib";
+import { requireSpendRouteAuth } from "@/lib/api/spendAuth";
+import { sanitizedInternalErrorResponse } from "@/lib/api/publicError";
 
 type SegmentRequest = {
   image: string; // data URL
@@ -55,6 +57,8 @@ function decodeSamSegmentationToBoolMask(segmentation: string, width: number, he
 }
 
 export async function POST(req: Request) {
+  const auth = await requireSpendRouteAuth();
+  if (!auth.ok) return auth.response;
   try {
     if (!process.env.REPLICATE_API_TOKEN) {
       return NextResponse.json({ error: "Replicate API token not configured" }, { status: 500 });
@@ -124,9 +128,8 @@ export async function POST(req: Request) {
         area: best.area ?? null,
       },
     });
-  } catch (error: any) {
-    console.error("[MASK-SEGMENT] Error:", error);
-    return NextResponse.json({ error: error?.message || "Mask segmentation failed" }, { status: 500 });
+  } catch (error: unknown) {
+    return sanitizedInternalErrorResponse("[MASK-SEGMENT] Error:", error);
   }
 }
 

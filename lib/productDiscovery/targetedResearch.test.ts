@@ -65,7 +65,29 @@ describe("targeted research flow", () => {
       output: [
         {
           type: "web_search_call",
-          action: { sources: [{ url: "https://obi.si/p/pendant" }] },
+          action: {
+            sources: [
+              {
+                url: "https://obi.si/p/pendant",
+                title: "Trio LED black pendant lamp 40cm €119.99",
+              },
+            ],
+          },
+        },
+        {
+          type: "message",
+          content: [
+            {
+              type: "output_text",
+              annotations: [
+                {
+                  type: "url_citation",
+                  url: "https://obi.si/p/pendant",
+                  title: "Trio LED black pendant lamp 40cm €119.99",
+                },
+              ],
+            },
+          ],
         },
       ],
       output_parsed: {
@@ -163,7 +185,29 @@ describe("targeted research flow", () => {
         output: [
           {
             type: "web_search_call",
-            action: { sources: [{ url: "https://obi.si/p/viseca-svetilka" }] },
+            action: {
+              sources: [
+                {
+                  url: "https://obi.si/p/viseca-svetilka",
+                  title: "Trio LED black pendant lamp 40cm €119.99",
+                },
+              ],
+            },
+          },
+          {
+            type: "message",
+            content: [
+              {
+                type: "output_text",
+                annotations: [
+                  {
+                    type: "url_citation",
+                    url: "https://obi.si/p/viseca-svetilka",
+                    title: "Trio LED black pendant lamp 40cm €119.99",
+                  },
+                ],
+              },
+            ],
           },
         ],
         output_parsed: {
@@ -233,7 +277,7 @@ describe("targeted research flow", () => {
       client: { responses: { parse: vi.fn(async () => rescueNone) } } as unknown as OpenAI,
       requestedItem: "black pendant lamp max 120 EUR",
       allowlistDomains: ["obi.si"],
-      sources: [{ url: "https://obi.si/p/lamp", title: "Lamp" }],
+      sources: [{ url: "https://obi.si/p/lamp", title: "Black pendant lamp €180" }],
       parsed: {
         status: "found",
         product: {

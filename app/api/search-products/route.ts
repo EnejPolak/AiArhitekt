@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { normalizeSerpApiResponse } from "@/lib/serp/normalize";
+import { requireSpendRouteAuth } from "@/lib/api/spendAuth";
+import { sanitizedInternalErrorResponse } from "@/lib/api/publicError";
 
 export const runtime = "nodejs";
 
@@ -18,6 +20,8 @@ const CATEGORY_STORE_MAPPING: Record<string, string[]> = {
 };
 
 export async function POST(req: Request) {
+  const auth = await requireSpendRouteAuth();
+  if (!auth.ok) return auth.response;
   try {
     if (!process.env.SERPAPI_KEY) {
       return NextResponse.json({ error: "SERPAPI_KEY not configured" }, { status: 500 });
@@ -126,8 +130,7 @@ export async function POST(req: Request) {
     }
 
     return NextResponse.json({ candidatesByCategory });
-  } catch (error: any) {
-    console.error("Search products error:", error);
-    return NextResponse.json({ error: error.message || "Product search failed" }, { status: 500 });
+  } catch (error: unknown) {
+    return sanitizedInternalErrorResponse("Search products error:", error);
   }
 }

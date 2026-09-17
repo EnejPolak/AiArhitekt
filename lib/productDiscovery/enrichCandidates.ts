@@ -5,24 +5,48 @@ import {
 } from "./constants";
 import {
   enrichCandidatePage,
+  getCachedCandidateEnrichment,
   type CandidateEnrichment,
   type EnrichCandidateOptions,
 } from "./enrichCandidate";
 import type { RescueCandidate } from "./rescueCandidates";
+
+export type EnrichmentCoverage = {
+  price: boolean;
+  material: boolean;
+  labeledDimensions: number;
+};
+
+export type SelectedCandidateEnrichmentDebug = {
+  candidateId: string;
+  wasInitiallyEnriched: boolean;
+  cacheHit: boolean;
+  enrichmentAttempted: boolean;
+  enrichmentStatus: CandidateEnrichment["status"] | null;
+  evidenceFactsAdded: number;
+  additionalFetchAttempts: number;
+  coverageBefore: EnrichmentCoverage;
+  coverageAfter: EnrichmentCoverage;
+};
 
 export type EnrichmentStats = {
   enrichmentAttemptedCount: number;
   enrichmentSuccessCount: number;
   enrichment403Count: number;
   enrichmentTimeoutCount: number;
+  selectedAdditionalEnrichmentAttempts?: number;
+  selectedCandidateEnrichment?: SelectedCandidateEnrichmentDebug;
   candidateDebug?: Array<{
     candidateId: string;
+    url?: string;
     domain: string;
     preRankScore: number;
     fetchStatus: CandidateEnrichment["status"];
     jsonLdProductFound: boolean;
     priceFound: boolean;
     productNameFound: boolean;
+    materialFound?: boolean;
+    labeledDimensionsFound?: number;
   }>;
 };
 
@@ -93,12 +117,16 @@ export async function enrichRescueCandidates(input: {
     if (stats.candidateDebug) {
       stats.candidateDebug.push({
         candidateId: candidate.id,
+        url: candidate.url,
         domain: candidate.domain,
         preRankScore: candidate.preRankScore,
         fetchStatus: enrichment.status,
         jsonLdProductFound: enrichment.jsonLdProductFound,
         priceFound: enrichment.price != null,
         productNameFound: enrichment.productName != null,
+        materialFound: (enrichment.labeledSpecs ?? []).some((s) => s.field === "material"),
+        labeledDimensionsFound: (enrichment.labeledSpecs ?? []).filter((s) => s.field === "dimension")
+          .length,
       });
     }
   });
@@ -112,4 +140,89 @@ export async function enrichRescueCandidates(input: {
   });
 
   return { candidates, stats };
+}
+
+export function enrichmentCoverage(enrichment: CandidateEnrichment | null | undefined): EnrichmentCoverage {
+  const labeled = enrichment?.labeledSpecs ?? [];
+  return {
+    price: enrichment?.price != null,
+    material: labeled.some((spec) => spec.field === "material"),
+    labeledDimensions: labeled.filter((spec) => spec.field === "dimension").length,
+  };
+}
+
+function enrichmentFactCount(enrichment: CandidateEnrichment | null | undefined): number {
+  if (!enrichment || enrichment.status !== "success") return 0;
+  return (enrichment.price != null ? 1 : 0) + (enrichment.labeledSpecs?.length ?? 0);
+}
+
+/**
+ * After rescue ranking: if the selected candidate was outside the initial top-N
+ * enrichment set, attempt merchant enrichment exactly once (cache first).
+ */
+export async function enrichSelectedRescueCandidate(input: {
+  candidate: RescueCandidate;
+  allowlistDomains: string[];
+  enrichOptions?: Pick<EnrichCandidateOptions, "fetchFn" | "lookup" | "timeoutMs">;
+}): Promise<{ candidate: RescueCandidate; debug: SelectedCandidateEnrichmentDebug }> {
+  const coverageBefore = enrichmentCoverage(input.candidate.enrichment);
+  const factsBefore = enrichmentFactCount(input.candidate.enrichment);
+  const wasInitiallyEnriched = input.candidate.enrichment != null;
+
+  if (wasInitiallyEnriched) {
+    return {
+      candidate: input.candidate,
+      debug: {
+        candidateId: input.candidate.id,
+        wasInitiallyEnriched: true,
+        cacheHit: false,
+        enrichmentAttempted: false,
+        enrichmentStatus: input.candidate.enrichment?.status ?? null,
+        evidenceFactsAdded: 0,
+        additionalFetchAttempts: 0,
+        coverageBefore,
+        coverageAfter: coverageBefore,
+      },
+    };
+  }
+
+  const cached = getCachedCandidateEnrichment(input.candidate.url);
+  if (cached) {
+    const candidate = { ...input.candidate, enrichment: cached };
+    return {
+      candidate,
+      debug: {
+        candidateId: input.candidate.id,
+        wasInitiallyEnriched: false,
+        cacheHit: true,
+        enrichmentAttempted: true,
+        enrichmentStatus: cached.status,
+        evidenceFactsAdded: Math.max(0, enrichmentFactCount(cached) - factsBefore),
+        additionalFetchAttempts: 0,
+        coverageBefore,
+        coverageAfter: enrichmentCoverage(cached),
+      },
+    };
+  }
+
+  const enrichment = await enrichCandidatePage(input.candidate.url, {
+    allowlistDomains: input.allowlistDomains,
+    ...input.enrichOptions,
+  });
+  const cacheHit = enrichment.enrichmentTiming?.cacheHit === true;
+  const candidate = { ...input.candidate, enrichment };
+  return {
+    candidate,
+    debug: {
+      candidateId: input.candidate.id,
+      wasInitiallyEnriched: false,
+      cacheHit,
+      enrichmentAttempted: true,
+      enrichmentStatus: enrichment.status,
+      evidenceFactsAdded: Math.max(0, enrichmentFactCount(enrichment) - factsBefore),
+      additionalFetchAttempts: cacheHit ? 0 : 1,
+      coverageBefore,
+      coverageAfter: enrichmentCoverage(enrichment),
+    },
+  };
 }

@@ -3,16 +3,31 @@ import { zodTextFormat } from "openai/helpers/zod";
 import type { ParsedResponse } from "openai/resources/responses/responses";
 import { isProductionDeployment } from "@/lib/env/deployment";
 import { OPENAI_PRODUCT_SEARCH_MODEL } from "./constants";
-import { enrichRescueCandidates, type EnrichmentStats } from "./enrichCandidates";
+import {
+  enrichRescueCandidates,
+  enrichSelectedRescueCandidate,
+  type EnrichmentStats,
+} from "./enrichCandidates";
 import {
   buildRequirementPolicyHints,
   normalizeMatchScore,
   normalizeRequirementLists,
+  type RequirementLists,
 } from "./matchPolicy";
 import {
   buildRescueUserMessage,
   RESCUE_SYSTEM_PROMPT,
 } from "./rescuePrompt";
+import {
+  buildProductEvidence,
+  classifyClaimAgainstEvidence,
+  classifyExactDimensionAgainstEvidence,
+  resolveGroundedPrice,
+} from "./productEvidence";
+import {
+  parseRequestedRequirements,
+  requirementStatus,
+} from "./requirementAnalysis";
 import {
   buildRescueCandidates,
   merchantEvidenceText,
@@ -22,13 +37,15 @@ import {
   type RescueCandidate,
 } from "./rescueCandidates";
 import { rescueSelectionSchema, type RescueSelectionOutput } from "./rescueSchema";
-import type { PriceEvidence, ProductDiscoveryProduct, ProductDiscoverySource } from "./types";
+import type { ProductDiscoveryProduct, ProductDiscoverySource } from "./types";
 
 export type InitialFailureReason = "model_not_found" | "url_not_in_sources" | "domain_not_allowed";
 
 export type RescueAttemptResult = {
   product: ProductDiscoveryProduct | null;
   evidenceText: string | null;
+  /** Decision-time ProductEvidence for the selected rescue candidate (when any). */
+  productEvidence: import("./productEvidence").ProductEvidence | null;
   rescueAttempted: boolean;
   rescueCandidateCount: number;
   rescueSelected: boolean;
@@ -42,47 +59,115 @@ function clampMatchScore(score: number): number {
   return Math.max(0, Math.min(1, score));
 }
 
-function resolvePriceEvidence(candidate: RescueCandidate, price: number | null): PriceEvidence {
-  if (candidate.enrichment?.status === "success" && candidate.enrichment.price != null) {
-    return "merchant_page";
+function applyEvidenceBackedHardRequirements(input: {
+  requestedItem: string;
+  lists: RequirementLists;
+  haystack: string;
+}): RequirementLists {
+  const matchedRequirements = [...input.lists.matchedRequirements];
+  const unmetRequirements = [...input.lists.unmetRequirements];
+  let unknownRequirements = [...input.lists.unknownRequirements];
+
+  for (const requirement of parseRequestedRequirements(input.requestedItem)) {
+    if (!requirement.hard) continue;
+    if (requirementStatus(requirement, input.lists) !== "unknown") continue;
+    if (requirement.id.startsWith("budget:")) continue;
+
+    let status: "supported" | "unsupported" | "contradicted" = "unsupported";
+    if (requirement.id.startsWith("dimension:")) {
+      const valueCm = requirement.id.replace(/^dimension:/, "").replace(/cm$/i, "");
+      if (valueCm) {
+        status = classifyExactDimensionAgainstEvidence({
+          valueCm,
+          haystack: input.haystack,
+        });
+      }
+    } else {
+      status = classifyClaimAgainstEvidence({
+        claim: requirement.label,
+        haystack: input.haystack,
+        requestedItem: input.requestedItem,
+      });
+    }
+
+    if (status === "supported") {
+      if (!matchedRequirements.some((entry) => entry.toLowerCase() === requirement.label.toLowerCase())) {
+        matchedRequirements.push(requirement.label);
+      }
+      unknownRequirements = unknownRequirements.filter(
+        (entry) => !requirement.tokens.some((token) => token.length >= 3 && entry.toLowerCase().includes(token))
+      );
+    } else if (status === "contradicted") {
+      unmetRequirements.push(`${requirement.label} (contradicted by merchant evidence)`);
+      unknownRequirements = unknownRequirements.filter(
+        (entry) => !requirement.tokens.some((token) => token.length >= 3 && entry.toLowerCase().includes(token))
+      );
+    }
   }
-  if (price != null) {
-    return "web_search";
-  }
-  return "none";
+
+  return { matchedRequirements, unmetRequirements, unknownRequirements };
 }
 
 function resolveRescueSelection(
   selection: RescueSelectionOutput,
   candidateMap: Map<string, RescueCandidate>,
   requestedItem: string
-): ProductDiscoveryProduct | null {
+): {
+  product: ProductDiscoveryProduct;
+  productEvidence: import("./productEvidence").ProductEvidence;
+} | null {
   if (selection.status !== "selected" || !selection.candidateId) return null;
   const candidate = candidateMap.get(selection.candidateId);
   if (!candidate) return null;
 
   const merchantPrice = verifiedMerchantPrice(candidate);
-  let price = merchantPrice.price;
-  let currency = merchantPrice.currency;
+  const modelReportedPrice =
+    typeof selection.price === "number" && Number.isFinite(selection.price) && selection.price > 0
+      ? selection.price
+      : null;
 
-  if (price == null) {
-    price =
-      typeof selection.price === "number" && Number.isFinite(selection.price) && selection.price > 0
-        ? selection.price
-        : null;
-    currency =
-      price != null && selection.currency?.trim().toUpperCase() === "EUR" ? "EUR" : null;
+  const evidence = buildProductEvidence({
+    productUrl: candidate.url,
+    sources: [
+      {
+        url: candidate.url,
+        title: candidate.sourceTitle,
+        snippet: candidate.sourceEvidence,
+      },
+    ],
+    enrichment: candidate.enrichment,
+    trustedDisplayName:
+      candidate.enrichment?.productName?.trim() ||
+      candidate.enrichment?.pageTitle?.trim() ||
+      candidate.sourceTitle?.trim() ||
+      null,
+  });
+  const grounded = resolveGroundedPrice({
+    evidence,
+    modelClaimedPrice: modelReportedPrice ?? merchantPrice.price,
+    serpSnippetPrice: candidate.serpSnippetPrice ?? null,
+  });
+
+  let price = grounded.price;
+  let currency = grounded.currency;
+  const priceEvidence = grounded.priceEvidence;
+
+  if (priceEvidence === "none") {
+    price = null;
+    currency = null;
   }
-
-  const priceEvidence = resolvePriceEvidence(candidate, price);
 
   const requirementLists = normalizeRequirementLists(
     requestedItem,
-    {
-      matchedRequirements: selection.matchedRequirements ?? [],
-      unmetRequirements: selection.unmetRequirements ?? [],
-      unknownRequirements: selection.unknownRequirements ?? [],
-    },
+    applyEvidenceBackedHardRequirements({
+      requestedItem,
+      lists: {
+        matchedRequirements: selection.matchedRequirements ?? [],
+        unmetRequirements: selection.unmetRequirements ?? [],
+        unknownRequirements: selection.unknownRequirements ?? [],
+      },
+      haystack: merchantEvidenceText(candidate),
+    }),
     price
   );
 
@@ -94,28 +179,32 @@ function resolveRescueSelection(
 
   const name =
     candidate.enrichment?.productName?.trim() ||
-    selection.productName?.trim() ||
-    candidate.sourceTitle?.trim();
+    candidate.enrichment?.pageTitle?.trim() ||
+    candidate.sourceTitle?.trim() ||
+    selection.productName?.trim();
   if (!name) return null;
 
   const imageUrl = verifiedMerchantImage(candidate);
 
   return {
-    name,
-    retailer: selection.retailer?.trim() || candidate.domain,
-    retailerDomain: candidate.domain,
-    productUrl: candidate.url,
-    price,
-    currency: currency === "EUR" ? "EUR" : price != null ? currency : null,
-    priceUnit: selection.priceUnit,
-    imageUrl,
-    specifications: {},
-    matchScore,
-    matchedRequirements: requirementLists.matchedRequirements,
-    unmetRequirements: requirementLists.unmetRequirements,
-    unknownRequirements: requirementLists.unknownRequirements,
-    whyItMatches: selection.whyItMatches.trim() || "Selected from verified web-search source evidence.",
-    priceEvidence,
+    productEvidence: evidence,
+    product: {
+      name,
+      retailer: selection.retailer?.trim() || candidate.domain,
+      retailerDomain: candidate.domain,
+      productUrl: candidate.url,
+      price,
+      currency: currency === "EUR" ? "EUR" : price != null ? currency : null,
+      priceUnit: selection.priceUnit,
+      imageUrl,
+      specifications: {},
+      matchScore,
+      matchedRequirements: requirementLists.matchedRequirements,
+      unmetRequirements: requirementLists.unmetRequirements,
+      unknownRequirements: requirementLists.unknownRequirements,
+      whyItMatches: selection.whyItMatches.trim() || "Selected from verified web-search source evidence.",
+      priceEvidence,
+    },
   };
 }
 
@@ -137,6 +226,7 @@ export async function attemptSourceBackedRescue(input: {
     return {
       product: null,
       evidenceText: null,
+      productEvidence: null,
       rescueAttempted: true,
       rescueCandidateCount: 0,
       rescueSelected: false,
@@ -182,6 +272,7 @@ export async function attemptSourceBackedRescue(input: {
       return {
         product: null,
         evidenceText: null,
+        productEvidence: null,
         rescueAttempted: true,
         rescueCandidateCount: candidates.length,
         rescueSelected: false,
@@ -191,22 +282,42 @@ export async function attemptSourceBackedRescue(input: {
       };
     }
 
-    const product = resolveRescueSelection(parsed, candidateMap, input.requestedItem);
-    const candidate = parsed.candidateId ? candidateMap.get(parsed.candidateId) : null;
+    const selectedId = parsed.candidateId;
+    let workingMap = candidateMap;
+    let stats = enrichmentStats;
+    if (selectedId && workingMap.get(selectedId)) {
+      const selected = await enrichSelectedRescueCandidate({
+        candidate: workingMap.get(selectedId)!,
+        allowlistDomains: input.allowlistDomains,
+        enrichOptions: input.enrichOptions,
+      });
+      workingMap = new Map(workingMap);
+      workingMap.set(selectedId, selected.candidate);
+      stats = {
+        ...stats,
+        selectedAdditionalEnrichmentAttempts: selected.debug.additionalFetchAttempts,
+        selectedCandidateEnrichment: selected.debug,
+      };
+    }
+
+    const resolved = resolveRescueSelection(parsed, workingMap, input.requestedItem);
+    const candidate = selectedId ? workingMap.get(selectedId) ?? null : null;
     return {
-      product,
+      product: resolved?.product ?? null,
+      productEvidence: resolved?.productEvidence ?? null,
       evidenceText: candidate ? merchantEvidenceText(candidate) : null,
       rescueAttempted: true,
       rescueCandidateCount: candidates.length,
-      rescueSelected: product != null,
+      rescueSelected: resolved?.product != null,
       rescueElapsedMs: Date.now() - started,
-      enrichmentStats,
-      rescueSelectedCandidateId: parsed.candidateId,
+      enrichmentStats: stats,
+      rescueSelectedCandidateId: selectedId,
     };
   } catch {
     return {
       product: null,
       evidenceText: null,
+      productEvidence: null,
       rescueAttempted: true,
       rescueCandidateCount: candidates.length,
       rescueSelected: false,

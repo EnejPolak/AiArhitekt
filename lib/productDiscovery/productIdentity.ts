@@ -1,5 +1,11 @@
 import { parseDistinctiveRequirements } from "./distinctiveRequirements";
 import type { RequirementLists } from "./matchPolicy";
+import {
+  APPEARANCE_SENSITIVE_MATERIALS,
+  contradictoryMaterialEvidence,
+  hasGenuineMaterialEvidence,
+  isAppearanceOnlyMaterialEvidence,
+} from "./materialEvidence";
 
 export type RequirementImportance = "identity" | "hard" | "soft";
 
@@ -16,6 +22,11 @@ export type ProductIdentity = {
   exclusionTokens: string[];
   definingRequirements: IdentityRequirement[];
 };
+
+export {
+  hasGenuineMaterialEvidence,
+  isAppearanceOnlyMaterialEvidence,
+} from "./materialEvidence";
 
 const STYLE_WORDS =
   /\b(modern|minimalist|scandinavian|industrial|rustic|classic|contemporary|vintage|designer)\b/gi;
@@ -49,6 +60,20 @@ const CATEGORY_PATTERNS: Array<{ pattern: RegExp; label: string; tokens: string[
   { pattern: /\bsofa\b/i, label: "sofa", tokens: ["sofa", "kavc", "sedezna", "kavc"] },
   { pattern: /\bwardrobe\b/i, label: "wardrobe", tokens: ["wardrobe", "omara", "garderoba"] },
   {
+    pattern: /\bheated\s+towel\s+(?:rail|radiator)\b/i,
+    label: "heated towel rail",
+    tokens: ["radiator", "ogrev", "heated", "towel rail", "towel radiator"],
+    exclusions: [
+      "drzalo",
+      "holder",
+      "towel holder",
+      "shelf",
+      "polica",
+      "rack shelf",
+      "omarica",
+    ],
+  },
+  {
     pattern: /\btowel\s+rail\b/i,
     label: "towel rail",
     tokens: ["towel", "rail", "radiator", "ogrev", "brv", "handduk"],
@@ -62,8 +87,31 @@ const CATEGORY_PATTERNS: Array<{ pattern: RegExp; label: string; tokens: string[
 ];
 
 const SOLID_PATTERN = /\bsolid\s+([a-z-]+)/gi;
+const MADE_OF_PATTERN = /\b(?:made\s+of|real|genuine)\s+([a-z-]+)/gi;
+const MATERIAL_NOUN_PATTERN = /\b([a-z-]+)\s+material\b/gi;
+/** Explicit identity materials before product nouns — not bare color adjectives like "gold lamp". */
 const IDENTITY_MATERIAL_BEFORE_NOUN =
-  /\b(marble|granite|diamond|titanium|brass|copper)\b(?=.*\b(system|sink|sofa|table|floor|tile|lamp|rail|cabinet|door)\b)/gi;
+  /\b(marble|granite|diamond|titanium|brass|copper)\b(?=.*\b(system|sink|sofa|table|floor|tile|lamp|rail|cabinet|door|tiles?)\b)/gi;
+
+function stripMaterialLabel(label: string): string {
+  return label.toLowerCase().replace(/^solid\s+/, "").trim();
+}
+
+function isAppearanceSensitiveRequirement(requirement: IdentityRequirement): boolean {
+  const material = stripMaterialLabel(requirement.label);
+  if (APPEARANCE_SENSITIVE_MATERIALS.has(material)) return true;
+  return requirement.tokens.some((token) => APPEARANCE_SENSITIVE_MATERIALS.has(stripMaterialLabel(token)));
+}
+
+function requirementMaterial(requirement: IdentityRequirement): string {
+  const fromLabel = stripMaterialLabel(requirement.label);
+  if (APPEARANCE_SENSITIVE_MATERIALS.has(fromLabel)) return fromLabel;
+  for (const token of requirement.tokens) {
+    const m = stripMaterialLabel(token);
+    if (APPEARANCE_SENSITIVE_MATERIALS.has(m)) return m;
+  }
+  return fromLabel;
+}
 
 function uniqueTokens(values: string[]): string[] {
   const seen = new Set<string>();
@@ -75,6 +123,32 @@ function uniqueTokens(values: string[]): string[] {
     out.push(token);
   }
   return out;
+}
+
+function pushIdentityMaterial(
+  definingRequirements: IdentityRequirement[],
+  material: string,
+  idPrefix: string,
+  labelPrefix?: string
+) {
+  const normalized = material.toLowerCase().trim();
+  if (!normalized) return;
+  const label = labelPrefix ? `${labelPrefix} ${normalized}` : normalized;
+  const id = `${idPrefix}${normalized}`;
+  if (definingRequirements.some((entry) => entry.id === id || entry.label === label)) return;
+  definingRequirements.push({
+    id,
+    label,
+    tokens: uniqueTokens([
+      normalized,
+      labelPrefix ? `${labelPrefix} ${normalized}` : normalized,
+      normalized.replace(/-/g, " "),
+      normalized === "marble" ? "marmor" : normalized,
+      normalized === "oak" ? "hrast" : normalized,
+      normalized === "leather" ? "usnje" : normalized,
+    ]),
+    importance: "identity",
+  });
 }
 
 function tokenizePhrase(phrase: string): string[] {
@@ -105,28 +179,23 @@ export function parseProductIdentity(requestedItem: string): ProductIdentity {
   const definingRequirements: IdentityRequirement[] = [];
 
   for (const match of requestedItem.matchAll(SOLID_PATTERN)) {
-    const material = match[1]?.trim();
-    if (!material) continue;
-    definingRequirements.push({
-      id: `identity:solid-${material}`,
-      label: `solid ${material}`,
-      tokens: uniqueTokens([material, `solid ${material}`, material.replace(/-/g, " ")]),
-      importance: "identity",
-    });
+    pushIdentityMaterial(definingRequirements, match[1] ?? "", "identity:solid-", "solid");
+  }
+
+  for (const match of requestedItem.matchAll(MADE_OF_PATTERN)) {
+    pushIdentityMaterial(definingRequirements, match[1] ?? "", "identity:material-");
+  }
+
+  for (const match of requestedItem.matchAll(MATERIAL_NOUN_PATTERN)) {
+    pushIdentityMaterial(definingRequirements, match[1] ?? "", "identity:material-");
   }
 
   for (const match of requestedItem.matchAll(IDENTITY_MATERIAL_BEFORE_NOUN)) {
-    const material = match[1]?.toLowerCase();
-    if (!material) continue;
-    definingRequirements.push({
-      id: `identity:material-${material}`,
-      label: material,
-      tokens: uniqueTokens([material, material === "marble" ? "marmor" : material]),
-      importance: "identity",
-    });
+    pushIdentityMaterial(definingRequirements, match[1] ?? "", "identity:material-");
   }
 
   for (const entry of parseDistinctiveRequirements(requestedItem).filter((item) => item.hard)) {
+    if (definingRequirements.some((req) => req.label === entry.label || req.id === entry.id)) continue;
     definingRequirements.push({
       id: entry.id,
       label: entry.label,
@@ -162,25 +231,23 @@ export function parseProductIdentity(requestedItem: string): ProductIdentity {
 export function categoryEvidenceHaystack(input: {
   productName: string;
   evidenceText?: string;
+  /** Model specifications are claims — ignored unless explicitly opted in (tests only). */
   specifications?: Record<string, string | number | boolean | null>;
+  includeModelSpecifications?: boolean;
 }): string {
-  const parts = [
-    input.productName,
-    input.evidenceText ?? "",
-    Object.entries(input.specifications ?? {})
-      .map(([key, value]) => `${key} ${value ?? ""}`)
-      .join(" "),
-  ];
+  const parts = [input.productName, input.evidenceText ?? ""];
+  if (input.includeModelSpecifications) {
+    parts.push(
+      Object.entries(input.specifications ?? {})
+        .map(([key, value]) => `${key} ${value ?? ""}`)
+        .join(" ")
+    );
+  }
   return parts.join(" ").toLowerCase();
 }
 
 function tokenHits(haystack: string, tokens: string[]): number {
   return tokens.filter((token) => token.length >= 3 && haystack.includes(token)).length;
-}
-
-function hasFalseFriendMaterial(token: string, haystack: string): boolean {
-  if (token !== "oak") return false;
-  return /\b(oak-look|oak look|hrastov? izgled|imitacija hrasta|dekor hrast)\b/i.test(haystack);
 }
 
 const COMPONENT_PRODUCT_PATTERN =
@@ -222,6 +289,15 @@ export function verifyCoreCategoryInEvidence(
   const hits = tokenHits(haystack, categoryTokens);
   if (hits === 0) return false;
 
+  // Functional heating appliances often appear under localized nouns (radiator/ogrev)
+  // without English "heated towel rail" tokens.
+  if (
+    identity.coreCategory === "heated towel rail" &&
+    (haystack.includes("radiator") || haystack.includes("ogrev"))
+  ) {
+    return true;
+  }
+
   const requiredHits =
     labelTokens.length >= 3 ? 2 : 1;
   return hits >= requiredHits;
@@ -233,17 +309,29 @@ export function identityRequirementStatus(
   evidenceHaystack: string
 ): "confirmed" | "unknown" | "unmet" {
   const haystack = normalizeHaystack(evidenceHaystack);
+  const material = requirementMaterial(requirement);
+  const appearanceSensitive = isAppearanceSensitiveRequirement(requirement);
 
   for (const entry of lists.unmetRequirements) {
     if (requirement.tokens.some((token) => entry.toLowerCase().includes(token))) return "unmet";
   }
 
+  if (appearanceSensitive && contradictoryMaterialEvidence(material, haystack)) {
+    return "unmet";
+  }
+  if (appearanceSensitive && isAppearanceOnlyMaterialEvidence(material, haystack)) {
+    return "unknown";
+  }
+  if (appearanceSensitive) {
+    if (hasGenuineMaterialEvidence(material, haystack)) return "confirmed";
+    for (const entry of lists.unknownRequirements) {
+      if (requirement.tokens.some((token) => entry.toLowerCase().includes(token))) return "unknown";
+    }
+    return "unknown";
+  }
+
   for (const entry of lists.matchedRequirements) {
     if (requirement.tokens.some((token) => token.length >= 3 && entry.toLowerCase().includes(token))) {
-      if (requirement.label.startsWith("solid ")) {
-        const material = requirement.label.replace(/^solid\s+/, "");
-        if (hasFalseFriendMaterial(material, haystack)) return "unknown";
-      }
       if (
         requirement.importance === "identity" &&
         COMPATIBILITY_CONTEXT_PATTERN.test(entry) &&
@@ -257,10 +345,7 @@ export function identityRequirementStatus(
     }
   }
 
-  if (
-    requirement.tokens.some((token) => token.length >= 3 && haystack.includes(token)) &&
-    !hasFalseFriendMaterial(requirement.label.replace(/^solid\s+/, ""), haystack)
-  ) {
+  if (requirement.tokens.some((token) => token.length >= 3 && haystack.includes(token))) {
     return "confirmed";
   }
 

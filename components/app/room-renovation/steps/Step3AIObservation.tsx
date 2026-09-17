@@ -4,6 +4,7 @@ import * as React from "react";
 import { analyzeRoom } from "@/lib/analysis/actions";
 import type { RoomAnalysisView } from "@/lib/analysis/types";
 import type { DesignRequirements, RoomAnalysisObservation } from "@/lib/analysis/schema";
+import { wizardPanelClass } from "../wizardUi";
 
 export interface Step3AIObservationProps {
   projectId: string;
@@ -164,8 +165,7 @@ export const Step3AIObservation: React.FC<Step3AIObservationProps> = ({
     setStatus("complete");
   };
 
-  const cardClass =
-    "max-w-[85%] rounded-[16px] px-6 py-5 bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.08)]";
+  const cardClass = wizardPanelClass;
 
   if (status === "analyzing") {
     return (
@@ -211,6 +211,7 @@ export const Step3AIObservation: React.FC<Step3AIObservationProps> = ({
             </button>
             <button
               type="button"
+              disabled={status === "analyzing"}
               onClick={() => void runAnalysis(true)}
               className="text-[14px] text-[rgba(255,255,255,0.70)] hover:text-white"
             >
@@ -236,10 +237,10 @@ export const Step3AIObservation: React.FC<Step3AIObservationProps> = ({
           </p>
         ) : null}
         <div className="mt-5">
-          <button
-            type="button"
-            disabled={!hasPersistedPhoto}
-            onClick={() => void runAnalysis(false)}
+            <button
+              type="button"
+              disabled={!hasPersistedPhoto || status === "analyzing"}
+              onClick={() => void runAnalysis(false)}
             className="text-[14px] text-[rgba(0,230,204,0.85)] hover:text-[rgba(0,230,204,1)] disabled:opacity-40 disabled:cursor-not-allowed"
           >
             Analyze Room

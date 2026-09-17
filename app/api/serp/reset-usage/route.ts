@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isDebugApiAllowed } from "@/lib/env/deployment";
 import { resetDailyUsage, checkDailyCap } from "@/lib/serpGuardrails";
+import { sanitizedInternalErrorResponse } from "@/lib/api/publicError";
 
 export const runtime = "nodejs";
 
@@ -23,10 +24,7 @@ export async function POST() {
       usage: { date: usage.date, used: usage.used },
       remaining: cap.remaining,
     });
-  } catch (e: any) {
-    return NextResponse.json(
-      { error: e?.message ?? "Failed to reset usage" },
-      { status: 500 }
-    );
+  } catch (e: unknown) {
+    return sanitizedInternalErrorResponse("SERP reset-usage error:", e);
   }
 }

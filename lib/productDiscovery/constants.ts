@@ -1,4 +1,4 @@
-/** Configurable model for OpenAI web-search product discovery (Step C / api-debug). */
+/** Configurable production default for non-primary-experiment stages (rescue, Serp, price verification). */
 export const OPENAI_PRODUCT_SEARCH_MODEL =
   process.env.OPENAI_PRODUCT_SEARCH_MODEL?.trim() || "gpt-5.6-terra";
 
@@ -34,3 +34,22 @@ export const ACCEPTANCE_PRIMARY_MIN_COVERAGE = 0.6;
 
 /** Minimum requirement coverage for accepted rescue results. */
 export const ACCEPTANCE_RESCUE_MIN_COVERAGE = 0.7;
+
+/**
+ * Step C SerpAPI fallback feature flag (server-side only).
+ * Default OFF — OpenAI-only production path unless explicitly enabled.
+ */
+export function isProductDiscoverySerpFallbackEnabled(): boolean {
+  const raw = process.env.PRODUCT_DISCOVERY_SERP_FALLBACK?.trim().toLowerCase();
+  if (raw == null || raw === "") return false;
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+}
+
+/** Max live SerpAPI queries per fallback attempt. */
+export const SERP_FALLBACK_MAX_REQUESTS = 6;
+
+/** Max Serp organic candidates passed to semantic ranker. */
+export const SERP_FALLBACK_MAX_CANDIDATES = 8;
+
+/** Max Serp fallback candidates to enrich via merchant page fetch. */
+export const SERP_FALLBACK_ENRICH_MAX_CANDIDATES = 5;

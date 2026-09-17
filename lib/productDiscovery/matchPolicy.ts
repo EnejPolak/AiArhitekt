@@ -11,7 +11,7 @@ const MAX_PRICE_PATTERN =
 const BUDGET_SATISFACTION_PATTERN =
   /\b(under|below|within|meets|satisfies|at or under|≤|<=).{0,40}\b(max|budget|€|eur|price)\b|\b(max|budget).{0,40}\b(under|below|within|satisfied|met)\b/i;
 const CONTRADICTION_MARKERS =
-  /\b(not|instead|non-|without|is\s+(plastic|wood|glass|fabric|ceramic|steel|aluminium|aluminum|abs|acrylic|mdf|particle))\b/i;
+  /\b(not|instead|non-|without|contradicted|is\s+(plastic|wood|glass|fabric|ceramic|steel|aluminium|aluminum|abs|acrylic|mdf|particle))\b/i;
 const SOFT_ATTRIBUTE_PATTERN =
   /\b(metal|wood|oak|matte|gloss|modern|minimalist|scandinavian|material|finish|fabric|leather|marble|steel|aluminium|aluminum)\b/i;
 
@@ -140,12 +140,17 @@ export function normalizeMatchScore(input: {
   return score;
 }
 
+import { buildSearchConstraints, searchConstraintsToPolicy } from "./searchConstraints";
+import { buildSearchQueryVariants } from "./searchQueryVariants";
+
 export function buildRequirementPolicyHints(requestedItem: string): Record<string, unknown> {
   const maxPriceEur = extractMaxPriceEur(requestedItem);
+  const searchConstraints = buildSearchConstraints(requestedItem);
   return {
     approximateDimensions: usesApproximateLanguage(requestedItem),
     exactDimensions: usesExactLanguage(requestedItem),
     maxPriceEur,
+    searchConstraints: searchConstraintsToPolicy(searchConstraints),
     policy: {
       unknownIsNotUnmet:
         "If merchant evidence does not confirm a secondary/soft property, put it in unknownRequirements, not unmetRequirements.",
@@ -155,6 +160,21 @@ export function buildRequirementPolicyHints(requestedItem: string): Record<strin
         "Return the strongest verified direct product page when category and hard requirements are satisfied, even if some soft properties remain unknown.",
       notFoundOnlyWhen:
         "Use not_found only when no credible direct product page exists, category mismatches, a critical hard requirement is explicitly violated, or evidence is insufficient.",
+      discoveryHintsAreNotEvidence:
+        "suggestedSearchQueries and searchConstraints are discovery hints only; merchant page evidence remains authoritative for acceptance.",
     },
   };
 }
+
+/** Suggested discovery queries derived from hard constraints (not acceptance evidence). */
+export function buildSuggestedSearchQueriesForRequest(
+  requestedItem: string,
+  allowlistDomains: string[] = [],
+  options?: { includeRescue?: boolean }
+) {
+  return buildSearchQueryVariants(requestedItem, {
+    allowlistDomains,
+    includeRescue: options?.includeRescue ?? false,
+  });
+}
+

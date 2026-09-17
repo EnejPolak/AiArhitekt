@@ -75,6 +75,10 @@ export function buildLocalizedQueryPlan(
           paintFinish: requirement.provenance?.paintFinish ?? null,
         });
 
+  if (localized.length === 0) {
+    return uniqueQueryPlan(english);
+  }
+
   const furnitureBase =
     requirement.requirementType === "furniture"
       ? buildStyleAwareFurnitureQueries(localized, selectedStyles, locale, concept)

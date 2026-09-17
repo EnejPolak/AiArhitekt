@@ -9,9 +9,17 @@ import {
   ProjectPreferencesError,
   projectPreferencesErrorMessage,
 } from "./errors";
-import { saveProjectRoomPreferencesInputSchema } from "./schema";
+import { saveProjectLocationInputSchema, saveProjectRoomPreferencesInputSchema } from "./schema";
 import { getProjectRoomPreferences, upsertProjectRoomPreferences } from "./queries";
 import type { ProjectRoomPreferences, ProjectRoomPreferencesPatch } from "./types";
+import {
+  clampSearchRadiusKm,
+  isValidSearchCoordinate,
+  normalizeCountryCode,
+  normalizeLocationInput,
+  parseProjectLocation,
+  type ProjectLocation,
+} from "@/lib/project-location/parse";
 
 export type ProjectPreferencesActionFail = { ok: false; code: string; message: string };
 
@@ -21,6 +29,10 @@ export type LoadProjectRoomPreferencesResult =
 
 export type SaveProjectRoomPreferencesResult =
   | { ok: true; preferences: ProjectRoomPreferences }
+  | ProjectPreferencesActionFail;
+
+export type SaveProjectLocationResult =
+  | { ok: true; preferences: ProjectRoomPreferences; location: ProjectLocation }
   | ProjectPreferencesActionFail;
 
 function fail(
@@ -97,6 +109,42 @@ export async function saveProjectRoomPreferencesAction(input: {
       parsed.data.patch
     );
     return { ok: true, preferences };
+  } catch (error) {
+    return fromCaught(error);
+  }
+}
+
+export async function saveProjectLocationAction(input: {
+  projectId: string;
+  locationInput: string;
+  formattedAddress?: string | null;
+  latitude: number;
+  longitude: number;
+  radiusKm: number;
+  countryCode?: string | null;
+}): Promise<SaveProjectLocationResult> {
+  const parsed = saveProjectLocationInputSchema.safeParse(input);
+  if (!parsed.success) return fail("invalid_input");
+  if (!isValidSearchCoordinate(parsed.data.latitude, parsed.data.longitude)) {
+    return fail("invalid_input");
+  }
+  const locationInput = normalizeLocationInput(parsed.data.locationInput);
+  if (!locationInput) return fail("invalid_input");
+
+  try {
+    const { supabase } = await requireOwnedRoomProject(parsed.data.projectId);
+    const preferences = await upsertProjectRoomPreferences(supabase, parsed.data.projectId, {
+      locationInput,
+      formattedAddress:
+        normalizeLocationInput(parsed.data.formattedAddress ?? null) ?? locationInput,
+      latitude: parsed.data.latitude,
+      longitude: parsed.data.longitude,
+      radiusKm: clampSearchRadiusKm(parsed.data.radiusKm),
+      countryCode: normalizeCountryCode(parsed.data.countryCode),
+    });
+    const location = parseProjectLocation(preferences);
+    if (!location) return fail("failed");
+    return { ok: true, preferences, location };
   } catch (error) {
     return fromCaught(error);
   }

@@ -136,4 +136,30 @@ describe("project_room_preferences RLS (local)", () => {
     const own = await getProjectRoomPreferences(userB.client, projectB);
     expect(own?.projectId).toBe(projectB);
   });
+
+  it("does not leak owner search location to another user", async () => {
+    await upsertProjectRoomPreferences(userA.client, projectA, {
+      locationInput: "Celje",
+      formattedAddress: "Celje, Slovenia",
+      latitude: 46.2358,
+      longitude: 15.2677,
+      radiusKm: 25,
+      countryCode: "SI",
+    });
+    const stolen = await userB.client
+      .from("project_room_preferences")
+      .select("location_input, latitude, longitude, radius_km")
+      .eq("project_id", projectA)
+      .maybeSingle();
+    expect(stolen.data).toBeNull();
+    expect(await getProjectRoomPreferences(userB.client, projectA)).toBeNull();
+
+    const own = await getProjectRoomPreferences(userA.client, projectA);
+    expect(own).toMatchObject({
+      locationInput: "Celje",
+      latitude: 46.2358,
+      longitude: 15.2677,
+      radiusKm: 25,
+    });
+  });
 });

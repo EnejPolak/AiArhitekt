@@ -215,6 +215,7 @@ describe("attemptPriceVerificationRecovery", () => {
       source: "primary",
       requestedItem: "black pendant lamp max 120 EUR",
       product: priced,
+      evidenceText: "Globo Gorley black pendant lamp €149",
     });
 
     expect(rerun.accepted).toBe(false);

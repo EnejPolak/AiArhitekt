@@ -22,4 +22,10 @@ export const EMPTY_PROJECT_ROOM_PREFERENCES = {
   bedType: "none",
   notes: "",
   keepExistingWalls: false,
+  locationInput: null,
+  formattedAddress: null,
+  latitude: null,
+  longitude: null,
+  radiusKm: null,
+  countryCode: null,
 } as const satisfies Omit<ProjectRoomPreferences, "projectId" | "createdAt" | "updatedAt">;

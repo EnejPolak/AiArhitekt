@@ -12,9 +12,10 @@ import { discoverProjectProducts, loadCurrentProductDiscovery } from "./discover
 import { DiscoveryError, discoveryErrorMessage, logDiscoveryError } from "./errors";
 import { getOwnedSelection, setSelectionConfirmed } from "./queries";
 import type { ProductDiscoveryView, ProductSelectionView } from "./types";
-import { getProjectRoomPreferences } from "@/lib/project-preferences/queries";
+import { getProjectRoomPreferences, upsertProjectRoomPreferences } from "@/lib/project-preferences/queries";
 import { projectRoomPreferencesToShoppingPreferences } from "@/lib/project-preferences/adapter";
 import { EMPTY_PROJECT_ROOM_PREFERENCES } from "@/lib/project-preferences/types";
+import { parseProjectLocation } from "@/lib/project-location/parse";
 import {
   DEFAULT_DISCOVERY_RADIUS_KM,
   MAX_DISCOVERY_RADIUS_KM,
@@ -43,7 +44,8 @@ const discoverInputSchema = z.object({
     .string()
     .trim()
     .min(MIN_LOCATION_INPUT_LENGTH)
-    .max(MAX_LOCATION_INPUT_LENGTH),
+    .max(MAX_LOCATION_INPUT_LENGTH)
+    .optional(),
   radiusKm: z.number().int().min(1).max(MAX_DISCOVERY_RADIUS_KM).optional(),
   refresh: z.boolean().optional(),
   attemptId: z.string().uuid().optional(),
@@ -129,17 +131,34 @@ export async function discoverProjectProductsAction(input: {
     const preferences = projectRoomPreferencesToShoppingPreferences(
       stored ?? EMPTY_PROJECT_ROOM_PREFERENCES
     );
+    const projectLocation = parseProjectLocation(stored);
+    const locationInput =
+      projectLocation?.locationInput ??
+      parsed.data.locationInput ??
+      stored?.locationInput ??
+      "";
     const result = await discoverProjectProducts(
       supabase,
       parsed.data.projectId,
-      parsed.data.locationInput,
+      locationInput,
       {
         force: Boolean(parsed.data.refresh),
-        radiusKm: parsed.data.radiusKm ?? DEFAULT_DISCOVERY_RADIUS_KM,
+        radiusKm: projectLocation?.radiusKm ?? parsed.data.radiusKm ?? DEFAULT_DISCOVERY_RADIUS_KM,
         ownerUserId: project.user_id,
         persistClient,
         preferences,
         attemptId,
+        projectLocation,
+        persistResolvedLocation: async (location) => {
+          await upsertProjectRoomPreferences(supabase, parsed.data.projectId, {
+            locationInput: location.locationInput,
+            formattedAddress: location.formattedAddress,
+            latitude: location.latitude,
+            longitude: location.longitude,
+            radiusKm: location.radiusKm,
+            countryCode: location.countryCode,
+          });
+        },
       }
     );
     return {

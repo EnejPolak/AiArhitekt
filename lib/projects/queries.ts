@@ -7,6 +7,20 @@ import { isProjectType } from "./types";
 
 type Client = SupabaseClient<Database>;
 
+const JWT_IAT_SKEW_CODE = "PGRST303";
+const JWT_IAT_SKEW_RETRY_MS = 800;
+
+async function withJwtIatSkewRetry<T>(
+  run: () => PromiseLike<{ data: T; error: { message?: string; code?: string } | null }>
+): Promise<{ data: T; error: { message?: string; code?: string } | null }> {
+  const first = await run();
+  if ((first.error?.code ?? "").toUpperCase() !== JWT_IAT_SKEW_CODE) {
+    return first;
+  }
+  await new Promise((resolve) => setTimeout(resolve, JWT_IAT_SKEW_RETRY_MS));
+  return run();
+}
+
 function asProject(row: Record<string, unknown>): ProjectRow {
   const projectType = String(row.project_type ?? "");
   if (!isProjectType(projectType)) {
@@ -26,22 +40,26 @@ function asProject(row: Record<string, unknown>): ProjectRow {
 }
 
 export async function listActiveProjects(client: Client): Promise<ProjectRow[]> {
-  const { data, error } = await client
-    .from("projects")
-    .select("*")
-    .is("archived_at", null)
-    .order("updated_at", { ascending: false });
+  const { data, error } = await withJwtIatSkewRetry(() =>
+    client
+      .from("projects")
+      .select("*")
+      .is("archived_at", null)
+      .order("updated_at", { ascending: false })
+  );
 
   if (error) throw mapProjectDbError(error, "load");
   return (data ?? []).map((row) => asProject(row as Record<string, unknown>));
 }
 
 export async function listArchivedProjects(client: Client): Promise<ProjectRow[]> {
-  const { data, error } = await client
-    .from("projects")
-    .select("*")
-    .not("archived_at", "is", null)
-    .order("archived_at", { ascending: false });
+  const { data, error } = await withJwtIatSkewRetry(() =>
+    client
+      .from("projects")
+      .select("*")
+      .not("archived_at", "is", null)
+      .order("archived_at", { ascending: false })
+  );
 
   if (error) throw mapProjectDbError(error, "load");
   return (data ?? []).map((row) => asProject(row as Record<string, unknown>));
@@ -54,11 +72,9 @@ export async function getProjectById(
   const parsed = projectIdSchema.safeParse(projectId);
   if (!parsed.success) return null;
 
-  const { data, error } = await client
-    .from("projects")
-    .select("*")
-    .eq("id", parsed.data)
-    .maybeSingle();
+  const { data, error } = await withJwtIatSkewRetry(() =>
+    client.from("projects").select("*").eq("id", parsed.data).maybeSingle()
+  );
 
   if (error) throw mapProjectDbError(error, "load");
   if (!data) return null;

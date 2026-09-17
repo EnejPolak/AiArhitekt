@@ -34,8 +34,17 @@ export function projectErrorMessage(
   }
 }
 
+const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
+const JWT_RE = /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g;
+
+function sanitizeProjectDbDiagnostic(value: string | null | undefined): string | null {
+  const raw = (value ?? "").trim();
+  if (!raw) return null;
+  return raw.replace(EMAIL_RE, "[email]").replace(JWT_RE, "[token]").slice(0, 240);
+}
+
 export function mapProjectDbError(
-  error: { message?: string; code?: string } | null,
+  error: { message?: string; code?: string; details?: string; hint?: string } | null,
   op: ProjectDbOp = "mutate"
 ): ProjectError {
   if (!error) return new ProjectError("failed", projectErrorMessage("failed", op));
@@ -43,6 +52,17 @@ export function mapProjectDbError(
   if (code === "PGRST116" || code === "42501" || code === "PGRST301") {
     return new ProjectError("not_found", projectErrorMessage("not_found"));
   }
-  console.error("[projects] database_error", { op, code: code || "unknown" });
+  if (process.env.NODE_ENV !== "production") {
+    console.error(
+      "[projects] database_error",
+      JSON.stringify({
+        op,
+        code: code || "unknown",
+        message: sanitizeProjectDbDiagnostic(error.message),
+        details: sanitizeProjectDbDiagnostic(error.details),
+        hint: sanitizeProjectDbDiagnostic(error.hint),
+      })
+    );
+  }
   return new ProjectError("failed", projectErrorMessage("failed", op));
 }

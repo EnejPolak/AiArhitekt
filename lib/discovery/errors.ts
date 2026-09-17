@@ -16,12 +16,15 @@ export type DiscoveryErrorCode =
   | "no_valid_store_domains"
   | "serp_quota"
   | "serp_unconfigured"
+  | "openai_unconfigured"
   | "serp_failed"
   | "search_interrupted"
   | "discovery_budget_exhausted"
   | "discovery_timeout"
   | "provider_timeout"
   | "rate_limited"
+  | "location_required"
+  | "location_invalid"
   | "failed";
 
 export type DiscoveryErrorDetails = {
@@ -79,7 +82,7 @@ export function discoveryErrorMessage(code: DiscoveryErrorCode): string {
     case "geocoding_failed":
       return "Could not find that location. Try a fuller address.";
     case "places_failed":
-      return "Store search is temporarily unavailable. Try again later.";
+      return "We couldn't load nearby businesses right now.";
     case "places_quota":
     case "places_rate_limited":
       return "Store search is temporarily unavailable. Try again later.";
@@ -92,6 +95,7 @@ export function discoveryErrorMessage(code: DiscoveryErrorCode): string {
     case "serp_quota":
       return "Product search is at capacity for today. Try again tomorrow.";
     case "serp_unconfigured":
+    case "openai_unconfigured":
       return "Product search is not configured.";
     case "serp_failed":
       return "Could not search products. Try again.";
@@ -100,11 +104,15 @@ export function discoveryErrorMessage(code: DiscoveryErrorCode): string {
     case "discovery_budget_exhausted":
       return "Product search reached its request limit. Try again later.";
     case "discovery_timeout":
-      return "Product search timed out before finishing. Your previous results were kept.";
+      return "We couldn't finish searching in time. Your project is safe — try again.";
     case "provider_timeout":
-      return "Product search timed out. Try again.";
+      return "We couldn't finish searching in time. Your project is safe — try again.";
     case "rate_limited":
       return "Please wait a moment before searching products again.";
+    case "location_required":
+      return "Save a search location before finding products.";
+    case "location_invalid":
+      return "That saved location is not valid. Enter the address again.";
     default:
       return "Could not find products. Try again.";
   }

@@ -1,0 +1,137 @@
+"use client";
+
+import * as React from "react";
+import {
+  formatVerifiedProductPrice,
+  type ProjectProductShoppingState,
+} from "@/lib/discovery/shoppingState";
+
+export function ProductShoppingSections({
+  state,
+  emptyMessage = "No verified products were found for these requirements.",
+}: {
+  state: ProjectProductShoppingState;
+  emptyMessage?: string;
+}) {
+  if (!state.hasDiscovery) {
+    return (
+      <p className="text-[14px] text-[rgba(255,255,255,0.70)]">
+        No saved product search for this project yet.
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      {state.allNotFound ? (
+        <p className="text-[14px] text-[rgba(255,255,255,0.80)]" role="status">
+          {emptyMessage}
+        </p>
+      ) : null}
+
+      {state.foundSelections.length > 0 ? (
+        <div className="space-y-3">
+          <h4 className="text-[13px] font-medium text-white">Found products</h4>
+          {state.foundSelections.map((selection) => (
+            <div
+              key={selection.id}
+              className="border border-[rgba(255,255,255,0.10)] rounded-lg p-3"
+            >
+              <div className="flex items-start gap-3">
+                {selection.productImageUrl ? (
+                  <img
+                    src={selection.productImageUrl}
+                    alt=""
+                    className="w-16 h-16 shrink-0 object-cover rounded"
+                  />
+                ) : (
+                  <div className="w-16 h-16 rounded-md border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)] flex items-center justify-center text-[11px] text-[rgba(255,255,255,0.45)] text-center px-1">
+                    No image
+                  </div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <div className="text-[14px] font-medium text-white break-words">
+                    {selection.productTitle}
+                  </div>
+                  <div className="text-[12px] text-[rgba(255,255,255,0.60)] mt-1 break-words">
+                    {selection.retailerName ?? selection.retailerDomain}
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-2 mt-2">
+                    <span className="text-[14px] text-white font-medium">
+                      {formatVerifiedProductPrice(selection.price, selection.currency)}
+                    </span>
+                    {selection.productUrl ? (
+                      <a
+                        href={selection.productUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[12px] text-[#3B82F6] hover:underline"
+                      >
+                        View product →
+                      </a>
+                    ) : null}
+                  </div>
+                  {selection.isConfirmed ? (
+                    <div className="text-[11px] text-[rgba(0,230,204,0.75)] mt-1">
+                      Selected for design
+                    </div>
+                  ) : (
+                    <div className="text-[11px] text-[rgba(255,255,255,0.40)] mt-1">
+                      Found product · not marked for design
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {state.missingRequirements.length > 0 ? (
+        <div>
+          <h4 className="text-[13px] font-medium text-[rgba(255,255,255,0.80)] mb-2">
+            Unresolved requirements
+          </h4>
+          <ul className="space-y-1 text-[13px] text-[rgba(255,255,255,0.55)]">
+            {state.missingRequirements.map((item) => (
+              <li key={item.requirementKey}>No verified product for: {item.label}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {state.notSearchedCount > 0 ? (
+        <p className="text-[12px] text-[rgba(255,255,255,0.45)]">
+          {state.notSearchedCount} additional requirement
+          {state.notSearchedCount === 1 ? "" : "s"} were not searched (limit 10 per run).
+        </p>
+      ) : null}
+
+      {state.knownProductTotal != null ? (
+        <div className="pt-3 border-t border-[rgba(255,255,255,0.1)]">
+          <div className="flex justify-between text-[16px] font-medium">
+            <span className="text-white">Known product total</span>
+            <span className="text-white">
+              {formatVerifiedProductPrice(state.knownProductTotal, "EUR")}
+            </span>
+          </div>
+          {state.knownProductTotalIsPartial ? (
+            <p className="text-[12px] text-[rgba(255,255,255,0.55)] mt-1">
+              Partial: {state.unpricedCount} product
+              {state.unpricedCount === 1 ? " has" : "s have"} no verified price. This is not a
+              complete project total.
+            </p>
+          ) : (
+            <p className="text-[12px] text-[rgba(255,255,255,0.45)] mt-1">
+              Sum of verified product prices only. Not a complete project total.
+            </p>
+          )}
+        </div>
+      ) : state.foundSelections.length > 0 ? (
+        <p className="text-[13px] text-[rgba(255,255,255,0.55)]">
+          Product prices are unavailable for the found items.
+        </p>
+      ) : null}
+    </div>
+  );
+}

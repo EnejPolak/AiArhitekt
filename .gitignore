@@ -38,6 +38,9 @@ next-env.d.ts
 # tmp files
 /tmp
 
+# Playwright authenticated session (cookies). Never commit.
+.playwright/
+
 # supabase local (also listed in supabase/.gitignore)
 supabase/.temp
 supabase/.branches

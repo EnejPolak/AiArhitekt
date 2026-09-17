@@ -1,4 +1,11 @@
 import { NextResponse } from "next/server";
+import { requireSpendRouteAuth } from "@/lib/api/spendAuth";
+import { sanitizedInternalErrorResponse } from "@/lib/api/publicError";
+import { clampSearchRadiusKm, isValidSearchCoordinate } from "@/lib/project-location/parse";
+import {
+  filterContractorsByRequestedRadius,
+  readPlaceCoordinates,
+} from "@/lib/places/contractorDistance";
 
 export const runtime = "nodejs";
 
@@ -11,6 +18,8 @@ const TRADE_QUERIES: Record<string, string> = {
 };
 
 export async function POST(req: Request) {
+  const auth = await requireSpendRouteAuth();
+  if (!auth.ok) return auth.response;
   try {
     if (!process.env.GOOGLE_MAPS_API_KEY) {
       return NextResponse.json({ error: "GOOGLE_MAPS_API_KEY not configured" }, { status: 500 });
@@ -21,7 +30,7 @@ export async function POST(req: Request) {
 
     const { location, radiusKm, neededTrades } = body;
 
-    if (!location || typeof location.lat !== "number" || typeof location.lng !== "number") {
+    if (!location || !isValidSearchCoordinate(location.lat, location.lng)) {
       return NextResponse.json({ error: "location with lat/lng is required" }, { status: 400 });
     }
 
@@ -29,7 +38,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "neededTrades array is required" }, { status: 400 });
     }
 
-    const radiusMeters = (radiusKm || 50) * 1000;
+    const radiusMeters = clampSearchRadiusKm(radiusKm) * 1000;
     const contractorsByTrade: Record<string, Array<{
       name: string;
       address: string;
@@ -60,8 +69,13 @@ export async function POST(req: Request) {
             placeId: string;
           }> = [];
 
-          // Get details for top 3-5 results
-          const topResults = data.results.slice(0, 5);
+          const inRadius = filterContractorsByRequestedRadius(
+            data.results,
+            { lat: location.lat, lng: location.lng },
+            radiusKm,
+            readPlaceCoordinates
+          );
+          const topResults = inRadius.slice(0, 5);
           
           for (const place of topResults) {
             try {
@@ -107,8 +121,7 @@ export async function POST(req: Request) {
     }
 
     return NextResponse.json({ contractorsByTrade });
-  } catch (error: any) {
-    console.error("Places contractors error:", error);
-    return NextResponse.json({ error: error.message || "Contractor search failed" }, { status: 500 });
+  } catch (error: unknown) {
+    return sanitizedInternalErrorResponse("Places contractors error:", error);
   }
 }

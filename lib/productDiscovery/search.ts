@@ -3,30 +3,11 @@ import type {
   CanonicalSerpSearchInput,
   CanonicalSerpSearchOutcome,
 } from "@/lib/serp/search";
-import { OPENAI_PRODUCT_SEARCH_CONCURRENCY } from "./constants";
+import { OPENAI_PRODUCT_SEARCH_CONCURRENCY, OPENAI_PRODUCT_SEARCH_TIMEOUT_MS } from "./constants";
 import { productDiscoveryResultToCanonicalItem } from "./adapter";
 import { normalizeProductDiscoveryAllowlist } from "./domains";
 import { searchProductItem } from "./searchItem";
 import type { ProductDiscoveryResult } from "./types";
-
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  limit: number,
-  worker: (item: T, index: number) => Promise<R>
-): Promise<R[]> {
-  if (items.length === 0) return [];
-  const results: R[] = new Array(items.length);
-  let index = 0;
-  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (index < items.length) {
-      const current = index;
-      index += 1;
-      results[current] = await worker(items[current]!, current);
-    }
-  });
-  await Promise.all(runners);
-  return results;
-}
 
 function normalizeItems(items: unknown): string[] {
   if (!Array.isArray(items)) return [];
@@ -34,6 +15,32 @@ function normalizeItems(items: unknown): string[] {
     .filter((item) => typeof item === "string")
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
+}
+
+function openaiKeyConfigured(): boolean {
+  return Boolean(process.env.OPENAI_API_KEY?.trim());
+}
+
+function remainingMs(deadlineAt?: number): number | null {
+  if (!deadlineAt) return null;
+  return deadlineAt - Date.now();
+}
+
+function deadlineSkippedResult(
+  requestedItem: string,
+  allowedDomainsCount: number
+): ProductDiscoveryResult {
+  return {
+    requestedItem,
+    status: "error",
+    product: null,
+    sources: [],
+    diagnostics: {
+      searchUsed: false,
+      allowedDomainsCount,
+      errorCode: "deadline",
+    },
+  };
 }
 
 function noRetailersResults(items: string[]): ProductDiscoveryResult[] {
@@ -128,15 +135,48 @@ export async function runOpenAIProductDiscovery(
     };
   }
 
-  const productDiscoveryResults = await mapWithConcurrency(
-    items,
-    OPENAI_PRODUCT_SEARCH_CONCURRENCY,
-    async (requestedItem) =>
-      searchProductItem({
+  if (!openaiKeyConfigured()) {
+    return { ok: false, httpStatus: 500, error: "OPENAI_API_KEY not configured" };
+  }
+
+  const minRemainingBeforeRequestMs = input.minRemainingBeforeRequestMs ?? 0;
+  const productDiscoveryResults: ProductDiscoveryResult[] = new Array(items.length);
+  let nextIndex = 0;
+
+  async function runDeadlineBoundWorker() {
+    while (true) {
+      const remaining = remainingMs(input.deadlineAt);
+      if (remaining != null && remaining < minRemainingBeforeRequestMs) {
+        return;
+      }
+      const current = nextIndex;
+      nextIndex += 1;
+      if (current >= items.length) return;
+      const requestedItem = items[current]!;
+      const timeoutMs =
+        remaining == null
+          ? OPENAI_PRODUCT_SEARCH_TIMEOUT_MS
+          : Math.min(OPENAI_PRODUCT_SEARCH_TIMEOUT_MS, Math.max(1, remaining));
+      productDiscoveryResults[current] = await searchProductItem({
         requestedItem,
         allowlistDomains,
-      })
+        timeoutMs,
+        marketContext: input.marketContext,
+      });
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(OPENAI_PRODUCT_SEARCH_CONCURRENCY, items.length) }, () =>
+      runDeadlineBoundWorker()
+    )
   );
+
+  for (let i = 0; i < items.length; i += 1) {
+    if (!productDiscoveryResults[i]) {
+      productDiscoveryResults[i] = deadlineSkippedResult(items[i]!, allowlistDomains.length);
+    }
+  }
 
   const executedCount = productDiscoveryResults.filter(
     (result) => result.diagnostics?.searchUsed === true || result.status === "error"
@@ -145,6 +185,9 @@ export async function runOpenAIProductDiscovery(
   const providerFailures = productDiscoveryResults.filter(
     (result) => result.status === "error" || result.status === "not_found"
   ).length;
+  const stoppedForDeadline = productDiscoveryResults.some(
+    (result) => result.diagnostics?.errorCode === "deadline"
+  );
 
   const response: OpenAIProductDiscoveryResponse = {
     dryRun: false,
@@ -165,7 +208,7 @@ export async function runOpenAIProductDiscovery(
     dailyRemaining: 0,
     results: productDiscoveryResults.map(productDiscoveryResultToCanonicalItem),
     status: 200,
-    stoppedReason: null,
+    stoppedReason: stoppedForDeadline ? "deadline" : null,
     productDiscoveryResults,
   };
 

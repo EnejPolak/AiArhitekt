@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
+import { requireSpendRouteAuth } from "@/lib/api/spendAuth";
+import { sanitizedInternalErrorResponse } from "@/lib/api/publicError";
 
 export async function POST(req: Request) {
+  const auth = await requireSpendRouteAuth();
+  if (!auth.ok) return auth.response;
   try {
     if (!process.env.OPENAI_API_KEY) {
       return NextResponse.json(
@@ -77,11 +81,7 @@ export async function POST(req: Request) {
       "I can see the home layout and current condition. I'll use this information to create a cohesive renovation concept.";
 
     return NextResponse.json({ observation });
-  } catch (error: any) {
-    console.error("Error analyzing home:", error);
-    return NextResponse.json(
-      { error: error.message || "Failed to analyze home" },
-      { status: 500 }
-    );
+  } catch (error: unknown) {
+    return sanitizedInternalErrorResponse("Error analyzing home:", error);
   }
 }

@@ -6,6 +6,15 @@ vi.mock("@/lib/productDiscovery/search", () => ({
   runOpenAIProductDiscovery: vi.fn(),
 }));
 
+vi.mock("@/lib/auth/session", () => ({
+  getVerifiedUser: vi.fn(async () => ({ id: "user-1" })),
+}));
+
+vi.mock("@/lib/env/deployment", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/env/deployment")>("@/lib/env/deployment");
+  return { ...actual, isDebugApiAllowed: () => false };
+});
+
 const runOpenAIProductDiscoveryMock = vi.mocked(runOpenAIProductDiscovery);
 
 function request(body: unknown): Request {

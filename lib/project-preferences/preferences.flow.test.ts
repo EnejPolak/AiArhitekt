@@ -17,11 +17,13 @@ import { discoverProjectProducts } from "@/lib/discovery/discover";
 import { getProjectProductDiscovery } from "@/lib/discovery/queries";
 import { shoppingPreferenceFingerprint } from "@/lib/discovery/preferenceHash";
 import { isCurrentProductDiscovery } from "@/lib/discovery/stale";
+import { expireLocalProductDiscoveryCooldown } from "@/lib/discovery/localCooldownSetup";
 import {
   projectRoomPreferencesToRenderPreferences,
   projectRoomPreferencesToShoppingPreferences,
 } from "./adapter";
 import { getProjectRoomPreferences, upsertProjectRoomPreferences } from "./queries";
+import { parseProjectLocation } from "@/lib/project-location/parse";
 
 const LOCAL_URL = localSupabaseApiUrl();
 type Client = SupabaseClient<Database>;
@@ -334,5 +336,182 @@ describe("persisted room preferences + discovery (local, mocked providers)", () 
     expect(render.flooring).toBe("marble");
     expect(render.notes).toBe("keep the window nook");
     expect(render.budgetLevel).toBe("balanced");
+  });
+
+  it("persists project location and lets later discovery skip geocode", async () => {
+    const locationProject = await seedWithAnalysis(userA.client, userA.user.id);
+    await upsertProjectRoomPreferences(userA.client, locationProject.projectId, {
+      locationInput: "Celje",
+      formattedAddress: "Celje, Slovenia",
+      latitude: 46.2358,
+      longitude: 15.2677,
+      radiusKm: 25,
+      countryCode: "SI",
+    });
+    const reloaded = await getProjectRoomPreferences(userA.client, locationProject.projectId);
+    const location = parseProjectLocation(reloaded);
+    expect(location).toMatchObject({
+      locationInput: "Celje",
+      latitude: 46.2358,
+      longitude: 15.2677,
+      radiusKm: 25,
+    });
+
+    const lostWizardState = { location: null as null, radiusKm: 50 };
+    expect(lostWizardState.location).toBeNull();
+    expect(parseProjectLocation(reloaded)?.radiusKm).toBe(25);
+
+    const geocodeFn = vi.fn(async (): Promise<GeocodeResult> => {
+      throw new Error("geocode should not run for persisted coordinates");
+    });
+    const placesFn = vi.fn(async () => placesResult());
+    const serpFn = vi.fn(async (input) => serpOutcome(input.items));
+    const shopping = projectRoomPreferencesToShoppingPreferences(reloaded);
+
+    const first = await discoverProjectProducts(userA.client, locationProject.projectId, "", {
+      ownerUserId: userA.user.id,
+      persistClient: persist,
+      preferences: shopping,
+      projectLocation: location,
+      geocodeAddress: geocodeFn,
+      searchPlaces: placesFn,
+      searchSerp: serpFn,
+    });
+    expect(first.reused).toBe(false);
+    expect(geocodeFn).not.toHaveBeenCalled();
+    expect(placesFn).toHaveBeenCalledTimes(1);
+    expect(placesFn.mock.calls[0]?.[0]).toMatchObject({
+      lat: 46.2358,
+      lng: 15.2677,
+      radiusKm: 25,
+    });
+
+    const second = await discoverProjectProducts(userA.client, locationProject.projectId, "", {
+      ownerUserId: userA.user.id,
+      persistClient: persist,
+      preferences: shopping,
+      projectLocation: location,
+      geocodeAddress: geocodeFn,
+      searchPlaces: placesFn,
+      searchSerp: serpFn,
+    });
+    expect(second.reused).toBe(true);
+    expect(geocodeFn).not.toHaveBeenCalled();
+    expect(placesFn).toHaveBeenCalledTimes(1);
+
+    await upsertProjectRoomPreferences(userA.client, locationProject.projectId, { radiusKm: 40 });
+    const afterRadius = parseProjectLocation(
+      await getProjectRoomPreferences(userA.client, locationProject.projectId)
+    );
+    await expireLocalProductDiscoveryCooldown(locationProject.projectId);
+    const radiusChanged = await discoverProjectProducts(
+      userA.client,
+      locationProject.projectId,
+      "",
+      {
+        ownerUserId: userA.user.id,
+        persistClient: persist,
+        preferences: shopping,
+        projectLocation: afterRadius,
+        geocodeAddress: geocodeFn,
+        searchPlaces: placesFn,
+        searchSerp: serpFn,
+      }
+    );
+    expect(radiusChanged.reused).toBe(false);
+    expect(geocodeFn).not.toHaveBeenCalled();
+    expect(placesFn).toHaveBeenCalledTimes(2);
+    expect(placesFn.mock.calls[1]?.[0]).toMatchObject({
+      lat: 46.2358,
+      lng: 15.2677,
+      radiusKm: 40,
+    });
+
+    await upsertProjectRoomPreferences(userA.client, locationProject.projectId, {
+      locationInput: "Ljubljana",
+      formattedAddress: "Ljubljana, Slovenia",
+      latitude: 46.0569,
+      longitude: 14.5058,
+      radiusKm: 40,
+      countryCode: "SI",
+    });
+    const afterMove = parseProjectLocation(
+      await getProjectRoomPreferences(userA.client, locationProject.projectId)
+    );
+    await expireLocalProductDiscoveryCooldown(locationProject.projectId);
+    const moved = await discoverProjectProducts(userA.client, locationProject.projectId, "", {
+      ownerUserId: userA.user.id,
+      persistClient: persist,
+      preferences: shopping,
+      projectLocation: afterMove,
+      geocodeAddress: geocodeFn,
+      searchPlaces: placesFn,
+      searchSerp: serpFn,
+    });
+    expect(moved.reused).toBe(false);
+    expect(geocodeFn).not.toHaveBeenCalled();
+    expect(placesFn.mock.calls.at(-1)?.[0]).toMatchObject({
+      lat: 46.0569,
+      lng: 14.5058,
+      radiusKm: 40,
+    });
+  });
+
+  it("geocodes a legacy address once and persists coordinates for later reuse", async () => {
+    const locationProject = await seedWithAnalysis(userA.client, userA.user.id);
+    await upsertProjectRoomPreferences(userA.client, locationProject.projectId, {
+      locationInput: "Celje",
+      radiusKm: 25,
+    });
+    const stored = await getProjectRoomPreferences(userA.client, locationProject.projectId);
+    expect(parseProjectLocation(stored)).toBeNull();
+    expect(stored?.locationInput).toBe("Celje");
+
+    const geocodeFn = vi.fn(async () => geocodeOk());
+    const persistResolvedLocation = vi.fn(async (location) => {
+      await upsertProjectRoomPreferences(userA.client, locationProject.projectId, {
+        locationInput: location.locationInput,
+        formattedAddress: location.formattedAddress,
+        latitude: location.latitude,
+        longitude: location.longitude,
+        radiusKm: location.radiusKm,
+        countryCode: location.countryCode,
+      });
+    });
+    const placesFn = vi.fn(async () => placesResult());
+    const serpFn = vi.fn(async (input) => serpOutcome(input.items));
+
+    await discoverProjectProducts(userA.client, locationProject.projectId, "Celje", {
+      ownerUserId: userA.user.id,
+      persistClient: persist,
+      projectLocation: parseProjectLocation(stored),
+      persistResolvedLocation,
+      geocodeAddress: geocodeFn,
+      searchPlaces: placesFn,
+      searchSerp: serpFn,
+    });
+    expect(geocodeFn).toHaveBeenCalledTimes(1);
+    expect(persistResolvedLocation).toHaveBeenCalledTimes(1);
+
+    const afterFallback = parseProjectLocation(
+      await getProjectRoomPreferences(userA.client, locationProject.projectId)
+    );
+    expect(afterFallback).toMatchObject({
+      locationInput: "Celje",
+      latitude: 46.0569,
+      longitude: 14.5058,
+    });
+
+    const second = await discoverProjectProducts(userA.client, locationProject.projectId, "Celje", {
+      ownerUserId: userA.user.id,
+      persistClient: persist,
+      projectLocation: afterFallback,
+      persistResolvedLocation,
+      geocodeAddress: geocodeFn,
+      searchPlaces: placesFn,
+      searchSerp: serpFn,
+    });
+    expect(second.reused).toBe(true);
+    expect(geocodeFn).toHaveBeenCalledTimes(1);
   });
 });

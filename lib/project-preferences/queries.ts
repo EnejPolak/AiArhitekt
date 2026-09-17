@@ -27,6 +27,15 @@ function asPreferences(row: PreferenceRow): ProjectRoomPreferences {
     bedType: row.bed_type,
     notes: row.notes,
     keepExistingWalls: row.keep_existing_walls,
+    locationInput: row.location_input?.trim() ? row.location_input.trim() : null,
+    formattedAddress: row.formatted_address?.trim() ? row.formatted_address.trim() : null,
+    latitude: row.latitude,
+    longitude: row.longitude,
+    radiusKm: row.radius_km,
+    countryCode: (() => {
+      const code = row.country_code?.trim().toUpperCase() ?? "";
+      return /^[A-Z]{2}$/.test(code) ? code : null;
+    })(),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });
@@ -71,6 +80,12 @@ function toInsert(projectId: string, values: ProjectRoomPreferenceFields) {
     bed_type: values.bedType,
     notes: values.notes.trim(),
     keep_existing_walls: values.keepExistingWalls,
+    location_input: values.locationInput,
+    formatted_address: values.formattedAddress,
+    latitude: values.latitude,
+    longitude: values.longitude,
+    radius_km: values.radiusKm,
+    country_code: values.countryCode,
   };
 }
 
@@ -100,6 +115,12 @@ export async function upsertProjectRoomPreferences(
           bedType: existing.bedType,
           notes: existing.notes,
           keepExistingWalls: existing.keepExistingWalls,
+          locationInput: existing.locationInput,
+          formattedAddress: existing.formattedAddress,
+          latitude: existing.latitude,
+          longitude: existing.longitude,
+          radiusKm: existing.radiusKm,
+          countryCode: existing.countryCode,
         }
       : {}),
     ...parsedPatch.data,

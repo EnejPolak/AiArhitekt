@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { wizardPanelClass } from "../wizardUi";
 
 export interface Step8bBudgetSplitProps {
   roomType: string;
@@ -60,7 +61,7 @@ export const Step8bBudgetSplit: React.FC<Step8bBudgetSplitProps> = ({
         onBudgetPlanComplete(data);
       } catch (err: any) {
         console.error("Error generating budget plan:", err);
-        setError(err.message || "Failed to generate budget plan");
+        setError("We couldn't finish the budget split. A simple allocation was used instead.");
         // Fallback: use average of min/max
         const avgBudget = Math.round((totalBudget.min + totalBudget.max) / 2);
         const fallbackPlan = {
@@ -87,7 +88,7 @@ export const Step8bBudgetSplit: React.FC<Step8bBudgetSplitProps> = ({
   if (isLoading) {
     return (
       <div className="flex justify-start mb-6">
-        <div className="max-w-[85%] rounded-[16px] px-6 py-5 bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.08)]">
+        <div className={wizardPanelClass}>
           <div className="text-[15px] text-[rgba(255,255,255,0.85)] leading-relaxed">
             Allocating budget into category caps…
           </div>
@@ -99,7 +100,7 @@ export const Step8bBudgetSplit: React.FC<Step8bBudgetSplitProps> = ({
   if (error && !budgetPlan) {
     return (
       <div className="flex justify-start mb-6">
-        <div className="max-w-[85%] rounded-[16px] px-6 py-5 bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.08)]">
+        <div className={wizardPanelClass}>
           <div className="text-[15px] text-[rgba(255,255,255,0.85)] leading-relaxed">
             {error}
           </div>

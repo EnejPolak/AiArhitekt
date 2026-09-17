@@ -4,24 +4,46 @@ import type { ParsedResponse } from "openai/resources/responses/responses";
 import { isProductionDeployment } from "@/lib/env/deployment";
 import { normalizeDomainToRoot } from "@/lib/serp/domains";
 import {
-  OPENAI_PRODUCT_SEARCH_MODEL,
   OPENAI_PRODUCT_SEARCH_TIMEOUT_MS,
+  isProductDiscoverySerpFallbackEnabled,
 } from "./constants";
+import {
+  beginProductDiscoveryModelTrace,
+  getProductDiscoveryModel,
+  productDiscoveryModelDiagnostics,
+  recordPrimaryModelStage,
+} from "./modelRouting";
 import { domainAllowed, normalizeProductDiscoveryAllowlist } from "./domains";
 import {
   buildRequirementPolicyHints,
+  buildSuggestedSearchQueriesForRequest,
   normalizeMatchScore,
   normalizeRequirementLists,
 } from "./matchPolicy";
-import { finalizeAcceptedProduct } from "./acceptancePolicy";
+import { finalizeAcceptedProduct, type AcceptanceSource } from "./acceptancePolicy";
 import {
   attemptPriceVerificationRecovery,
   buildPriceVerificationDiagnostics,
 } from "./attemptPriceVerificationRecovery";
 import {
+  buildEvidenceDiagnostics,
+  buildProductEvidence,
+  buildTrustedEvidenceText,
+  resolveGroundedPrice,
+  resolveTrustedDisplayName,
+} from "./productEvidence";
+import {
+  buildDecisionSnapshot,
+  buildProductEvidenceForDecision,
+  buildRejectedDecisionSnapshot,
+  preferConcreteRejectedSnapshot,
+} from "./decisionSnapshot";
+import { compactMerchantEvidenceForDebug } from "./enrichCandidate";
+import {
   buildProductDiscoveryUserMessage,
-  PRODUCT_DISCOVERY_SYSTEM_PROMPT,
+  getProductDiscoverySystemPrompt,
 } from "./prompt";
+import { normalizeProductDiscoveryMarketContext } from "./marketContext";
 import {
   attemptSourceBackedRescue,
   shouldAttemptRescue,
@@ -29,17 +51,34 @@ import {
 } from "./rescue";
 import { productDiscoveryModelSchema, type ProductDiscoveryModelOutput } from "./schema";
 import {
+  addOpenAiUsage,
+  emptyOpenAiUsage,
+  extractOpenAiResponseUsage,
+  extractPrimarySearchDiagnostics,
   extractWebSearchSources,
   isProductUrlEvidenceBacked,
   responseUsedWebSearch,
+  type OpenAiUsageDiagnostics,
 } from "./sources";
 import type { ProductDiscoveryResult, ProductDiscoverySource, ProductDiscoveryProduct } from "./types";
 import { attemptTargetedResearch } from "./searchPass";
+import { attemptSerpFallback } from "./serpFallback";
+import {
+  openAiFinalFailureReason,
+  shouldUseSerpFallback,
+} from "./serpFallbackEligibility";
 
 export type SearchProductItemOptions = {
   requestedItem: string;
   allowlistDomains: string[];
   client?: OpenAI;
+  /** Caps the OpenAI client timeout. Cannot exceed OPENAI_PRODUCT_SEARCH_TIMEOUT_MS. */
+  timeoutMs?: number;
+  marketContext?: {
+    countryCode?: string | null;
+    formattedLocation?: string | null;
+    merchantDomains?: string[];
+  } | null;
 };
 
 type PrimarySanitizeOutcome =
@@ -50,6 +89,59 @@ function requireApiKey(): string {
   const key = process.env.OPENAI_API_KEY?.trim();
   if (!key) throw new Error("OPENAI_API_KEY not configured");
   return key;
+}
+
+const usageByClient = new WeakMap<object, { current: OpenAiUsageDiagnostics }>();
+
+function trackClientUsage(client: OpenAI): OpenAI {
+  const acc = { current: emptyOpenAiUsage() };
+  const parse = client.responses.parse.bind(client.responses);
+  client.responses.parse = (async (
+    body: Parameters<OpenAI["responses"]["parse"]>[0],
+    options?: Parameters<OpenAI["responses"]["parse"]>[1]
+  ) => {
+    const response = await parse(body, options);
+    acc.current = addOpenAiUsage(acc.current, extractOpenAiResponseUsage(response));
+    return response;
+  }) as typeof client.responses.parse;
+  usageByClient.set(client, acc);
+  beginProductDiscoveryModelTrace(client);
+  return client;
+}
+
+function attachModelRoutingDiagnostics(
+  result: ProductDiscoveryResult,
+  client?: OpenAI | null
+): ProductDiscoveryResult {
+  const routing = productDiscoveryModelDiagnostics(client);
+  return {
+    ...result,
+    diagnostics: {
+      searchUsed: result.diagnostics?.searchUsed ?? false,
+      allowedDomainsCount: result.diagnostics?.allowedDomainsCount ?? 0,
+      ...result.diagnostics,
+      modelRouting: routing.modelRouting,
+      primaryModel: routing.primaryModel,
+      targetedAttempted: routing.targetedAttempted,
+      targetedModel: routing.targetedModel,
+      usageByStage: routing.usageByStage,
+    },
+  };
+}
+
+function attachTrackedUsage(result: ProductDiscoveryResult, client: OpenAI): ProductDiscoveryResult {
+  const usage = usageByClient.get(client)?.current;
+  const withRouting = attachModelRoutingDiagnostics(result, client);
+  if (!usage) return withRouting;
+  return {
+    ...withRouting,
+    diagnostics: {
+      searchUsed: withRouting.diagnostics?.searchUsed ?? false,
+      allowedDomainsCount: withRouting.diagnostics?.allowedDomainsCount ?? 0,
+      ...withRouting.diagnostics,
+      openAiUsage: addOpenAiUsage(withRouting.diagnostics?.openAiUsage, usage),
+    },
+  };
 }
 
 function logProductDiscovery(event: Record<string, unknown>): void {
@@ -73,14 +165,43 @@ function clampMatchScore(score: number): number {
 }
 
 function primaryEvidenceText(
-  product: ProductDiscoveryProduct,
+  productUrl: string,
   sources: ProductDiscoverySource[]
 ): string {
-  const sourceTitle =
-    sources.find((source) => source.url === product.productUrl)?.title ??
-    sources.find((source) => product.productUrl.includes(source.url))?.title ??
-    null;
-  return [product.name, product.whyItMatches, sourceTitle].filter(Boolean).join("\n");
+  const display = resolveTrustedDisplayName({
+    sources,
+    productUrl,
+  });
+  return buildTrustedEvidenceText({
+    productUrl,
+    sources,
+    trustedDisplayName: display.verified ? display.name : null,
+  });
+}
+
+function evidenceDiagnosticsForProduct(
+  product: ProductDiscoveryProduct,
+  sources: ProductDiscoverySource[],
+  modelReportedPrice?: number | null
+) {
+  const evidence = buildProductEvidence({
+    productUrl: product.productUrl,
+    sources,
+  });
+  return {
+    evidenceDiagnostics: {
+      ...buildEvidenceDiagnostics({
+        evidence,
+        matchedRequirements: product.matchedRequirements,
+        unsupportedModelClaims: [],
+        priceEvidence: product.priceEvidence ?? "none",
+      }),
+      modelReportedPrice: modelReportedPrice ?? null,
+      merchantEvidence: isProductionDeployment()
+        ? undefined
+        : compactMerchantEvidenceForDebug(product.productUrl),
+    },
+  };
 }
 
 async function maybeRecoverBudgetUnverified(input: {
@@ -88,7 +209,7 @@ async function maybeRecoverBudgetUnverified(input: {
   requestedItem: string;
   allowlistDomains: string[];
   sources: ProductDiscoverySource[];
-  source: "primary" | "rescue" | "targeted";
+  source: AcceptanceSource;
   finalized: ReturnType<typeof finalizeAcceptedProduct>;
   evidenceText?: string;
   priceVerificationAttempted: boolean;
@@ -133,15 +254,42 @@ async function maybeRecoverBudgetUnverified(input: {
 }
 
 function buildAcceptanceDiagnostics(
-  source: "primary" | "rescue" | "targeted",
-  finalized: ReturnType<typeof finalizeAcceptedProduct>
+  source: "primary" | "rescue" | "targeted" | "serp_fallback",
+  finalized: ReturnType<typeof finalizeAcceptedProduct>,
+  productEvidence?: import("./productEvidence").ProductEvidence | null,
+  requestedItem?: string,
+  candidateId?: string | null
 ) {
-  return {
+  const base = {
     acceptanceChecked: true,
     acceptanceSource: source,
     acceptanceScore: finalized.matchScore,
     requirementCoverage: finalized.requirementCoverage,
     acceptanceReason: finalized.reason,
+  };
+  if (!productEvidence || !requestedItem) return base;
+  if (finalized.accepted) {
+    return {
+      ...base,
+      acceptedDecisionSnapshot: buildDecisionSnapshot({
+        requestedItem,
+        path: source === "serp_fallback" ? "serp" : source,
+        product: finalized.product,
+        acceptance: finalized,
+        productEvidence,
+      }),
+    };
+  }
+  return {
+    ...base,
+    rejectedDecisionSnapshot: buildRejectedDecisionSnapshot({
+      requestedItem,
+      path: source === "serp_fallback" ? "serp" : source,
+      candidateId: candidateId ?? null,
+      product: finalized.product,
+      acceptance: finalized,
+      productEvidence,
+    }),
   };
 }
 
@@ -160,6 +308,113 @@ function withTargetedResearchSkippedDiagnostics(
   };
 }
 
+function withSerpFallbackDisabledDiagnostics(
+  result: ProductDiscoveryResult
+): ProductDiscoveryResult["diagnostics"] {
+  const diagnostics = result.diagnostics;
+  const base = {
+    searchUsed: diagnostics?.searchUsed ?? false,
+    allowedDomainsCount: diagnostics?.allowedDomainsCount ?? 0,
+    ...diagnostics,
+    serpFallbackEnabled: false,
+    serpFallbackAttempted: false,
+    serpFallbackQueryCount: 0,
+    serpFallbackCandidateCount: 0,
+    serpFallbackSelectedCandidateId: null,
+    serpFallbackAccepted: false,
+    serpFallbackDurationMs: null,
+    openAiFinalFailureReason:
+      diagnostics?.openAiFinalFailureReason ?? openAiFinalFailureReason(diagnostics),
+  };
+
+  if (result.status === "found") {
+    return {
+      ...base,
+      serpFallbackEligible: false,
+      serpFallbackReason: "status_found",
+    };
+  }
+
+  const eligibility = shouldUseSerpFallback({
+    requestedItem: result.requestedItem,
+    status: result.status,
+    diagnostics,
+  });
+
+  return {
+    ...base,
+    serpFallbackEligible: eligibility.eligible,
+    // Distinguish "would have been eligible but flag is off" from "not eligible".
+    serpFallbackReason: eligibility.eligible
+      ? "eligible_but_disabled"
+      : eligibility.reason ?? "feature_disabled",
+  };
+}
+
+async function finalizeWithSerpFallbackIfNeeded(
+  result: ProductDiscoveryResult,
+  ctx: {
+    client: OpenAI;
+    requestedItem: string;
+    allowlistDomains: string[];
+    primarySources: ProductDiscoverySource[];
+  }
+): Promise<ProductDiscoveryResult> {
+  if (!isProductDiscoverySerpFallbackEnabled()) {
+    return attachTrackedUsage(
+      {
+        ...result,
+        diagnostics: withSerpFallbackDisabledDiagnostics(result),
+      },
+      ctx.client
+    );
+  }
+
+  if (result.status === "found") {
+    return attachTrackedUsage(
+      {
+        ...result,
+        diagnostics: {
+          searchUsed: result.diagnostics?.searchUsed ?? false,
+          allowedDomainsCount: result.diagnostics?.allowedDomainsCount ?? 0,
+          ...result.diagnostics,
+          serpFallbackEnabled: true,
+          serpFallbackAttempted: false,
+          serpFallbackEligible: false,
+          serpFallbackReason: "status_found",
+          serpFallbackQueryCount: 0,
+          serpFallbackCandidateCount: 0,
+          serpFallbackSelectedCandidateId: null,
+          serpFallbackAccepted: false,
+          serpFallbackDurationMs: null,
+        },
+      },
+      ctx.client
+    );
+  }
+
+  const fallbackResult = await attemptSerpFallback({
+    client: ctx.client,
+    requestedItem: ctx.requestedItem,
+    allowlistDomains: ctx.allowlistDomains,
+    primarySources: ctx.primarySources,
+    result,
+  });
+
+  return attachTrackedUsage(
+    {
+      ...fallbackResult,
+      diagnostics: {
+        searchUsed: fallbackResult.diagnostics?.searchUsed ?? false,
+        allowedDomainsCount: fallbackResult.diagnostics?.allowedDomainsCount ?? 0,
+        ...fallbackResult.diagnostics,
+        serpFallbackEnabled: true,
+      },
+    },
+    ctx.client
+  );
+}
+
 async function finalizeWithTargetedResearchIfNeeded(
   result: ProductDiscoveryResult,
   ctx: {
@@ -168,13 +423,21 @@ async function finalizeWithTargetedResearchIfNeeded(
     allowlistDomains: string[];
     primarySources: ProductDiscoverySource[];
     priceVerificationAttempted?: boolean;
+    marketContext?: {
+      countryCode?: string | null;
+      formattedLocation?: string | null;
+      merchantDomains?: string[];
+    } | null;
   }
 ): Promise<ProductDiscoveryResult> {
   if (result.status !== "not_found") {
-    return {
-      ...result,
-      diagnostics: withTargetedResearchSkippedDiagnostics(result.diagnostics),
-    };
+    return finalizeWithSerpFallbackIfNeeded(
+      {
+        ...result,
+        diagnostics: withTargetedResearchSkippedDiagnostics(result.diagnostics),
+      },
+      ctx
+    );
   }
 
   const targeted = await attemptTargetedResearch({
@@ -184,9 +447,10 @@ async function finalizeWithTargetedResearchIfNeeded(
     primarySources: ctx.primarySources,
     priorDiagnostics: result.diagnostics,
     priorRejectedProduct: result.diagnostics?.rejectedProduct ?? null,
+    marketContext: ctx.marketContext,
   });
 
-  if (targeted.result?.status === "found") {
+    if (targeted.result?.status === "found") {
     logProductDiscovery({
       requestedItem: ctx.requestedItem,
       finalStatus: "found",
@@ -194,7 +458,7 @@ async function finalizeWithTargetedResearchIfNeeded(
       targetedResearchDurationMs: targeted.durationMs,
       totalDurationMs: targeted.result.diagnostics?.elapsedMs,
     });
-    return targeted.result;
+    return finalizeWithSerpFallbackIfNeeded(targeted.result, ctx);
   }
 
   let finalResult = result;
@@ -220,22 +484,25 @@ async function finalizeWithTargetedResearchIfNeeded(
       priceVerificationAttempted: ctx.priceVerificationAttempted ?? false,
     });
     if (recovery.finalized.accepted) {
-      return {
-        requestedItem: ctx.requestedItem,
-        status: "found",
-        product: recovery.finalized.product,
-        sources: result.sources,
-        diagnostics: {
-          ...result.diagnostics,
-          searchUsed: result.diagnostics?.searchUsed ?? false,
-          allowedDomainsCount: result.diagnostics?.allowedDomainsCount ?? 0,
-          ...buildAcceptanceDiagnostics(
-            result.diagnostics?.acceptanceSource ?? "primary",
-            recovery.finalized
-          ),
-          ...recovery.priceVerificationDiagnostics,
+      return finalizeWithSerpFallbackIfNeeded(
+        {
+          requestedItem: ctx.requestedItem,
+          status: "found",
+          product: recovery.finalized.product,
+          sources: result.sources,
+          diagnostics: {
+            ...result.diagnostics,
+            searchUsed: result.diagnostics?.searchUsed ?? false,
+            allowedDomainsCount: result.diagnostics?.allowedDomainsCount ?? 0,
+            ...buildAcceptanceDiagnostics(
+              result.diagnostics?.acceptanceSource ?? "primary",
+              recovery.finalized
+            ),
+            ...recovery.priceVerificationDiagnostics,
+          },
         },
-      };
+        ctx
+      );
     }
     finalResult = {
       ...result,
@@ -248,20 +515,45 @@ async function finalizeWithTargetedResearchIfNeeded(
     };
   }
 
-  return {
-    ...finalResult,
-    diagnostics: {
-      searchUsed: result.diagnostics?.searchUsed ?? false,
-      allowedDomainsCount: result.diagnostics?.allowedDomainsCount ?? 0,
-      ...result.diagnostics,
-      targetedResearchAttempted: targeted.attempted,
-      targetedResearchSearchUsed: targeted.searchUsed,
-      targetedResearchSourceCount: targeted.sourceCount,
-      targetedResearchAccepted: false,
-      targetedResearchDurationMs: targeted.durationMs,
-      elapsedMs: (result.diagnostics?.elapsedMs ?? 0) + targeted.durationMs,
+  const targetedDiag = targeted.result?.diagnostics;
+  const laterReject = targetedDiag?.rejectedDecisionSnapshot;
+  const earlierReject = result.diagnostics?.rejectedDecisionSnapshot;
+  const primaryHistory =
+    result.diagnostics?.rescueRejectedDecisionSnapshot
+    ?? (earlierReject?.path === "primary" ? earlierReject : undefined);
+  const chosenReject = preferConcreteRejectedSnapshot(earlierReject, laterReject);
+  const usedTargetedReject = chosenReject?.path === "targeted";
+  return finalizeWithSerpFallbackIfNeeded(
+    {
+      ...finalResult,
+      diagnostics: {
+        searchUsed: result.diagnostics?.searchUsed ?? false,
+        allowedDomainsCount: result.diagnostics?.allowedDomainsCount ?? 0,
+        ...result.diagnostics,
+        targetedResearchAttempted: targeted.attempted,
+        targetedResearchSearchUsed: targeted.searchUsed,
+        targetedResearchSourceCount: targeted.sourceCount,
+        targetedResearchAccepted: false,
+        targetedResearchDurationMs: targeted.durationMs,
+        elapsedMs: (result.diagnostics?.elapsedMs ?? 0) + targeted.durationMs,
+        targetedSelectedCandidateId: targetedDiag?.targetedSelectedCandidateId ?? null,
+        targetedEnrichmentAttemptedCount: targetedDiag?.targetedEnrichmentAttemptedCount,
+        targetedEnrichmentSuccessCount: targetedDiag?.targetedEnrichmentSuccessCount,
+        targetedResultAcceptanceReason: targetedDiag?.acceptanceReason ?? null,
+        rescueRejectedDecisionSnapshot: primaryHistory,
+        rejectedDecisionSnapshot: chosenReject,
+        ...(usedTargetedReject
+          ? {
+              rejectedProduct: targetedDiag?.rejectedProduct ?? result.diagnostics?.rejectedProduct,
+              acceptanceReason: targetedDiag?.acceptanceReason ?? result.diagnostics?.acceptanceReason,
+              acceptanceSource: "targeted" as const,
+              acceptanceChecked: true,
+            }
+          : {}),
+      },
     },
-  };
+    ctx
+  );
 }
 
 function buildRescueFinalResult(input: {
@@ -272,9 +564,16 @@ function buildRescueFinalResult(input: {
   initialFailureReason: InitialFailureReason | null;
   primaryRejectedProduct?: ProductDiscoveryProduct | null;
   primaryAcceptance?: ReturnType<typeof finalizeAcceptedProduct> | null;
+  primaryProductEvidence?: import("./productEvidence").ProductEvidence | null;
   rescue: Awaited<ReturnType<typeof attemptSourceBackedRescue>>;
   priceVerificationDiagnostics?: ReturnType<typeof buildPriceVerificationDiagnostics>;
   rescueFinalized?: ReturnType<typeof finalizeAcceptedProduct> | null;
+  primarySearchDiagFields?: {
+    primaryWebSearchCallCount: number;
+    primarySearchQueries: string[];
+    primarySourceCount: number;
+    primaryDistinctSourceDomains: string[];
+  };
 }): ProductDiscoveryResult {
   const totalElapsedMs = Date.now() - input.started;
   const enrichmentDiagnostics = {
@@ -282,6 +581,13 @@ function buildRescueFinalResult(input: {
     enrichmentSuccessCount: input.rescue.enrichmentStats?.enrichmentSuccessCount,
     enrichment403Count: input.rescue.enrichmentStats?.enrichment403Count,
     enrichmentTimeoutCount: input.rescue.enrichmentStats?.enrichmentTimeoutCount,
+    rescueEnrichmentAttemptedCount: input.rescue.enrichmentStats?.enrichmentAttemptedCount,
+    rescueEnrichmentSuccessCount: input.rescue.enrichmentStats?.enrichmentSuccessCount,
+    rescueEnrichmentCandidateDebug: input.rescue.enrichmentStats?.candidateDebug,
+    enrichmentCandidateDebug: input.rescue.enrichmentStats?.candidateDebug,
+    rescueSelectedCandidateEnrichment: input.rescue.enrichmentStats?.selectedCandidateEnrichment,
+    selectedAdditionalEnrichmentAttempts:
+      input.rescue.enrichmentStats?.selectedAdditionalEnrichmentAttempts ?? 0,
   };
 
   const baseDiagnostics = {
@@ -296,6 +602,7 @@ function buildRescueFinalResult(input: {
     rescueSelectedCandidateId: input.rescue.rescueSelectedCandidateId,
     rescueElapsedMs: input.rescue.rescueElapsedMs,
     ...enrichmentDiagnostics,
+    ...input.primarySearchDiagFields,
   };
 
   if (!input.rescue.product) {
@@ -315,7 +622,12 @@ function buildRescueFinalResult(input: {
         rescueSucceeded: false,
         rejectedProduct: input.primaryRejectedProduct ?? null,
         ...(input.primaryAcceptance
-          ? buildAcceptanceDiagnostics("primary", input.primaryAcceptance)
+          ? buildAcceptanceDiagnostics(
+              "primary",
+              input.primaryAcceptance,
+              input.primaryProductEvidence,
+              input.requestedItem
+            )
           : {}),
         ...input.priceVerificationDiagnostics,
       },
@@ -348,7 +660,12 @@ function buildRescueFinalResult(input: {
       diagnostics: {
         ...baseDiagnostics,
         rescueSucceeded: true,
-        ...buildAcceptanceDiagnostics("rescue", finalized),
+        ...buildAcceptanceDiagnostics(
+          "rescue",
+          finalized,
+          input.rescue.productEvidence,
+          input.requestedItem
+        ),
         ...input.priceVerificationDiagnostics,
       },
     };
@@ -372,7 +689,22 @@ function buildRescueFinalResult(input: {
       ...baseDiagnostics,
       rescueSucceeded: false,
       rejectedProduct: finalized.product,
-      ...buildAcceptanceDiagnostics("rescue", finalized),
+      ...buildAcceptanceDiagnostics(
+        "rescue",
+        finalized,
+        input.rescue.productEvidence,
+        input.requestedItem,
+        input.rescue.rescueSelectedCandidateId
+      ),
+      rescueRejectedDecisionSnapshot:
+        input.primaryAcceptance && input.primaryProductEvidence
+          ? buildAcceptanceDiagnostics(
+              "primary",
+              input.primaryAcceptance,
+              input.primaryProductEvidence,
+              input.requestedItem
+            ).rejectedDecisionSnapshot
+          : undefined,
       ...input.priceVerificationDiagnostics,
     },
   };
@@ -402,10 +734,32 @@ function sanitizePrimaryProductOutput(
     return { ok: false, initialFailureReason: "url_not_in_sources" };
   }
 
-  const price =
+  const modelReportedPrice =
     typeof product.price === "number" && Number.isFinite(product.price) && product.price > 0
       ? product.price
       : null;
+
+  const display = resolveTrustedDisplayName({
+    sources,
+    productUrl: product.productUrl,
+    modelName: product.name,
+  });
+  const evidence = buildProductEvidence({
+    productUrl: product.productUrl,
+    sources,
+    trustedDisplayName: display.verified ? display.name : null,
+  });
+  const groundedPrice = resolveGroundedPrice({
+    evidence,
+    modelClaimedPrice: modelReportedPrice,
+  });
+  const price = groundedPrice.price;
+  const currency =
+    price != null && (groundedPrice.currency === "EUR" || product.currency?.trim().toUpperCase() === "EUR")
+      ? "EUR"
+      : price != null
+        ? groundedPrice.currency
+        : null;
 
   const requirementLists = normalizeRequirementLists(
     requestedItem,
@@ -423,13 +777,10 @@ function sanitizePrimaryProductOutput(
     unknownRequirements: requirementLists.unknownRequirements,
   });
 
-  const currency =
-    price != null && product.currency?.trim().toUpperCase() === "EUR" ? "EUR" : null;
-
   return {
     ok: true,
     product: {
-      name: product.name.trim(),
+      name: display.name,
       retailer: product.retailer.trim(),
       retailerDomain: retailerDomain || product.retailerDomain,
       productUrl: product.productUrl,
@@ -437,13 +788,14 @@ function sanitizePrimaryProductOutput(
       currency,
       priceUnit: product.priceUnit,
       imageUrl: product.imageUrl?.startsWith("https://") ? product.imageUrl : null,
+      // Keep model specs for display/debug only — acceptance must not treat them as evidence.
       specifications: specificationsToRecord(product.specifications),
       matchScore,
       matchedRequirements: requirementLists.matchedRequirements,
       unmetRequirements: requirementLists.unmetRequirements,
       unknownRequirements: requirementLists.unknownRequirements,
       whyItMatches: product.whyItMatches.trim(),
-      priceEvidence: price != null ? "web_search" : "none",
+      priceEvidence: groundedPrice.priceEvidence,
     },
   };
 }
@@ -453,40 +805,49 @@ export async function searchProductItem(
 ): Promise<ProductDiscoveryResult> {
   const requestedItem = options.requestedItem.trim();
   const allowlistDomains = normalizeProductDiscoveryAllowlist(options.allowlistDomains);
+  const marketContext = normalizeProductDiscoveryMarketContext(
+    options.marketContext,
+    allowlistDomains
+  );
   const started = Date.now();
 
   if (!requestedItem) {
-    return {
+    return attachModelRoutingDiagnostics({
       requestedItem: "",
       status: "error",
       product: null,
       sources: [],
       diagnostics: { searchUsed: false, allowedDomainsCount: 0, errorCode: "empty_item" },
-    };
+    });
   }
 
   if (allowlistDomains.length === 0) {
-    return {
+    return attachModelRoutingDiagnostics({
       requestedItem,
       status: "no_retailers",
       product: null,
       sources: [],
       diagnostics: { searchUsed: false, allowedDomainsCount: 0 },
-    };
+    });
   }
 
-  const client =
+  const timeoutMs = Math.min(
+    OPENAI_PRODUCT_SEARCH_TIMEOUT_MS,
+    Math.max(1, options.timeoutMs ?? OPENAI_PRODUCT_SEARCH_TIMEOUT_MS)
+  );
+  const client = trackClientUsage(
     options.client ??
-    new OpenAI({
-      apiKey: requireApiKey(),
-      timeout: OPENAI_PRODUCT_SEARCH_TIMEOUT_MS,
-      maxRetries: 0,
-    });
+      new OpenAI({
+        apiKey: requireApiKey(),
+        timeout: timeoutMs,
+        maxRetries: 0,
+      })
+  );
 
   try {
     const response: ParsedResponse<ProductDiscoveryModelOutput> = await client.responses.parse({
-      model: OPENAI_PRODUCT_SEARCH_MODEL,
-      instructions: PRODUCT_DISCOVERY_SYSTEM_PROMPT,
+      model: getProductDiscoveryModel("primary"),
+      instructions: getProductDiscoverySystemPrompt(),
       input: [
         {
           role: "user",
@@ -497,6 +858,11 @@ export async function searchProductItem(
                 requestedItem,
                 allowedDomains: allowlistDomains,
                 requirementPolicy: buildRequirementPolicyHints(requestedItem),
+                suggestedSearchQueries: buildSuggestedSearchQueriesForRequest(
+                  requestedItem,
+                  allowlistDomains
+                ),
+                marketContext,
               }),
             },
           ],
@@ -516,6 +882,14 @@ export async function searchProductItem(
     });
 
     const sources = extractWebSearchSources(response);
+    recordPrimaryModelStage(client, extractOpenAiResponseUsage(response));
+    const primarySearchDiagnostics = extractPrimarySearchDiagnostics(response, sources);
+    const primarySearchDiagFields = {
+      primaryWebSearchCallCount: primarySearchDiagnostics.webSearchCallCount,
+      primarySearchQueries: primarySearchDiagnostics.searchQueries,
+      primarySourceCount: primarySearchDiagnostics.sourceCount,
+      primaryDistinctSourceDomains: primarySearchDiagnostics.distinctSourceDomains,
+    };
     const parsed = response.output_parsed;
     const primaryElapsedMs = Date.now() - started;
     const searchUsed = responseUsedWebSearch(response);
@@ -528,6 +902,7 @@ export async function searchProductItem(
         finalStatus: "not_found",
         elapsedMs: primaryElapsedMs,
         errorCode: "web_search_not_used",
+        ...primarySearchDiagFields,
       });
       return finalizeWithTargetedResearchIfNeeded(
         {
@@ -541,9 +916,10 @@ export async function searchProductItem(
             elapsedMs: primaryElapsedMs,
             errorCode: "web_search_not_used",
             primaryStatus: "not_found",
+            ...primarySearchDiagFields,
           },
         },
-        { client, requestedItem, allowlistDomains, primarySources: sources }
+        { client, requestedItem, allowlistDomains, primarySources: sources, marketContext }
       );
     }
 
@@ -560,9 +936,10 @@ export async function searchProductItem(
             elapsedMs: primaryElapsedMs,
             errorCode: "invalid_model_output",
             primaryStatus: "not_found",
+            ...primarySearchDiagFields,
           },
         },
-        { client, requestedItem, allowlistDomains, primarySources: sources }
+        { client, requestedItem, allowlistDomains, primarySources: sources, marketContext }
       );
     }
 
@@ -573,7 +950,7 @@ export async function searchProductItem(
         requestedItem,
         source: "primary",
         product: primaryOutcome.product,
-        evidenceText: primaryEvidenceText(primaryOutcome.product, sources),
+        evidenceText: primaryEvidenceText(primaryOutcome.product.productUrl, sources),
       });
 
       let priceVerificationAttempted = false;
@@ -592,7 +969,7 @@ export async function searchProductItem(
           sources,
           source: "primary",
           finalized,
-          evidenceText: primaryEvidenceText(primaryOutcome.product, sources),
+          evidenceText: primaryEvidenceText(primaryOutcome.product.productUrl, sources),
           priceVerificationAttempted,
         });
         finalized = recovery.finalized;
@@ -602,6 +979,11 @@ export async function searchProductItem(
 
       if (finalized.accepted) {
         const totalElapsedMs = Date.now() - started;
+        const decisionEvidence = buildProductEvidenceForDecision({
+          productUrl: finalized.product.productUrl,
+          sources,
+          trustedDisplayName: finalized.product.name,
+        });
         logProductDiscovery({
           requestedItem,
           allowedDomainsCount: allowlistDomains.length,
@@ -614,21 +996,26 @@ export async function searchProductItem(
           totalDurationMs: totalElapsedMs,
           priceVerificationRecovered: priceVerificationDiagnostics.priceVerificationRecovered,
         });
-        return {
-          requestedItem,
-          status: "found",
-          product: finalized.product,
-          sources,
-          diagnostics: withTargetedResearchSkippedDiagnostics({
-            searchUsed: true,
-            allowedDomainsCount: allowlistDomains.length,
-            elapsedMs: totalElapsedMs,
-            rescueAttempted: false,
-            primaryStatus: "found",
-            ...buildAcceptanceDiagnostics("primary", finalized),
-            ...priceVerificationDiagnostics,
-          }),
-        };
+        return finalizeWithSerpFallbackIfNeeded(
+          {
+            requestedItem,
+            status: "found",
+            product: finalized.product,
+            sources,
+            diagnostics: withTargetedResearchSkippedDiagnostics({
+              searchUsed: true,
+              allowedDomainsCount: allowlistDomains.length,
+              elapsedMs: totalElapsedMs,
+              rescueAttempted: false,
+              primaryStatus: "found",
+              ...buildAcceptanceDiagnostics("primary", finalized, decisionEvidence, requestedItem),
+              ...priceVerificationDiagnostics,
+              ...primarySearchDiagFields,
+              ...evidenceDiagnosticsForProduct(finalized.product, sources),
+            }),
+          },
+          { client, requestedItem, allowlistDomains, primarySources: sources, marketContext }
+        );
       }
 
       const runRescueAfterPrimaryReject = shouldAttemptRescue({
@@ -637,6 +1024,12 @@ export async function searchProductItem(
         searchUsed: true,
         sourceCount: sources.length,
         acceptanceRejected: true,
+      });
+
+      const primaryDecisionEvidence = buildProductEvidenceForDecision({
+        productUrl: finalized.product.productUrl,
+        sources,
+        trustedDisplayName: finalized.product.name,
       });
 
       if (runRescueAfterPrimaryReject) {
@@ -674,27 +1067,36 @@ export async function searchProductItem(
 
         if (rescueFinalized?.accepted) {
           const totalElapsedMs = Date.now() - started;
-          return {
-            requestedItem,
-            status: "found",
-            product: rescueFinalized.product,
-            sources,
-            diagnostics: {
-              searchUsed: true,
-              allowedDomainsCount: allowlistDomains.length,
-              elapsedMs: totalElapsedMs,
-              initialFailureReason: null,
-              primaryStatus: "found",
-              rescueAttempted: rescue.rescueAttempted,
-              rescueCandidateCount: rescue.rescueCandidateCount,
-              rescueSelected: rescue.rescueSelected,
-              rescueSucceeded: true,
-              rescueElapsedMs: rescue.rescueElapsedMs,
-              rescueSelectedCandidateId: rescue.rescueSelectedCandidateId,
-              ...buildAcceptanceDiagnostics("rescue", rescueFinalized),
-              ...priceVerificationDiagnostics,
+          return finalizeWithSerpFallbackIfNeeded(
+            {
+              requestedItem,
+              status: "found",
+              product: rescueFinalized.product,
+              sources,
+              diagnostics: {
+                searchUsed: true,
+                allowedDomainsCount: allowlistDomains.length,
+                elapsedMs: totalElapsedMs,
+                initialFailureReason: null,
+                primaryStatus: "found",
+                rescueAttempted: rescue.rescueAttempted,
+                rescueCandidateCount: rescue.rescueCandidateCount,
+                rescueSelected: rescue.rescueSelected,
+                rescueSucceeded: true,
+                rescueElapsedMs: rescue.rescueElapsedMs,
+                rescueSelectedCandidateId: rescue.rescueSelectedCandidateId,
+                ...buildAcceptanceDiagnostics(
+                  "rescue",
+                  rescueFinalized,
+                  rescue.productEvidence,
+                  requestedItem
+                ),
+                ...priceVerificationDiagnostics,
+                ...primarySearchDiagFields,
+              },
             },
-          };
+            { client, requestedItem, allowlistDomains, primarySources: sources, marketContext }
+          );
         }
 
         return finalizeWithTargetedResearchIfNeeded(
@@ -706,11 +1108,13 @@ export async function searchProductItem(
             initialFailureReason: null,
             primaryRejectedProduct: finalized.product,
             primaryAcceptance: finalized,
+            primaryProductEvidence: primaryDecisionEvidence,
             rescue,
             rescueFinalized,
             priceVerificationDiagnostics,
+            primarySearchDiagFields,
           }),
-          { client, requestedItem, allowlistDomains, primarySources: sources, priceVerificationAttempted }
+          { client, requestedItem, allowlistDomains, primarySources: sources, priceVerificationAttempted, marketContext }
         );
       }
 
@@ -728,11 +1132,17 @@ export async function searchProductItem(
             primaryStatus: "found",
             rescueAttempted: false,
             rejectedProduct: finalized.product,
-            ...buildAcceptanceDiagnostics("primary", finalized),
+            ...buildAcceptanceDiagnostics(
+              "primary",
+              finalized,
+              primaryDecisionEvidence,
+              requestedItem
+            ),
             ...priceVerificationDiagnostics,
+            ...primarySearchDiagFields,
           },
         },
-        { client, requestedItem, allowlistDomains, primarySources: sources, priceVerificationAttempted }
+        { client, requestedItem, allowlistDomains, primarySources: sources, priceVerificationAttempted, marketContext }
       );
     }
 
@@ -759,9 +1169,10 @@ export async function searchProductItem(
             initialFailureReason,
             primaryStatus: "not_found",
             rescueAttempted: false,
+            ...primarySearchDiagFields,
           },
         },
-        { client, requestedItem, allowlistDomains, primarySources: sources }
+        { client, requestedItem, allowlistDomains, primarySources: sources, marketContext }
       );
     }
 
@@ -816,8 +1227,9 @@ export async function searchProductItem(
         rescue,
         rescueFinalized,
         priceVerificationDiagnostics,
+        primarySearchDiagFields,
       }),
-      { client, requestedItem, allowlistDomains, primarySources: sources, priceVerificationAttempted }
+      { client, requestedItem, allowlistDomains, primarySources: sources, priceVerificationAttempted, marketContext }
     );
   } catch (error) {
     const elapsedMs = Date.now() - started;
@@ -829,17 +1241,20 @@ export async function searchProductItem(
       elapsedMs,
       errorCode: message,
     });
-    return {
-      requestedItem,
-      status: "error",
-      product: null,
-      sources: [],
-      diagnostics: {
-        searchUsed: false,
-        allowedDomainsCount: allowlistDomains.length,
-        elapsedMs,
-        errorCode: message,
+    return attachTrackedUsage(
+      {
+        requestedItem,
+        status: "error",
+        product: null,
+        sources: [],
+        diagnostics: {
+          searchUsed: false,
+          allowedDomainsCount: allowlistDomains.length,
+          elapsedMs,
+          errorCode: message,
+        },
       },
-    };
+      client
+    );
   }
 }

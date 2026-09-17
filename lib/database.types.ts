@@ -312,11 +312,17 @@ export type Database = {
         Row: {
           bed_type: string
           budget_level: string | null
+          country_code: string | null
           created_at: string
           flooring: string
+          formatted_address: string | null
           keep_existing_walls: boolean
+          latitude: number | null
+          location_input: string | null
+          longitude: number | null
           notes: string
           project_id: string
+          radius_km: number | null
           room_type: string | null
           selected_styles: Json
           underfloor_heating: boolean
@@ -327,11 +333,17 @@ export type Database = {
         Insert: {
           bed_type?: string
           budget_level?: string | null
+          country_code?: string | null
           created_at?: string
           flooring?: string
+          formatted_address?: string | null
           keep_existing_walls?: boolean
+          latitude?: number | null
+          location_input?: string | null
+          longitude?: number | null
           notes?: string
           project_id: string
+          radius_km?: number | null
           room_type?: string | null
           selected_styles?: Json
           underfloor_heating?: boolean
@@ -342,11 +354,17 @@ export type Database = {
         Update: {
           bed_type?: string
           budget_level?: string | null
+          country_code?: string | null
           created_at?: string
           flooring?: string
+          formatted_address?: string | null
           keep_existing_walls?: boolean
+          latitude?: number | null
+          location_input?: string | null
+          longitude?: number | null
           notes?: string
           project_id?: string
+          radius_km?: number | null
           room_type?: string | null
           selected_styles?: Json
           underfloor_heating?: boolean

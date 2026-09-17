@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { geocodeAddress, reverseGeocode } from "@/lib/geocode/service";
 import type { GeocodeResult } from "@/lib/geocode/types";
+import { requireSpendRouteAuth } from "@/lib/api/spendAuth";
+import { sanitizedInternalErrorResponse } from "@/lib/api/publicError";
 
 export const runtime = "nodejs";
 
@@ -27,6 +29,8 @@ function jsonResult(result: GeocodeResult): NextResponse {
 }
 
 export async function GET(req: Request) {
+  const auth = await requireSpendRouteAuth();
+  if (!auth.ok) return auth.response;
   try {
     const { searchParams } = new URL(req.url);
     const address = searchParams.get("address");
@@ -39,17 +43,14 @@ export async function GET(req: Request) {
       });
     }
     return jsonResult(await geocodeAddress(address));
-  } catch {
-    return jsonResult({
-      ok: false,
-      code: "GEOCODING_ERROR",
-      message: "Geocoding failed.",
-      httpStatus: 500,
-    });
+  } catch (error) {
+    return sanitizedInternalErrorResponse("Geocode GET error:", error);
   }
 }
 
 export async function POST(req: Request) {
+  const auth = await requireSpendRouteAuth();
+  if (!auth.ok) return auth.response;
   try {
     const body = (await req.json().catch(() => null)) as
       | { address?: unknown; lat?: unknown; lng?: unknown }
@@ -74,12 +75,7 @@ export async function POST(req: Request) {
       message: "address or lat/lng is required",
       httpStatus: 400,
     });
-  } catch {
-    return jsonResult({
-      ok: false,
-      code: "GEOCODING_ERROR",
-      message: "Geocoding failed.",
-      httpStatus: 500,
-    });
+  } catch (error) {
+    return sanitizedInternalErrorResponse("Geocode POST error:", error);
   }
 }

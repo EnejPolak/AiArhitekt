@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { mapProjectDbError, projectErrorMessage } from "./errors";
 
 describe("project errors", () => {
@@ -39,6 +39,24 @@ describe("project errors", () => {
     expect(mapped.code).toBe("failed");
     expect(mapped.message).toBe("Could not load your projects. Try again.");
     expect(mapped.message).not.toMatch(/update|schema cache|PGRST|SQL|policy/i);
+  });
+
+  it("logs a structured load diagnostic without putting SQL in the customer message", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const mapped = mapProjectDbError(
+      {
+        message: "Could not find the table 'public.projects' in the schema cache",
+        code: "PGRST205",
+        hint: "Perhaps you meant the table 'public.project'",
+      },
+      "load"
+    );
+    expect(mapped.message).not.toMatch(/schema cache|PGRST205|public\.projects/i);
+    expect(spy).toHaveBeenCalledWith(
+      "[projects] database_error",
+      expect.stringContaining('"code":"PGRST205"')
+    );
+    spy.mockRestore();
   });
 
   it("keeps mutate copy for write failures", () => {

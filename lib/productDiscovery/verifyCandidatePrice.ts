@@ -225,7 +225,7 @@ function sourceEvidenceToVerification(
   const prices: Array<{ price: number; source: ProductDiscoverySource }> = [];
 
   for (const source of relatedSources) {
-    const text = [source.title, source.url].filter(Boolean).join(" ");
+    const text = [source.title, source.snippet, source.url].filter(Boolean).join(" ");
     if (!text || isCategoryLikeEvidence(source.url, text, candidate.name)) continue;
     if (FROM_PRICE_PATTERN.test(text) && !urlsEvidenceMatch(candidate.productUrl, source.url)) continue;
 

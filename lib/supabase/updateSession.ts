@@ -3,6 +3,7 @@ import { createServerClient } from "@supabase/ssr";
 import type { Database } from "@/lib/database.types";
 import { getSupabasePublicConfig } from "@/lib/env/supabase";
 import { isSafeInternalPath } from "@/lib/auth/redirect";
+import { supabaseNoStoreFetch } from "@/lib/supabase/noStoreFetch";
 
 /**
  * Optimistic session refresh + cookie write.
@@ -13,6 +14,7 @@ export async function updateSession(request: NextRequest) {
   const { url, publishableKey } = getSupabasePublicConfig();
 
   const supabase = createServerClient<Database>(url, publishableKey, {
+    global: { fetch: supabaseNoStoreFetch },
     cookies: {
       getAll() {
         return request.cookies.getAll();

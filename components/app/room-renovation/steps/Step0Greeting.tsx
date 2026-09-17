@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { wizardPanelClass } from "../wizardUi";
 
 export interface Step0GreetingProps {
   onContinue: () => void;
@@ -51,7 +52,7 @@ export const Step0Greeting: React.FC<Step0GreetingProps> = ({ onContinue }) => {
     <div className="space-y-6">
       {/* AI Message */}
       <div className="flex justify-start">
-        <div className="max-w-[85%] rounded-[16px] px-6 py-5 bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.08)]">
+        <div className={wizardPanelClass}>
           <div className="text-[15px] text-[rgba(255,255,255,0.85)] leading-relaxed whitespace-pre-wrap">
             {greeting}
           </div>

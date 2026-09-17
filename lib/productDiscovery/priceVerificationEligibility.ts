@@ -29,9 +29,13 @@ export function shouldAttemptPriceVerification(input: {
   if (input.finalized.lists.unmetRequirements.length > 0) return false;
 
   const minScore =
-    input.source === "rescue" ? ACCEPTANCE_RESCUE_MIN_SCORE : ACCEPTANCE_PRIMARY_MIN_SCORE;
+    input.source === "rescue" || input.source === "serp_fallback"
+      ? ACCEPTANCE_RESCUE_MIN_SCORE
+      : ACCEPTANCE_PRIMARY_MIN_SCORE;
   const minCoverage =
-    input.source === "rescue" ? ACCEPTANCE_RESCUE_MIN_COVERAGE : ACCEPTANCE_PRIMARY_MIN_COVERAGE;
+    input.source === "rescue" || input.source === "serp_fallback"
+      ? ACCEPTANCE_RESCUE_MIN_COVERAGE
+      : ACCEPTANCE_PRIMARY_MIN_COVERAGE;
 
   if (input.finalized.matchScore < minScore) return false;
   if (input.finalized.requirementCoverage < minCoverage) return false;

@@ -23,8 +23,17 @@ export function slFurnitureQueries(concept: ProductConcept, ctx: FurnitureQueryC
       return ["postelja"];
     case "wardrobe":
       return ["omara", "garderobna omara"];
-    case "lighting":
+    case "lighting": {
+      const category = ctx.category.trim().toLowerCase();
+      const generic =
+        category === "lighting" ||
+        category === "lamp" ||
+        category === "light" ||
+        category === "svetilo" ||
+        category === "svetilka";
+      if (!generic) return [];
       return ["stropna svetilka", "svetilo"];
+    }
     case "chair":
       return ["stol"];
     default:

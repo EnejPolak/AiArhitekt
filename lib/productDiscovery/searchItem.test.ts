@@ -175,7 +175,24 @@ describe("searchProductItem validation", () => {
         output: [
           {
             type: "web_search_call",
-            action: { sources: [{ url: "https://merkur.si/p/laminat" }] },
+            action: {
+              sources: [{ url: "https://merkur.si/p/laminat", title: "Oak laminate €30/m2" }],
+            },
+          },
+          {
+            type: "message",
+            content: [
+              {
+                type: "output_text",
+                annotations: [
+                  {
+                    type: "url_citation",
+                    url: "https://merkur.si/p/laminat",
+                    title: "Oak laminate €30/m2",
+                  },
+                ],
+              },
+            ],
           },
         ],
         output_parsed: {
@@ -246,7 +263,29 @@ describe("searchProductItem validation", () => {
       output: [
         {
           type: "web_search_call",
-          action: { sources: [{ url: "https://obi.si/p/pendant" }] },
+          action: {
+            sources: [
+              {
+                url: "https://obi.si/p/pendant",
+                title: "Trio LED black pendant lamp 40cm €119.99",
+              },
+            ],
+          },
+        },
+        {
+          type: "message",
+          content: [
+            {
+              type: "output_text",
+              annotations: [
+                {
+                  type: "url_citation",
+                  url: "https://obi.si/p/pendant",
+                  title: "Trio LED black pendant lamp 40cm €119.99",
+                },
+              ],
+            },
+          ],
         },
       ],
       output_parsed: {
@@ -262,9 +301,9 @@ describe("searchProductItem validation", () => {
           imageUrl: null,
           specifications: [],
           matchScore: 1,
-          matchedRequirements: ["black", "pendant lamp", "approx 40cm", "under max 120 EUR"],
-          unmetRequirements: ["metal"],
-          unknownRequirements: [],
+          matchedRequirements: ["black", "pendant lamp", "approx 40cm", "max 120 EUR"],
+          unmetRequirements: [],
+          unknownRequirements: ["metal"],
           whyItMatches: "Black pendant with approximate 40cm size under budget.",
         },
       },

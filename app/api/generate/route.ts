@@ -17,6 +17,7 @@
 
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
+import { requireSpendRouteAuth } from "@/lib/api/spendAuth";
 import { determineSearchIntent } from "./intent";
 import { searchProducts } from "./search";
 import { curateProducts } from "./curate";
@@ -25,6 +26,8 @@ import { resolveStoreLocations } from "./map";
 import { QuestionnaireInput, GenerateResponse } from "./types";
 
 export async function POST(req: Request) {
+  const auth = await requireSpendRouteAuth();
+  if (!auth.ok) return auth.response;
   const requestId = Math.random().toString(36).substring(7);
   console.log(`[${requestId}] 📥 Incoming request to /api/generate`);
 

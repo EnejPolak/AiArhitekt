@@ -6,9 +6,11 @@ import {
   mapAuthError,
   type AuthErrorCode,
 } from "@/lib/auth/errors";
+import { logAuthDiagnostic } from "@/lib/auth/diagnostics";
 import { MissingSupabaseConfigError, getAppOrigin } from "@/lib/env/supabase";
 import { DEFAULT_POST_AUTH_PATH } from "@/lib/auth/redirect";
 import { signInSchema, signUpSchema } from "@/lib/auth/schemas";
+import { interpretSignUpData } from "@/lib/auth/signUpResult";
 import { createClient } from "@/lib/supabase/server";
 
 export type AuthActionResult =
@@ -19,15 +21,17 @@ function fail(code: AuthErrorCode, message?: string): AuthActionResult {
   return { ok: false, code, message: message ?? authErrorMessage(code) };
 }
 
-function fromCaught(error: unknown): AuthActionResult {
+function fromCaught(error: unknown, stage: "auth.sign_up" | "auth.sign_in"): AuthActionResult {
   if (error instanceof MissingSupabaseConfigError) {
+    logAuthDiagnostic(stage, { code: "config", name: error.name, message: error.message });
     return fail("config");
   }
-  const mapped = mapAuthError(
+  const raw =
     error && typeof error === "object"
-      ? (error as { message?: string; code?: string; name?: string })
-      : { message: "network" }
-  );
+      ? (error as { message?: string; code?: string; name?: string; status?: number })
+      : { message: "network" };
+  logAuthDiagnostic(stage, raw);
+  const mapped = mapAuthError(raw);
   return fail(mapped.code, mapped.message);
 }
 
@@ -50,14 +54,18 @@ export async function signIn(input: {
 
   try {
     const supabase = await createClient();
-    const { error } = await supabase.auth.signInWithPassword(parsed.data);
+    const { data, error } = await supabase.auth.signInWithPassword(parsed.data);
+    logAuthDiagnostic("auth.sign_in", error, {
+      userReturned: Boolean(data?.user),
+      sessionReturned: Boolean(data?.session),
+    });
     if (error) {
       const mapped = mapAuthError(error);
       return fail(mapped.code, mapped.message);
     }
     return { ok: true };
   } catch (error) {
-    return fromCaught(error);
+    return fromCaught(error, "auth.sign_in");
   }
 }
 
@@ -89,15 +97,13 @@ export async function signUp(input: {
       },
     });
     if (error) {
+      logAuthDiagnostic("auth.sign_up", error);
       const mapped = mapAuthError(error);
       return fail(mapped.code, mapped.message);
     }
-    if (!data.session) {
-      return { ok: true, needsEmailConfirmation: true };
-    }
-    return { ok: true };
+    return interpretSignUpData(data);
   } catch (error) {
-    return fromCaught(error);
+    return fromCaught(error, "auth.sign_up");
   }
 }
 

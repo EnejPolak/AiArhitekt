@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { wizardPanelClass } from "../wizardUi";
 
 export interface Step9MaterialSuggestionsProps {
   roomType: string;
@@ -45,7 +46,7 @@ export const Step9MaterialSuggestions: React.FC<Step9MaterialSuggestionsProps> =
   if (!suggestions) {
     return (
       <div className="flex justify-start mb-6">
-        <div className="max-w-[85%] rounded-[16px] px-6 py-5 bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.08)]">
+        <div className={wizardPanelClass}>
           <div className="text-[15px] text-[rgba(255,255,255,0.85)] leading-relaxed">
             Loading suggestions...
           </div>

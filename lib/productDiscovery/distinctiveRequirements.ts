@@ -1,4 +1,5 @@
 import type { RequirementLists } from "./matchPolicy";
+import { hasGenuineMaterialEvidence } from "./materialEvidence";
 
 export type DistinctiveRequirement = {
   id: string;
@@ -46,6 +47,24 @@ function claimMatchesDistinctive(claim: string, distinctive: DistinctiveRequirem
   return distinctive.tokens.some((token) => token.length >= 3 && haystack.includes(token));
 }
 
+function distinctiveEvidenceSupported(
+  distinctive: DistinctiveRequirement,
+  evidenceHaystack: string
+): boolean {
+  if (distinctive.label === "solid gold") {
+    return hasGenuineMaterialEvidence("gold", evidenceHaystack);
+  }
+  if (distinctive.label === "solid titanium") {
+    return hasGenuineMaterialEvidence("titanium", evidenceHaystack);
+  }
+  if (distinctive.label === "italian leather") {
+    if (!hasGenuineMaterialEvidence("leather", evidenceHaystack)) return false;
+  }
+  return distinctive.tokens.some(
+    (token) => token.length >= 3 && evidenceHaystack.toLowerCase().includes(token)
+  );
+}
+
 export function downgradeUnsupportedDistinctiveClaims(input: {
   requestedItem: string;
   lists: RequirementLists;
@@ -63,9 +82,7 @@ export function downgradeUnsupportedDistinctiveClaims(input: {
       matched.push(claim);
       continue;
     }
-    const supported = related.tokens.some(
-      (token) => token.length >= 3 && input.evidenceHaystack.includes(token)
-    );
+    const supported = distinctiveEvidenceSupported(related, input.evidenceHaystack);
     if (supported) matched.push(claim);
     else downgraded.push(claim);
   }

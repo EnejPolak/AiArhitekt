@@ -45,7 +45,7 @@ export const WorkspaceArea: React.FC<WorkspaceAreaProps> = ({
   return (
     <div
       className={cn(
-        "flex-1 h-screen",
+        "flex-1 min-h-0 min-w-0 h-full",
         "bg-background",
         "flex flex-col",
         "overflow-hidden",

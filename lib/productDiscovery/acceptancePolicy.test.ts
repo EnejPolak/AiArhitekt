@@ -127,8 +127,8 @@ describe("acceptancePolicy", () => {
       requestedItem,
       {
         matchedRequirements: ["black", "pendant lamp", "approx 40cm", "max 120 EUR"],
-        unmetRequirements: ["metal"],
-        unknownRequirements: [],
+        unmetRequirements: [],
+        unknownRequirements: ["metal"],
       },
       119.99
     );
@@ -149,7 +149,7 @@ describe("acceptancePolicy", () => {
         unmetRequirements: lists.unmetRequirements,
         unknownRequirements: lists.unknownRequirements,
       }),
-      evidenceText: "Trio LED viseča svetilka Salinas mat črna",
+      evidenceText: "Trio LED viseča svetilka Salinas mat črna approx 40 cm",
     });
     expect(finalized.accepted).toBe(true);
     expect(finalized.product.unknownRequirements.join(" ").toLowerCase()).toContain("metal");
@@ -204,5 +204,20 @@ describe("validateDeterministicClaims", () => {
     expect(finalized.accepted).toBe(false);
     expect(finalized.reason).toMatch(/hard_constraint_unmet|insufficient_evidence|score_too_low/);
     expect(finalized.product.matchedRequirements.join(" ").toLowerCase()).not.toContain("60cm");
+  });
+
+  it("downgrades metal when only whyItMatches claims it", () => {
+    const lists = validateDeterministicClaims({
+      requestedItem: "black metal pendant lamp max 120 EUR",
+      product: product({
+        matchedRequirements: ["black", "metal", "pendant lamp"],
+        whyItMatches: "black metal pendant",
+        specifications: { Material: "metal" },
+      }),
+      evidenceText: "black pendant lamp viseča črna",
+    });
+    expect(lists.matchedRequirements.join(" ").toLowerCase()).toContain("black");
+    expect(lists.matchedRequirements.join(" ").toLowerCase()).not.toContain("metal");
+    expect(lists.unknownRequirements.join(" ").toLowerCase()).toContain("metal");
   });
 });

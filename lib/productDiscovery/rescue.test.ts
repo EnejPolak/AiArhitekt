@@ -38,6 +38,26 @@ describe("rescueCandidates", () => {
     expect(candidates[0]?.url).toBe("https://obi.si/p/pendant-black");
   });
 
+  it("dedupes slash/www URL forms to the same rescue identity", () => {
+    const candidates = buildRescueCandidates({
+      sources: [
+        {
+          url: "https://www.merkur.si/nerjavno-pomivalno-korito-sink-solution-a-line-600x500/",
+          title: "A Line 600x500",
+        },
+        {
+          url: "https://merkur.si/nerjavno-pomivalno-korito-sink-solution-a-line-600x500",
+          title: "A Line 600x500",
+        },
+      ],
+      allowlistDomains: ["merkur.si"],
+      requestedItem: "exactly 60cm wide kitchen sink stainless steel max 200 EUR",
+      maxCandidates: 5,
+    });
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]?.url).toContain("a-line-600x500");
+  });
+
   it("rejects prices not present in candidate evidence", () => {
     const candidate = {
       id: "candidate_1",

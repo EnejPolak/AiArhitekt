@@ -7,6 +7,15 @@ vi.mock("@/lib/geocode/service", () => ({
   reverseGeocode: vi.fn(),
 }));
 
+vi.mock("@/lib/auth/session", () => ({
+  getVerifiedUser: vi.fn(async () => ({ id: "user-1" })),
+}));
+
+vi.mock("@/lib/env/deployment", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/env/deployment")>("@/lib/env/deployment");
+  return { ...actual, isDebugApiAllowed: () => false };
+});
+
 const reverseGeocodeMock = vi.mocked(reverseGeocode);
 
 describe("POST /api/geocode", () => {

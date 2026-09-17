@@ -3,14 +3,38 @@ import OpenAI from "openai";
 import { clearCandidateEnrichmentCache } from "./enrichCandidate";
 import { searchProductItem } from "./searchItem";
 
+vi.mock("@/lib/references/ssrf", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/references/ssrf")>();
+  return {
+    ...actual,
+    // Integration tests stub fetch; skip live DNS for merchant enrichment.
+    assertPublicHttpUrl: async (url: string) => new URL(url),
+  };
+});
+
 function quickForbiddenFetch() {
   return vi.fn(async () => ({
     status: 403,
     ok: false,
-    headers: { get: () => "text/html" },
+    headers: { get: (key: string) => (key.toLowerCase() === "content-type" ? "text/html" : null) },
     body: null,
   }));
 }
+
+function quickSuccessFetch() {
+  return vi.fn(async () => ({
+    status: 200,
+    ok: true,
+    headers: {
+      get: (key: string) => (key.toLowerCase() === "content-type" ? "text/html; charset=utf-8" : null),
+    },
+    text: async () => `<!doctype html><html><head>
+      <title>Trio LED black pendant lamp 40cm</title>
+      <script type="application/ld+json">{"@type":"Product","name":"Trio LED black pendant lamp 40cm","offers":{"@type":"Offer","price":"119.99","priceCurrency":"EUR"}}</script>
+    </head><body>black metal pendant lamp approx 40 cm kovinska viseča svetilka</body></html>`,
+  }));
+}
+
 
 function primaryNotFoundSources() {
   return [
@@ -18,10 +42,28 @@ function primaryNotFoundSources() {
       type: "web_search_call",
       action: {
         sources: [
-          { url: "https://obi.si/p/pendant-black-40" },
-          { url: "https://obi.si/p/white-cabinet" },
+          {
+            url: "https://obi.si/p/pendant-black-40",
+            title: "Trio LED black pendant lamp 40cm €119.99",
+          },
+          { url: "https://obi.si/p/white-cabinet", title: "White cabinet" },
         ],
       },
+    },
+    {
+      type: "message",
+      content: [
+        {
+          type: "output_text",
+          annotations: [
+            {
+              type: "url_citation",
+              url: "https://obi.si/p/pendant-black-40",
+              title: "Trio LED black pendant lamp 40cm €119.99",
+            },
+          ],
+        },
+      ],
     },
   ];
 }
@@ -36,8 +78,8 @@ function rescueSelected(candidateId: string, overrides: Record<string, unknown> 
       price: 119.99,
       currency: "EUR",
       priceUnit: null,
-      matchedRequirements: ["black", "pendant lamp", "metal", "max 120 EUR"],
-      unknownRequirements: ["approx 40cm"],
+      matchedRequirements: ["black", "pendant lamp", "max 120 EUR"],
+      unknownRequirements: ["metal", "approx 40cm"],
       matchScore: 0.88,
       whyItMatches: "Verified black pendant from source evidence.",
       ...overrides,
@@ -59,7 +101,29 @@ describe("source-backed rescue integration", () => {
     const mockParse = vi
       .fn()
       .mockResolvedValueOnce({
-        output: [{ type: "web_search_call", action: { sources: [{ url: "https://merkur.si/p/laminat" }] } }],
+        output: [
+          {
+            type: "web_search_call",
+            action: {
+              sources: [{ url: "https://merkur.si/p/laminat", title: "Oak laminate flooring" }],
+            },
+          },
+          {
+            type: "message",
+            content: [
+              {
+                type: "output_text",
+                annotations: [
+                  {
+                    type: "url_citation",
+                    url: "https://merkur.si/p/laminat",
+                    title: "Oak laminate flooring",
+                  },
+                ],
+              },
+            ],
+          },
+        ],
         output_parsed: {
           status: "found",
           product: {
@@ -135,6 +199,7 @@ describe("source-backed rescue integration", () => {
   });
 
   it("B2 — accepts strong rescue candidate when primary is not_found", async () => {
+    vi.stubGlobal("fetch", quickSuccessFetch());
     const mockParse = vi
       .fn()
       .mockResolvedValueOnce({
@@ -201,6 +266,7 @@ describe("source-backed rescue integration", () => {
   });
 
   it("D — rejects fake primary URL then may rescue from real sources", async () => {
+    vi.stubGlobal("fetch", quickSuccessFetch());
     const mockParse = vi
       .fn()
       .mockResolvedValueOnce({
@@ -227,7 +293,10 @@ describe("source-backed rescue integration", () => {
       })
       .mockResolvedValueOnce({
         output: [],
-        ...rescueSelected("candidate_1"),
+        ...rescueSelected("candidate_1", {
+          matchedRequirements: ["black", "pendant lamp", "metal", "approx 40cm", "max 120 EUR"],
+          unknownRequirements: [],
+        }),
       });
 
     const client = { responses: { parse: mockParse } } as unknown as OpenAI;
@@ -248,7 +317,29 @@ describe("source-backed rescue integration", () => {
       output: [
         {
           type: "web_search_call",
-          action: { sources: [{ url: "https://obi.si/p/pendant" }] },
+          action: {
+            sources: [
+              {
+                url: "https://obi.si/p/pendant",
+                title: "Trio LED black pendant lamp 40cm €119.99",
+              },
+            ],
+          },
+        },
+        {
+          type: "message",
+          content: [
+            {
+              type: "output_text",
+              annotations: [
+                {
+                  type: "url_citation",
+                  url: "https://obi.si/p/pendant",
+                  title: "Trio LED black pendant lamp 40cm €119.99",
+                },
+              ],
+            },
+          ],
         },
       ],
       output_parsed: {
@@ -265,8 +356,8 @@ describe("source-backed rescue integration", () => {
           specifications: [],
           matchScore: 1,
           matchedRequirements: ["black", "pendant lamp", "approx 40cm", "max 120 EUR"],
-          unmetRequirements: ["metal"],
-          unknownRequirements: [],
+          unmetRequirements: [],
+          unknownRequirements: ["metal"],
           whyItMatches: "Black pendant under budget.",
         },
       },

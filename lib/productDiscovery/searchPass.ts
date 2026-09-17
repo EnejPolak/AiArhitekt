@@ -3,26 +3,40 @@ import { zodTextFormat } from "openai/helpers/zod";
 import type { ParsedResponse } from "openai/resources/responses/responses";
 import { normalizeDomainToRoot } from "@/lib/serp/domains";
 import { finalizeAcceptedProduct, type AcceptanceResult } from "./acceptancePolicy";
+import {
+  buildDecisionSnapshot,
+  buildProductEvidenceForDecision,
+  buildRejectedDecisionSnapshot,
+  preferConcreteRejectedSnapshot,
+} from "./decisionSnapshot";
 import { domainAllowed } from "./domains";
 import {
   buildRequirementPolicyHints,
+  buildSuggestedSearchQueriesForRequest,
   normalizeMatchScore,
   normalizeRequirementLists,
 } from "./matchPolicy";
 import { mergeProductDiscoverySources, toPlainSources } from "./mergeSources";
+import {
+  buildProductEvidence,
+  buildTrustedEvidenceText,
+  resolveGroundedPrice,
+  resolveTrustedDisplayName,
+} from "./productEvidence";
 import { attemptSourceBackedRescue } from "./rescue";
 import { productDiscoveryModelSchema, type ProductDiscoveryModelOutput } from "./schema";
-import {
-  extractWebSearchSources,
-  isProductUrlEvidenceBacked,
-  responseUsedWebSearch,
-} from "./sources";
 import type { ProductDiscoverySource, ProductDiscoveryProduct, ProductDiscoveryResult } from "./types";
 import {
   TARGETED_RESEARCH_SYSTEM_PROMPT,
   buildTargetedResearchUserMessage,
 } from "./targetedResearchPrompt";
-import { OPENAI_PRODUCT_SEARCH_MODEL } from "./constants";
+import { getProductDiscoveryModel, recordTargetedModelStage } from "./modelRouting";
+import {
+  extractOpenAiResponseUsage,
+  extractWebSearchSources,
+  isProductUrlEvidenceBacked,
+  responseUsedWebSearch,
+} from "./sources";
 import type { InitialFailureReason } from "./rescue";
 
 function clampMatchScore(score: number): number {
@@ -66,10 +80,32 @@ export function sanitizeModelProductOutput(
     return { ok: false, initialFailureReason: "url_not_in_sources" };
   }
 
-  const price =
+  const modelReportedPrice =
     typeof product.price === "number" && Number.isFinite(product.price) && product.price > 0
       ? product.price
       : null;
+
+  const display = resolveTrustedDisplayName({
+    sources,
+    productUrl: product.productUrl,
+    modelName: product.name,
+  });
+  const evidence = buildProductEvidence({
+    productUrl: product.productUrl,
+    sources,
+    trustedDisplayName: display.verified ? display.name : null,
+  });
+  const groundedPrice = resolveGroundedPrice({
+    evidence,
+    modelClaimedPrice: modelReportedPrice,
+  });
+  const price = groundedPrice.price;
+  const currency =
+    price != null && (groundedPrice.currency === "EUR" || product.currency?.trim().toUpperCase() === "EUR")
+      ? "EUR"
+      : price != null
+        ? groundedPrice.currency
+        : null;
 
   const requirementLists = normalizeRequirementLists(
     requestedItem,
@@ -87,13 +123,10 @@ export function sanitizeModelProductOutput(
     unknownRequirements: requirementLists.unknownRequirements,
   });
 
-  const currency =
-    price != null && product.currency?.trim().toUpperCase() === "EUR" ? "EUR" : null;
-
   return {
     ok: true,
     product: {
-      name: product.name.trim(),
+      name: display.name,
       retailer: product.retailer.trim(),
       retailerDomain: retailerDomain || product.retailerDomain,
       productUrl: product.productUrl,
@@ -107,7 +140,7 @@ export function sanitizeModelProductOutput(
       unmetRequirements: requirementLists.unmetRequirements,
       unknownRequirements: requirementLists.unknownRequirements,
       whyItMatches: product.whyItMatches.trim(),
-      priceEvidence: price != null ? "web_search" : "none",
+      priceEvidence: groundedPrice.priceEvidence,
     },
   };
 }
@@ -116,23 +149,54 @@ export function productEvidenceText(
   product: ProductDiscoveryProduct,
   sources: ProductDiscoverySource[]
 ): string {
-  const sourceTitle =
-    sources.find((source) => source.url === product.productUrl)?.title ??
-    sources.find((source) => product.productUrl.includes(source.url))?.title ??
-    null;
-  return [product.name, product.whyItMatches, sourceTitle].filter(Boolean).join("\n");
+  const display = resolveTrustedDisplayName({
+    sources,
+    productUrl: product.productUrl,
+  });
+  return buildTrustedEvidenceText({
+    productUrl: product.productUrl,
+    sources,
+    trustedDisplayName: display.verified ? display.name : null,
+  });
 }
 
 export function buildAcceptanceDiagnostics(
   source: "primary" | "rescue" | "targeted",
-  finalized: AcceptanceResult
+  finalized: AcceptanceResult & { product?: import("./types").ProductDiscoveryProduct },
+  productEvidence?: import("./productEvidence").ProductEvidence | null,
+  requestedItem?: string,
+  candidateId?: string | null
 ) {
-  return {
+  const base = {
     acceptanceChecked: true,
     acceptanceSource: source,
     acceptanceScore: finalized.matchScore,
     requirementCoverage: finalized.requirementCoverage,
     acceptanceReason: finalized.reason,
+  };
+  if (!productEvidence || !requestedItem || !finalized.product) return base;
+  if (finalized.accepted) {
+    return {
+      ...base,
+      acceptedDecisionSnapshot: buildDecisionSnapshot({
+        requestedItem,
+        path: source,
+        product: finalized.product,
+        acceptance: finalized,
+        productEvidence,
+      }),
+    };
+  }
+  return {
+    ...base,
+    rejectedDecisionSnapshot: buildRejectedDecisionSnapshot({
+      requestedItem,
+      path: source,
+      candidateId: candidateId ?? null,
+      product: finalized.product,
+      acceptance: finalized,
+      productEvidence,
+    }),
   };
 }
 
@@ -147,8 +211,9 @@ export type PassProcessResult = {
   rescueSelectedCandidateId: string | null;
   rescueElapsedMs: number | null;
   rejectedProduct: ProductDiscoveryProduct | null;
-  acceptance?: AcceptanceResult;
+  acceptance?: AcceptanceResult & { product: ProductDiscoveryProduct };
   acceptanceSource?: "primary" | "rescue" | "targeted" | null;
+  productEvidence?: import("./productEvidence").ProductEvidence | null;
   enrichmentStats?: Awaited<ReturnType<typeof attemptSourceBackedRescue>>["enrichmentStats"];
 };
 
@@ -188,17 +253,28 @@ export async function processPassCandidates(input: {
         evidenceText: productEvidenceText(direct.product, input.sources),
       });
       if (finalized.accepted) {
+        const productEvidence = buildProductEvidenceForDecision({
+          productUrl: finalized.product.productUrl,
+          sources: input.sources,
+          trustedDisplayName: finalized.product.name,
+        });
         return {
           ...base,
           status: "found",
           product: finalized.product,
           acceptance: finalized,
           acceptanceSource: input.acceptanceSource,
+          productEvidence,
         };
       }
       base.rejectedProduct = finalized.product;
       base.acceptance = finalized;
       base.acceptanceSource = input.acceptanceSource;
+      base.productEvidence = buildProductEvidenceForDecision({
+        productUrl: finalized.product.productUrl,
+        sources: input.sources,
+        trustedDisplayName: finalized.product.name,
+      });
     }
   }
 
@@ -235,6 +311,7 @@ export async function processPassCandidates(input: {
       rescueSucceeded: true,
       acceptance: finalized,
       acceptanceSource: "rescue",
+      productEvidence: rescue.productEvidence,
     };
   }
 
@@ -243,6 +320,7 @@ export async function processPassCandidates(input: {
     rejectedProduct: finalized.product,
     acceptance: finalized,
     acceptanceSource: "rescue",
+    productEvidence: rescue.productEvidence,
   };
 }
 
@@ -262,6 +340,11 @@ export async function attemptTargetedResearch(input: {
   primarySources: ProductDiscoverySource[];
   priorDiagnostics?: ProductDiscoveryResult["diagnostics"];
   priorRejectedProduct?: ProductDiscoveryProduct | null;
+  marketContext?: {
+    countryCode?: string | null;
+    formattedLocation?: string | null;
+    merchantDomains?: string[];
+  } | null;
 }): Promise<TargetedResearchResult> {
   const started = Date.now();
   const priorFailure = {
@@ -275,8 +358,9 @@ export async function attemptTargetedResearch(input: {
   };
 
   try {
+    recordTargetedModelStage(input.client, null);
     const response: ParsedResponse<ProductDiscoveryModelOutput> = await input.client.responses.parse({
-      model: OPENAI_PRODUCT_SEARCH_MODEL,
+      model: getProductDiscoveryModel("targeted"),
       instructions: TARGETED_RESEARCH_SYSTEM_PROMPT,
       input: [
         {
@@ -288,6 +372,12 @@ export async function attemptTargetedResearch(input: {
                 requestedItem: input.requestedItem,
                 allowedDomains: input.allowlistDomains,
                 requirementPolicy: buildRequirementPolicyHints(input.requestedItem),
+                suggestedSearchQueries: buildSuggestedSearchQueriesForRequest(
+                  input.requestedItem,
+                  input.allowlistDomains,
+                  { includeRescue: true }
+                ),
+                marketContext: input.marketContext,
                 priorFailure,
               }),
             },
@@ -307,6 +397,7 @@ export async function attemptTargetedResearch(input: {
       text: { format: zodTextFormat(productDiscoveryModelSchema, "product_discovery_result") },
     });
 
+    recordTargetedModelStage(input.client, extractOpenAiResponseUsage(response));
     const targetedSources = extractWebSearchSources(response);
     const searchUsed = responseUsedWebSearch(response);
     const mergedTagged = mergeProductDiscoverySources(input.primarySources, targetedSources);
@@ -333,6 +424,18 @@ export async function attemptTargetedResearch(input: {
       acceptanceSource: "targeted",
     });
 
+    const passAcceptanceDiagnostics = pass.acceptance
+      ? buildAcceptanceDiagnostics(
+          pass.acceptance.accepted
+            ? (pass.acceptanceSource ?? "targeted")
+            : "targeted",
+          pass.acceptance,
+          pass.productEvidence,
+          input.requestedItem,
+          pass.rescueSelectedCandidateId
+        )
+      : undefined;
+
     const result: ProductDiscoveryResult = {
       requestedItem: input.requestedItem,
       status: pass.status,
@@ -349,11 +452,22 @@ export async function attemptTargetedResearch(input: {
         rescueSelected: (input.priorDiagnostics?.rescueSelected ?? false) || pass.rescueSelected,
         rescueSucceeded: input.priorDiagnostics?.rescueSucceeded ?? false,
         rescueElapsedMs: pass.rescueElapsedMs ?? input.priorDiagnostics?.rescueElapsedMs,
-        rescueSelectedCandidateId: pass.rescueSelectedCandidateId,
-        enrichmentAttemptedCount: pass.enrichmentStats?.enrichmentAttemptedCount,
-        enrichmentSuccessCount: pass.enrichmentStats?.enrichmentSuccessCount,
-        enrichment403Count: pass.enrichmentStats?.enrichment403Count,
-        enrichmentTimeoutCount: pass.enrichmentStats?.enrichmentTimeoutCount,
+        rescueSelectedCandidateId: input.priorDiagnostics?.rescueSelectedCandidateId ?? null,
+        targetedSelectedCandidateId: pass.rescueSelectedCandidateId,
+        rescueEnrichmentAttemptedCount: input.priorDiagnostics?.rescueEnrichmentAttemptedCount
+          ?? input.priorDiagnostics?.enrichmentAttemptedCount,
+        rescueEnrichmentSuccessCount: input.priorDiagnostics?.rescueEnrichmentSuccessCount
+          ?? input.priorDiagnostics?.enrichmentSuccessCount,
+        targetedEnrichmentAttemptedCount: pass.enrichmentStats?.enrichmentAttemptedCount,
+        targetedEnrichmentSuccessCount: pass.enrichmentStats?.enrichmentSuccessCount,
+        enrichmentAttemptedCount: input.priorDiagnostics?.enrichmentAttemptedCount,
+        enrichmentSuccessCount: input.priorDiagnostics?.enrichmentSuccessCount,
+        enrichment403Count: input.priorDiagnostics?.enrichment403Count,
+        enrichmentTimeoutCount: input.priorDiagnostics?.enrichmentTimeoutCount,
+        rescueEnrichmentCandidateDebug: input.priorDiagnostics?.enrichmentCandidateDebug
+          ?? input.priorDiagnostics?.rescueEnrichmentCandidateDebug,
+        enrichmentCandidateDebug: pass.enrichmentStats?.candidateDebug
+          ?? input.priorDiagnostics?.enrichmentCandidateDebug,
         rejectedProduct: pass.status === "found" ? null : pass.rejectedProduct,
         targetedResearchAttempted: true,
         targetedResearchSearchUsed: true,
@@ -363,9 +477,20 @@ export async function attemptTargetedResearch(input: {
         targetedFailureReasonBeforeSearch: input.priorDiagnostics?.acceptanceReason ?? null,
         targetedRecovered: pass.status === "found",
         targetedResultAcceptanceReason: pass.acceptance?.reason ?? null,
-        ...(pass.acceptance
-          ? buildAcceptanceDiagnostics(pass.acceptanceSource ?? "targeted", pass.acceptance)
-          : {}),
+        rescueRejectedDecisionSnapshot: input.priorDiagnostics?.rescueRejectedDecisionSnapshot
+          ?? (input.priorDiagnostics?.rejectedDecisionSnapshot?.path === "primary"
+            ? input.priorDiagnostics.rejectedDecisionSnapshot
+            : undefined),
+        rescueSelectedCandidateEnrichment: input.priorDiagnostics?.rescueSelectedCandidateEnrichment,
+        selectedAdditionalEnrichmentAttempts:
+          input.priorDiagnostics?.selectedAdditionalEnrichmentAttempts ?? 0,
+        ...(passAcceptanceDiagnostics ?? {}),
+        rejectedDecisionSnapshot: preferConcreteRejectedSnapshot(
+          input.priorDiagnostics?.rejectedDecisionSnapshot,
+          pass.acceptance && !pass.acceptance.accepted
+            ? passAcceptanceDiagnostics?.rejectedDecisionSnapshot
+            : undefined
+        ),
       },
     };
 

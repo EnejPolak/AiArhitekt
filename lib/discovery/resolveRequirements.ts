@@ -151,7 +151,7 @@ function noteIntentDraft(intent: NoteShoppingIntent, index: number): ResolvedSho
     category: intent.category,
     quantity: 1,
     placementNotes: null,
-    constraints: intent.constraints,
+    constraints: intent.constraints.slice(0, 8),
   };
   return {
     requirementType: "furniture",
@@ -221,7 +221,7 @@ function inferFurnitureConcept(need: FurnitureNeed): ProductConcept {
   if (/coffee table|klubsk/.test(blob)) return "coffee_table";
   if (/\bbed\b|postelj/.test(blob)) return "bed";
   if (/wardrobe|omara|garderob/.test(blob)) return "wardrobe";
-  if (/lamp|light|svetil/.test(blob)) return "lighting";
+  if (/\blamp\b|lighting|svetil|\blight fixture|\blight fitting/.test(blob)) return "lighting";
   if (/\bchair\b|\bstol\b/.test(blob)) return "chair";
   return "other";
 }

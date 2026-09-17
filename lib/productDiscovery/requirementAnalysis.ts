@@ -22,7 +22,7 @@ export type ParsedRequirement = {
 const MATERIAL_TOKENS =
   /\b(metal|steel|stainless|inox|oak|wood|laminate|vinyl|marble|ceramic|plastic|fabric|leather|chrome|brass|copper|glass|gold|silver|jute|wool|concrete|granite|bamboo|rattan)\b/gi;
 const COLOR_TOKENS =
-  /\b(black|white|grey|gray|beige|brown|oak|chrome|anthracite|matte|gloss|crna|bela|siva|rdeca|zelena|modra)\b/gi;
+  /\b(black|white|grey|gray|beige|brown|oak|chrome|anthracite|matte|gloss|gold|golden|silver|crna|bela|siva|rdeca|zelena|modra)\b/gi;
 const STYLE_TOKENS = /\b(scandinavian|modern|minimalist|industrial|rustic|classic|contemporary|vintage)\b/gi;
 const DIMENSION_PATTERN = /\b(\d+(?:[.,]\d+)?)\s*(cm|mm|m)\b/gi;
 const CATEGORY_PATTERNS: Array<{ pattern: RegExp; label: string; tokens: string[] }> = [
@@ -94,6 +94,14 @@ export function parseRequestedRequirements(requestedItem: string): ParsedRequire
   }
 
   for (const material of collectRegexTokens(requestedItem, MATERIAL_TOKENS)) {
+    // Bare gold/silver adjectives are normally appearance/color, not identity materials.
+    if (
+      (material === "gold" || material === "silver") &&
+      !/\b(solid|made\s+of|real|genuine|pure|24k|18k|14k)\b/i.test(requestedItem) &&
+      !new RegExp(`\\b${material}\\s+material\\b`, "i").test(requestedItem)
+    ) {
+      continue;
+    }
     requirements.push({
       id: `material:${material}`,
       label: material,
@@ -237,6 +245,7 @@ export function isCategoryVerified(
     productName,
     evidenceText,
     specifications,
+    includeModelSpecifications: false,
   });
   return verifyCoreCategoryInEvidence(identity, haystack);
 }
