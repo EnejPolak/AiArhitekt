@@ -6,7 +6,10 @@ import { isCurrentRoomAnalysis } from "@/lib/analysis/stale";
 import { getProjectProductDiscovery, getProjectProductSelections } from "@/lib/discovery/queries";
 import { isCurrentProductDiscovery } from "@/lib/discovery/stale";
 import { PROJECT_ASSETS_BUCKET } from "@/lib/references/constants";
+import { ensureProductReferenceAssets } from "@/lib/references/ensure";
 import { listProjectProductReferenceAssets } from "@/lib/references/queries";
+import type { FetchLike } from "@/lib/references/fetchImage";
+import type { AddressLookup } from "@/lib/references/ssrf";
 import { PROJECT_UPLOADS_BUCKET } from "@/lib/uploads/constants";
 import { getRoomPhotoUpload } from "@/lib/uploads/queries";
 import { detectImageMime } from "@/lib/uploads/signature";
@@ -50,6 +53,8 @@ export type GenerateRoomRenderInput = {
   preferences: RoomRenderPreferences;
   force?: boolean;
   editImage?: RoomImageEditFn;
+  fetch?: FetchLike;
+  lookup?: AddressLookup;
 };
 
 export type PreparedRenderSource = {
@@ -106,26 +111,17 @@ export async function prepareRenderSource(
   }
 
   const selections = await getProjectProductSelections(userClient, discovery.id);
-  const confirmed = selections.filter((item) => item.isConfirmed);
-  if (confirmed.length === 0) {
+  if (selections.length === 0) {
     throw new RenderError("no_confirmed_products", renderErrorMessage("no_confirmed_products"));
   }
 
   const assets = await listProjectProductReferenceAssets(userClient, projectId);
   const assetsBySelectionId = new Map(assets.map((asset) => [asset.selectionId, asset]));
-  const orderedResult = orderRenderReferences(confirmed, assetsBySelectionId);
-  if (orderedResult.tooMany) {
-    throw new RenderError("too_many_references", renderErrorMessage("too_many_references"));
-  }
+  const orderedResult = orderRenderReferences(selections, assetsBySelectionId);
   const missing = orderedResult.missing.map((item) => ({
     selectionId: item.id,
     productTitle: item.productTitle,
   }));
-  if (missing.length > 0) {
-    throw new RenderError("reference_missing", renderErrorMessage("reference_missing"), {
-      missingReferences: missing,
-    });
-  }
 
   const fingerprint = buildRenderSourceFingerprint({
     roomUploadId: photo.id,
@@ -142,7 +138,7 @@ export async function prepareRenderSource(
     analysis,
     discovery,
     selections,
-    confirmed,
+    confirmed: selections.filter((item) => item.isConfirmed),
     ordered: orderedResult.ordered,
     missing,
     fingerprint,
@@ -153,7 +149,29 @@ export async function prepareRenderSource(
 export async function generateRoomRender(
   input: GenerateRoomRenderInput
 ): Promise<{ render: RoomRenderView; reused: boolean; providerCalls: number }> {
-  const source = await prepareRenderSource(input.userClient, input.projectId, input.preferences);
+  const probe = await prepareRenderSource(input.userClient, input.projectId, input.preferences);
+  if (probe.missing.length > 0) {
+    await ensureProductReferenceAssets({
+      persistClient: input.persistClient,
+      ownerUserId: input.ownerUserId,
+      projectId: input.projectId,
+      selections: probe.selections,
+      fetch: input.fetch,
+      lookup: input.lookup,
+    });
+  }
+
+  const source =
+    probe.missing.length > 0
+      ? await prepareRenderSource(input.userClient, input.projectId, input.preferences)
+      : probe;
+  if (source.ordered.length === 0) {
+    throw new RenderError(
+      "reference_grounding_unavailable",
+      renderErrorMessage("reference_grounding_unavailable"),
+      { missingReferences: source.missing }
+    );
+  }
 
   const processing = await getProcessingRenderByFingerprint(
     input.userClient,
@@ -198,6 +216,9 @@ export async function generateRoomRender(
     observation: source.analysis.analysis,
     designRequirements: source.analysis.design_requirements,
     unmatchedRequirements: source.discovery.unmatchedRequirements,
+    ungroundedSelections: source.selections.filter(
+      (item) => !source.ordered.some((ref) => ref.selection.id === item.id)
+    ),
     preferences: source.preferences,
     references: source.ordered,
   });

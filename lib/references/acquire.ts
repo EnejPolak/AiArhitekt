@@ -7,6 +7,7 @@ import { fetchValidatedProductImage, type FetchLike } from "./fetchImage";
 import {
   buildProductReferencePath,
   candidateProductReferencePaths,
+  parseProductReferencePath,
 } from "./path";
 import { getProductReferenceAssetBySelection } from "./queries";
 import type { AddressLookup } from "./ssrf";
@@ -20,17 +21,41 @@ export type AcquireProductReferenceInput = {
   projectId: string;
   selectionId: string;
   sourceImageUrl: string;
+  sourcePageUrl?: string | null;
   fetch?: FetchLike;
   lookup?: AddressLookup;
+  /** When true, skip merchant fetch if a stored asset already exists. Default true. */
+  cacheFirst?: boolean;
 };
 
 function sha256Hex(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+export function isReusableReferenceAsset(
+  asset: ProductReferenceAssetView | null,
+  projectId: string,
+  selectionId: string
+): asset is ProductReferenceAssetView {
+  if (!asset) return false;
+  if (asset.projectId !== projectId || asset.selectionId !== selectionId) return false;
+  if (!/^[a-f0-9]{64}$/.test(asset.sourceHash)) return false;
+  const parsed = parseProductReferencePath(asset.storagePath);
+  if (!parsed) return false;
+  return parsed.projectId === projectId && parsed.selectionId === selectionId;
+}
+
 export async function acquireProductReferenceAsset(
   input: AcquireProductReferenceInput
 ): Promise<ProductReferenceAssetView> {
+  const cacheFirst = input.cacheFirst !== false;
+  if (cacheFirst) {
+    const existing = await getProductReferenceAssetBySelection(input.persistClient, input.selectionId);
+    if (isReusableReferenceAsset(existing, input.projectId, input.selectionId)) {
+      return existing;
+    }
+  }
+
   const fetched = await fetchValidatedProductImage(input.sourceImageUrl, {
     fetch: input.fetch,
     lookup: input.lookup,
@@ -50,18 +75,27 @@ export async function acquireProductReferenceAsset(
     p_project_id: input.projectId,
     p_selection_id: input.selectionId,
     p_source_image_url: fetched.sourceUrl,
+    p_source_page_url: input.sourcePageUrl ?? null,
+    p_is_primary: true,
+    p_sort_order: 0,
     p_storage_path: storagePath,
     p_mime_type: fetched.mime,
     p_size_bytes: fetched.sizeBytes,
     p_source_hash: sourceHash,
-    p_width: (fetched.dimensions?.width ?? null) as number,
-    p_height: (fetched.dimensions?.height ?? null) as number,
+    p_width: fetched.dimensions?.width ?? null,
+    p_height: fetched.dimensions?.height ?? null,
   });
 
   if (error || data == null) {
     await input.persistClient.storage.from(PROJECT_ASSETS_BUCKET).remove([storagePath]);
     throw mapReferenceDbError(error);
   }
+
+  await input.persistClient
+    .from("project_product_selections")
+    .update({ has_reference_image: true })
+    .eq("id", input.selectionId)
+    .eq("project_id", input.projectId);
 
   const extras = candidateProductReferencePaths(input.projectId, input.selectionId).filter(
     (path) => path !== storagePath

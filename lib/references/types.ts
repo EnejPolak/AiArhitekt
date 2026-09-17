@@ -5,6 +5,9 @@ export type ProductReferenceAssetView = {
   projectId: string;
   selectionId: string;
   sourceImageUrl: string;
+  sourcePageUrl: string | null;
+  isPrimary: boolean;
+  sortOrder: number;
   storageBucket: string;
   storagePath: string;
   mimeType: ProductReferenceMimeType;

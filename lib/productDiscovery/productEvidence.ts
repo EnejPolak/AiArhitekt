@@ -570,9 +570,58 @@ export function tokensForClaim(claim: string): string[] {
 
 export type ClaimEvidenceStatus = "supported" | "unsupported" | "contradicted";
 
+const WIDTH_LABELS = "sirina|width|wide|breite|largeur|larghezza";
+const HEIGHT_LABELS = "visina|height|hohe|hoehe|hauteur|altezza";
+const DEPTH_LABELS =
+  "dolzina|length|depth|globina|tiefe|profondeur|lunghezza|lange|proti\\s+steni";
+
+function toCm(amount: number, unit: string): number | null {
+  const n = amount;
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const u = unit.toLowerCase();
+  if (u === "mm") return n / 10;
+  if (u === "m") return n * 100;
+  if (u === "cm") return n;
+  return null;
+}
+
+function cmMatches(actual: number, target: number): boolean {
+  return Math.abs(actual - target) <= 0.15;
+}
+
+function collectLabeledAxisCm(hay: string, labels: string): number[] {
+  const values: number[] = [];
+  const prefix = new RegExp(
+    `\\b(?:${labels})\\b(?:[ \\t]+(?:izdelk\\w*|product|artikel|item|paketa|package))*(?:[ \\t]*\\([^\\)]{0,40}\\))?[ \\t]*[:\\-–]?[ \\t]*(\\d+(?:[.,]\\d+)?)\\s*(mm|cm|m)\\b`,
+    "gi"
+  );
+  const suffix = new RegExp(
+    `\\b(\\d+(?:[.,]\\d+)?)\\s*(mm|cm|m)\\b[ \\t]+(?:${labels})\\b(?![ \\t]*[:\\-–]?[ \\t]*\\d)`,
+    "gi"
+  );
+  for (const re of [prefix, suffix]) {
+    re.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(hay)) !== null) {
+      const amount = Number((match[1] ?? "").replace(",", "."));
+      const cm = toCm(amount, match[2] ?? "cm");
+      if (cm != null) values.push(cm);
+    }
+  }
+  return values;
+}
+
+function hasAmbiguousPair(hay: string): boolean {
+  return (
+    /\b\d{2,4}(?:[.,]\d+)?\s*(?:cm|mm)?\s*[x×]\s*\d{2,4}(?:[.,]\d+)?\s*(?:cm|mm)?\b/.test(hay) ||
+    /\b\d{3,4}\s*x\s*\d{3,4}\b/.test(hay)
+  );
+}
+
 /**
  * Exact-dimension claims require oriented/safe width evidence.
  * Ambiguous pairs like "800 x 600 mm" or bare "600x500" do NOT confirm exact width.
+ * Explicit labeled width (širina/width/breite) outranks unlabeled pairs and other axes.
  * Substring matches like includes("60") inside "600" are rejected.
  */
 export function classifyExactDimensionAgainstEvidence(input: {
@@ -580,12 +629,8 @@ export function classifyExactDimensionAgainstEvidence(input: {
   haystack: string;
 }): ClaimEvidenceStatus {
   const hay = normalize(input.haystack);
-  const value = input.valueCm.replace(",", ".");
-  const mm = (() => {
-    const n = Number(value);
-    if (!Number.isFinite(n)) return null;
-    return String(Math.round(n * 10));
-  })();
+  const target = Number(input.valueCm.replace(",", "."));
+  if (!Number.isFinite(target) || target <= 0) return "unsupported";
 
   // Ignore cabinet niche / install clearance widths (not the product width).
   const productHay = hay
@@ -595,68 +640,30 @@ export function classifyExactDimensionAgainstEvidence(input: {
     )
     .replace(/(?:cabinet|cupboard|omaric\w*)\s*(?:width|sirina)[^.\n]{0,40}/gi, " ");
 
-  const hasLabeledWidth = (cmValue: string, mmValue: string | null): boolean => {
-    if (
-      new RegExp(`\\b(?:sirina|width|wide)[^.]{0,24}${cmValue}(?:[.,]\\d+)?\\s*cm\\b`).test(productHay)
-    ) {
-      return true;
-    }
-    // English "60 cm wide". Do not treat Magento "DOLŽINA 50 CM ŠIRINA 60 CM"
-    // as width=50 just because širina follows the previous spec value.
-    if (new RegExp(`\\b${cmValue}(?:[.,]\\d+)?\\s*cm\\b\\s*(?:wide|width)\\b`).test(productHay)) {
-      return true;
-    }
-    if (new RegExp(`\\b${cmValue}(?:[.,]\\d+)?\\s*cm\\b\\s*sirina\\b(?!\\s*:?\\s*\\d)`).test(productHay)) {
-      return true;
-    }
-    if (!mmValue) return false;
-    if (new RegExp(`\\b(?:sirina|width|wide)[^.]{0,24}${mmValue}\\s*mm\\b`).test(productHay)) {
-      return true;
-    }
-    if (new RegExp(`\\b${mmValue}\\s*mm\\b\\s*(?:wide|width)\\b`).test(productHay)) return true;
-    return new RegExp(`\\b${mmValue}\\s*mm\\b\\s*sirina\\b(?!\\s*:?\\s*\\d)`).test(productHay);
-  };
-
-  const hasMatchingLabeledWidth = hasLabeledWidth(value, mm);
-  const otherWidthsCm = ["40", "50", "55", "70", "80", "90", "100", "120"].filter((w) => w !== value);
-  for (const other of otherWidthsCm) {
-    const otherMm = String(Number(other) * 10);
-    if (!hasLabeledWidth(other, otherMm)) continue;
-    if (!hasMatchingLabeledWidth) return "contradicted";
-    // Conflicting explicit width labels (širina 50 cm and širina 60 cm).
-    if (
-      new RegExp(`\\b(?:sirina|width|wide)[^.]{0,24}${other}(?:[.,]\\d+)?\\s*cm\\b`).test(productHay) ||
-      (mm && new RegExp(`\\b(?:sirina|width|wide)[^.]{0,24}${otherMm}\\s*mm\\b`).test(productHay))
-    ) {
-      return "contradicted";
-    }
+  const labeledWidths = collectLabeledAxisCm(productHay, WIDTH_LABELS);
+  if (labeledWidths.length > 0) {
+    if (labeledWidths.some((cm) => cmMatches(cm, target))) return "supported";
+    return "contradicted";
   }
 
-  if (hasMatchingLabeledWidth) return "supported";
-
-  // Depth/length labeled as the requested value → not width unless width also matches.
-  if (
-    new RegExp(
-      `\\b(?:dolzina|length|depth|proti\\s+steni|globina)[^.]{0,24}${value}(?:[.,]\\d+)?\\s*cm\\b`
-    ).test(productHay)
-  ) {
+  const labeledHeightOrDepth = [
+    ...collectLabeledAxisCm(productHay, HEIGHT_LABELS),
+    ...collectLabeledAxisCm(productHay, DEPTH_LABELS),
+  ];
+  if (labeledHeightOrDepth.some((cm) => cmMatches(cm, target))) {
     return "unsupported";
   }
 
-  // Ambiguous overall size pairs (A x B) — do not assume which side is width.
-  if (
-    /\b\d{2,4}(?:[.,]\d+)?\s*(?:cm|mm)?\s*[x×]\s*\d{2,4}(?:[.,]\d+)?\s*(?:cm|mm)?\b/.test(productHay) ||
-    /\b\d{3,4}\s*x\s*\d{3,4}\b/.test(productHay)
-  ) {
+  if (hasAmbiguousPair(productHay)) {
     return "unsupported";
   }
 
-  // Safe standalone dimension with unit (not part of an A x B pair — already excluded above).
-  // Do not treat bare "60 cm" as exact width when a contradicting product width exists elsewhere.
+  const mm = String(Math.round(target * 10));
+  const value = String(target);
   if (new RegExp(`\\b${value}(?:[.,]\\d+)?\\s*cm\\b`).test(productHay)) {
     return "supported";
   }
-  if (mm && new RegExp(`\\b${mm}\\s*mm\\b`).test(productHay)) {
+  if (new RegExp(`\\b${mm}\\s*mm\\b`).test(productHay)) {
     return "supported";
   }
 

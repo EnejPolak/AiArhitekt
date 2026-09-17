@@ -3,56 +3,20 @@ import type { ProductReferenceAssetView } from "@/lib/references/types";
 import { MAX_RENDER_REFERENCE_IMAGES } from "./constants";
 import { parseProductReferencePath } from "@/lib/references/path";
 
-const LARGE_FURNITURE = [
-  "sofa",
-  "couch",
-  "sectional",
-  "loveseat",
-  "bed",
-  "mattress",
-  "wardrobe",
-  "armoire",
-  "dresser",
-  "cabinet",
-  "cupboard",
-  "sideboard",
-  "buffet",
-  "bookshelf",
-  "bookcase",
-  "dining table",
-  "dining-table",
-];
-
+const SOFA_BED = /\b(sofa|couch|sectional|loveseat|bed|mattress)\b/;
+const DINING_TABLE = /\bdining\s*-?\s*table\b/;
+const STORAGE = /\b(wardrobe|armoire|dresser|cabinet|cupboard|sideboard|buffet|bookshelf|bookcase)\b/;
+const RUG = /\b(rug|carpet)\b/;
 const SMALL_TABLE = /\b(coffee|side|end|console|night|bedside)\s*-?\s*table\b/;
 const SMALL_SEATING = /\b(chair|stool|ottoman|bench)\b/;
-
-const ACCESSORY = [
-  "lamp",
-  "lighting",
-  "light fixture",
-  "rug",
-  "carpet",
-  "cushion",
-  "pillow",
-  "throw",
-  "vase",
-  "plant",
-  "art",
-  "poster",
-  "mirror",
-  "curtain",
-  "drape",
-  "decor",
-  "accessory",
-  "clock",
-  "candle",
-];
+const LAMP = /\b(lamp|lighting|light fixture)\b/;
+const DECOR = /\b(vase|plant|art|poster|mirror|curtain|drape|decor|accessory|clock|candle|cushion|pillow|throw)\b/;
 
 export type OrderedRenderReference = {
   imageIndex: number;
   selection: ProductSelectionView;
   asset: ProductReferenceAssetView;
-  priority: 1 | 2 | 3 | 4;
+  priority: number;
   originalIndex: number;
 };
 
@@ -66,13 +30,18 @@ function categoryText(selection: ProductSelectionView): string {
     .trim();
 }
 
-export function referencePriority(selection: ProductSelectionView): 1 | 2 | 3 | 4 {
-  if (selection.requirementType === "material") return 3;
+export function referencePriority(selection: ProductSelectionView): number {
   const text = categoryText(selection);
-  if (ACCESSORY.some((token) => text.includes(token))) return 4;
-  if (SMALL_TABLE.test(text) || SMALL_SEATING.test(text)) return 2;
-  if (LARGE_FURNITURE.some((token) => text.includes(token))) return 1;
-  return 2;
+  if (SOFA_BED.test(text)) return 1;
+  if (DINING_TABLE.test(text)) return 2;
+  if (STORAGE.test(text)) return 3;
+  if (RUG.test(text)) return 4;
+  if (SMALL_TABLE.test(text)) return 5;
+  if (SMALL_SEATING.test(text)) return 6;
+  if (LAMP.test(text)) return 7;
+  if (selection.requirementType === "material") return 8;
+  if (DECOR.test(text)) return 9;
+  return 6;
 }
 
 export function isValidReferenceForSelection(
@@ -91,22 +60,23 @@ export function isValidReferenceForSelection(
 }
 
 export function orderRenderReferences(
-  confirmed: ProductSelectionView[],
+  selections: ProductSelectionView[],
   assetsBySelectionId: Map<string, ProductReferenceAssetView>
 ): {
   ordered: OrderedRenderReference[];
   missing: ProductSelectionView[];
+  truncated: boolean;
   tooMany: boolean;
 } {
   const missing: ProductSelectionView[] = [];
   const ready: Array<{
     selection: ProductSelectionView;
     asset: ProductReferenceAssetView;
-    priority: 1 | 2 | 3 | 4;
+    priority: number;
     originalIndex: number;
   }> = [];
 
-  confirmed.forEach((selection, originalIndex) => {
+  selections.forEach((selection, originalIndex) => {
     const asset = assetsBySelectionId.get(selection.id);
     if (!isValidReferenceForSelection(selection, asset)) {
       missing.push(selection);
@@ -126,15 +96,15 @@ export function orderRenderReferences(
     return a.selection.requirementKey.localeCompare(b.selection.requirementKey);
   });
 
-  const tooMany = ready.length > MAX_RENDER_REFERENCE_IMAGES;
+  const truncated = ready.length > MAX_RENDER_REFERENCE_IMAGES;
+  const limited = ready.slice(0, MAX_RENDER_REFERENCE_IMAGES);
   return {
     missing,
-    tooMany,
-    ordered: tooMany
-      ? []
-      : ready.map((item, index) => ({
-          ...item,
-          imageIndex: index + 2,
-        })),
+    truncated,
+    tooMany: truncated,
+    ordered: limited.map((item, index) => ({
+      ...item,
+      imageIndex: index + 2,
+    })),
   };
 }

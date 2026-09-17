@@ -30,7 +30,7 @@ describe("render helpers", () => {
 
   it("keeps the product-fidelity disclaimer", () => {
     expect(PRODUCT_FIDELITY_DISCLAIMER).toBe(
-      "Visualization created using your selected product references."
+      "Visualization created from your room photo using selected product images as visual references. It is not a photograph of those exact items in your room."
     );
   });
 

@@ -8,6 +8,7 @@ export type RenderErrorCode =
   | "stale_source"
   | "no_confirmed_products"
   | "reference_missing"
+  | "reference_grounding_unavailable"
   | "too_many_references"
   | "render_disabled"
   | "provider_unconfigured"
@@ -56,9 +57,11 @@ export function renderErrorMessage(code: RenderErrorCode): string {
     case "stale_source":
       return "Your room analysis or products are out of date. Finish those steps first.";
     case "no_confirmed_products":
-      return "Confirm at least one product before generating a design.";
+      return "Find products before generating a design.";
     case "reference_missing":
       return "A selected product is not render-ready. Unconfirm it or choose another product.";
+    case "reference_grounding_unavailable":
+      return "None of the selected products have a usable product image for visualization.";
     case "too_many_references":
       return "Too many confirmed product references for one generation.";
     case "render_disabled":

@@ -829,6 +829,7 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
           <Step9bProductSourcing
             projectId={projectId}
             selections={persistedSelections}
+            unmatchedRequirements={persistedDiscovery?.unmatchedRequirements ?? []}
             preferences={{
               selectedStyles: data.selectedStyles,
               budgetLevel: data.budgetLevel,

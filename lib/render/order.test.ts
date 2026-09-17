@@ -33,6 +33,9 @@ function asset(selectionId: string, hash: string): ProductReferenceAssetView {
     projectId,
     selectionId,
     sourceImageUrl: "https://cdn.localhome.si/1.jpg",
+    sourcePageUrl: "https://www.localhome.si/p/1",
+    isPrimary: true,
+    sortOrder: 0,
     storageBucket: "project-assets",
     storagePath: `projects/${projectId}/product-references/${selectionId}.jpg`,
     mimeType: "image/jpeg",
@@ -82,9 +85,9 @@ describe("render reference order", () => {
     });
 
     expect(referencePriority(sofa)).toBe(1);
-    expect(referencePriority(table)).toBe(2);
-    expect(referencePriority(flooring)).toBe(3);
-    expect(referencePriority(lamp)).toBe(4);
+    expect(referencePriority(table)).toBe(5);
+    expect(referencePriority(flooring)).toBe(8);
+    expect(referencePriority(lamp)).toBe(7);
 
     const { ordered, missing, tooMany } = orderRenderReferences(
       [sofa, table, lamp, flooring],
@@ -101,13 +104,13 @@ describe("render reference order", () => {
     expect(ordered.map((item) => item.selection.itemSpec)).toEqual([
       "sofa",
       "coffee table",
-      "wood-look flooring",
       "floor lamp",
+      "wood-look flooring",
     ]);
     expect(ordered.map((item) => item.imageIndex)).toEqual([2, 3, 4, 5]);
   });
 
-  it("does not silently discard when more than 10 valid references exist", () => {
+  it("keeps the highest-priority products when more than the render limit exist", () => {
     const confirmed = Array.from({ length: 11 }, (_, index) =>
       selection({
         id: `aaaaaaaa-aaaa-4aaa-8aaa-${(index + 1).toString().padStart(12, "0")}`,
@@ -121,6 +124,8 @@ describe("render reference order", () => {
     );
     const result = orderRenderReferences(confirmed, assets);
     expect(result.tooMany).toBe(true);
-    expect(result.ordered).toEqual([]);
+    expect(result.truncated).toBe(true);
+    expect(result.ordered).toHaveLength(6);
+    expect(result.ordered.map((item) => item.imageIndex)).toEqual([2, 3, 4, 5, 6, 7]);
   });
 });

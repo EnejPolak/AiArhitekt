@@ -166,7 +166,7 @@ const SHIPPING_OR_FINANCE_OFFER_RE =
 const UNLABELED_PAIR_DIM_RE =
   /\b\d+(?:[.,]\d+)?\s*[x×]\s*\d+(?:[.,]\d+)?(?:\s*[x×]\s*\d+(?:[.,]\d+)?)?\s*(?:mm|cm|m)\b/i;
 
-const WIDTH_TOKEN = /(?:^|[^a-z0-9])(?:sirina|width|wide|breite)(?:[^a-z0-9]|$)/i;
+const WIDTH_TOKEN = /(?:^|[^a-z0-9])(?:sirina|width|wide|breite|largeur|larghezza)(?:[^a-z0-9]|$)/i;
 const HEIGHT_TOKEN = /(?:^|[^a-z0-9])(?:visina|height|hohe|hoehe)(?:[^a-z0-9]|$)/i;
 const DEPTH_TOKEN =
   /(?:^|[^a-z0-9])(?:globina|depth|tiefe|dolzina|length|lange)(?:[^a-z0-9]|$)/i;
@@ -794,7 +794,7 @@ export function extractLabeledHtmlSpecs(html: string): MerchantSpecFact[] {
   }
 
   const inlinePattern =
-    /(?:^|[^A-Za-z0-9])((?:Širina|Sirina|Width|Višina|Visina|Height|Globina|Depth|Dolžina|Dolzina|Length|Premer|Diameter|Debelina|Thickness|Material|Materiali|Materijal|Barva|Colour|Color|Površina|Povrsina|Finish|Obdelava)(?:\s+(?:izdelka|product|paketa|package))?(?:\s*\([^)]{0,40}\))?)\s*[:\-–]\s*([^<\n|]{1,80})/gi;
+    /(?:^|[^A-Za-z0-9])((?:Širina|Sirina|Width|Breite|Largeur|Larghezza|Višina|Visina|Height|Globina|Depth|Dolžina|Dolzina|Length|Premer|Diameter|Debelina|Thickness|Material|Materiali|Materijal|Barva|Colour|Color|Površina|Povrsina|Finish|Obdelava)(?:\s+(?:izdelka|product|paketa|package))?(?:\s*\([^)]{0,40}\))?)\s*[:\-–]\s*([^<\n|]{1,80})/gi;
   while ((match = inlinePattern.exec(cleaned)) !== null && specs.length < MAX_SPECS) {
     const label = stripTags(match[1]!);
     push(label, stripTags(match[2]!), "merchant_page", "product_text", {

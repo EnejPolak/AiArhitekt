@@ -105,7 +105,7 @@ const READINESS_CODES = new Set([
   "missing_discovery",
   "stale_source",
   "no_confirmed_products",
-  "reference_missing",
+  "reference_grounding_unavailable",
   "too_many_references",
 ]);
 
@@ -142,7 +142,7 @@ export async function loadRoomRenderState(input: {
         stale: Boolean(latestSucceeded && !current),
         previewUrl: await signedPreview(supabase, current),
         renders: marked,
-        missingReferences: [],
+        missingReferences: source.missing,
         readinessCode: null,
         readinessMessage: null,
       };

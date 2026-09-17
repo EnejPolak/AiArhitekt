@@ -7,7 +7,7 @@ import { getProjectById } from "@/lib/projects/queries";
 import { MVP_PROJECT_TYPE } from "@/lib/projects/types";
 import { projectIdInputSchema } from "@/lib/projects/schema";
 import { createPersistClient } from "@/lib/supabase/persist";
-import { acquireProductReferenceAsset } from "@/lib/references/acquire";
+import { ensureProductReferenceAssets } from "@/lib/references/ensure";
 import { discoverProjectProducts, loadCurrentProductDiscovery } from "./discover";
 import { DiscoveryError, discoveryErrorMessage, logDiscoveryError } from "./errors";
 import { captureSafeException } from "@/lib/observability/report";
@@ -198,16 +198,15 @@ export async function setProductConfirmed(input: {
 
     if (
       selection.isConfirmed &&
-      selection.hasReferenceImage &&
-      selection.productImageUrl
+      (selection.hasReferenceImage || selection.productImageUrl || selection.productUrl)
     ) {
       try {
-        await acquireProductReferenceAsset({
-          persistClient: createPersistClient(),
+        const persistClient = createPersistClient();
+        await ensureProductReferenceAssets({
+          persistClient,
           ownerUserId: user.id,
           projectId: selection.projectId,
-          selectionId: selection.id,
-          sourceImageUrl: selection.productImageUrl,
+          selections: [selection],
         });
       } catch {
         // Confirmation is the user action. A failed retailer fetch does not un-confirm.

@@ -1,5 +1,6 @@
 import type { DesignRequirements, RoomAnalysisObservation } from "@/lib/analysis/schema";
 import type { UnmatchedRequirement } from "@/lib/discovery/itemSpecs";
+import type { ProductSelectionView } from "@/lib/discovery/types";
 import type { OrderedRenderReference } from "./order";
 import type { RoomRenderPreferences } from "./preferences";
 import { canonicalRenderPreferences } from "./preferences";
@@ -21,6 +22,7 @@ export type BuildRenderPromptInput = {
   observation: RoomAnalysisObservation;
   designRequirements: DesignRequirements;
   unmatchedRequirements: UnmatchedRequirement[];
+  ungroundedSelections?: ProductSelectionView[];
   preferences: RoomRenderPreferences;
   references: OrderedRenderReference[];
 };
@@ -38,6 +40,12 @@ function requirementLabel(item: OrderedRenderReference): string {
     return snap.category;
   }
   return item.selection.itemSpec;
+}
+
+function letterForIndex(imageIndex: number): string {
+  const code = 64 + imageIndex;
+  if (code < 65 || code > 90) return String(imageIndex);
+  return String.fromCharCode(code);
 }
 
 export function buildRoomRenderPrompt(input: BuildRenderPromptInput): RenderPromptSnapshot {
@@ -63,7 +71,7 @@ export function buildRoomRenderPrompt(input: BuildRenderPromptInput): RenderProm
 
   const styleLine =
     preferences.selectedStyles.length > 0
-      ? `User style direction: ${preferences.selectedStyles.join(", ")}.`
+      ? `User style direction: ${preferences.selectedStyles.join(", ")}. Use style only for arrangement, styling, and non-product decorative composition. Do not replace referenced products to match the style.`
       : "No additional named style beyond the supplied product references.";
   const budgetLine = preferences.budgetLevel
     ? `Budget signal for visual density and finish quality: ${preferences.budgetLevel}.`
@@ -99,21 +107,27 @@ export function buildRoomRenderPrompt(input: BuildRenderPromptInput): RenderProm
   const unmatched = input.unmatchedRequirements
     .map((item) => item.requirementKey)
     .sort((a, b) => a.localeCompare(b));
+  const ungrounded = (input.ungroundedSelections ?? [])
+    .map((item) => item.requirementKey)
+    .sort((a, b) => a.localeCompare(b));
 
   const referenceLines = input.references.map((item) => {
     const kind = item.selection.requirementType === "material" ? "material/surface" : "furniture";
+    const letter = letterForIndex(item.imageIndex);
     return [
-      `Image ${item.imageIndex} is the exact selected ${kind} reference for ${requirementLabel(item)}.`,
-      `Place or apply it matching its recognizable shape, color, material/upholstery and major design features in the appropriate ${requirementLabel(item)} position.`,
-      `Do not substitute a different product identity for this reference.`,
+      `IMAGE ${letter} (Image ${item.imageIndex}) is the exact selected ${kind} reference: ${item.selection.productTitle} (${requirementLabel(item)}).`,
+      "Preserve as closely as possible its shape, silhouette, color, material appearance, proportions, and distinctive design features.",
+      "You may change only viewpoint relative to the camera, perspective, apparent scale appropriate for the room, orientation, lighting/shadows, and partial occlusion.",
+      "Do not replace this referenced item with a stylistically similar but materially different invented product.",
     ].join(" ");
   });
 
   const prompt = [
-    "Edit the supplied room photograph into a renovated version of THE SAME room.",
-    "Image 1 is the original room and is the spatial source.",
-    "Preserve the original camera viewpoint, room geometry, wall positions, windows, doors, ceiling and major fixed architecture unless an explicit renovation requirement below says otherwise.",
-    "This is a renovation of the uploaded room, not generation of a random new room.",
+    "This is exact-product reference-grounded rendering of the customer's original room, not generic furniture invention.",
+    "IMAGE A (Image 1) is the customer's real empty or unfinished room and is the spatial source.",
+    "Preserve this room's architecture, perspective and camera position: walls, windows, doors, floor, ceiling, room proportions, and major structural geometry.",
+    "Do not invent architectural changes unless an explicit renovation requirement below says otherwise.",
+    "Furnish IMAGE A using the specific referenced products below.",
     ...referenceLines,
     preserve ? `Preserve: ${preserve}.` : "Preserve existing architecture and any elements marked to keep.",
     replace
@@ -121,8 +135,11 @@ export function buildRoomRenderPrompt(input: BuildRenderPromptInput): RenderProm
       : "Do not remove architecture. Replace only elements covered by supplied product references.",
     constraints ? `Constraints: ${constraints}.` : "",
     unmatched.length > 0
-      ? `Unmatched requirements have no commerce product. Do not invent an unrelated new major purchasable item for: ${unmatched.join(", ")}. Preserve the existing room element where practical, or leave that requirement visually unchanged.`
+      ? `These requirements were NOT_FOUND. Do not claim a real exact product was rendered for: ${unmatched.join(", ")}. Leave that area visually unresolved or use only concept-only minor decor.`
       : "Do not introduce unrelated major furniture that is not in the supplied product references.",
+    ungrounded.length > 0
+      ? `These selected products have no usable reference image. Keep them off the exact-product claim. Do not invent a photographic stand-in presented as that product: ${ungrounded.join(", ")}.`
+      : "",
     styleLine,
     budgetLine,
     colorLine ? `Color direction: ${colorLine}.` : "",
@@ -132,9 +149,10 @@ export function buildRoomRenderPrompt(input: BuildRenderPromptInput): RenderProm
       : "",
     bedLine,
     notesLine,
-    "Do not alter the identities of supplied products unnecessarily.",
+    "Minor concept-only decor such as a plant, small books, a cushion, or minor wall decoration is allowed only for visual coherence.",
+    "Do not present invented or generated decor as a purchasable selected merchant product. Major furniture must use the referenced real products.",
     "Do not generate shopping text, prices, URLs, logos as labels, or captions inside the image.",
-    "Do not claim exact physical measurements.",
+    "Do not claim pixel-identical photographic identity or exact physical measurements.",
     "Do not invent extra major furniture beyond the supplied references.",
   ]
     .filter((line) => line.trim().length > 0)

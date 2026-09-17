@@ -115,12 +115,15 @@ export type Database = {
           created_at: string
           height: number | null
           id: string
+          is_primary: boolean
           mime_type: string
           project_id: string
           selection_id: string
           size_bytes: number
+          sort_order: number
           source_hash: string
           source_image_url: string
+          source_page_url: string | null
           storage_bucket: string
           storage_path: string
           updated_at: string
@@ -130,12 +133,15 @@ export type Database = {
           created_at?: string
           height?: number | null
           id?: string
+          is_primary?: boolean
           mime_type: string
           project_id: string
           selection_id: string
           size_bytes: number
+          sort_order?: number
           source_hash: string
           source_image_url: string
+          source_page_url?: string | null
           storage_bucket?: string
           storage_path: string
           updated_at?: string
@@ -145,12 +151,15 @@ export type Database = {
           created_at?: string
           height?: number | null
           id?: string
+          is_primary?: boolean
           mime_type?: string
           project_id?: string
           selection_id?: string
           size_bytes?: number
+          sort_order?: number
           source_hash?: string
           source_image_url?: string
+          source_page_url?: string | null
           storage_bucket?: string
           storage_path?: string
           updated_at?: string
@@ -647,16 +656,19 @@ export type Database = {
       }
       upsert_project_product_reference_asset: {
         Args: {
-          p_height: number
+          p_height: number | null
+          p_is_primary?: boolean
           p_mime_type: string
           p_owner_user_id: string
           p_project_id: string
           p_selection_id: string
           p_size_bytes: number
+          p_sort_order?: number
           p_source_hash: string
           p_source_image_url: string
+          p_source_page_url?: string | null
           p_storage_path: string
-          p_width: number
+          p_width: number | null
         }
         Returns: string
       }

@@ -2,6 +2,8 @@ import { detectImageMime } from "@/lib/uploads/signature";
 import {
   MAX_PRODUCT_REFERENCE_BYTES,
   MAX_REFERENCE_FETCH_REDIRECTS,
+  MIN_PRODUCT_REFERENCE_BYTES,
+  MIN_PRODUCT_REFERENCE_EDGE,
   PRODUCT_REFERENCE_MIME_TYPES,
   REFERENCE_FETCH_TIMEOUT_MS,
   type ProductReferenceMimeType,
@@ -134,11 +136,20 @@ export async function fetchValidatedProductImage(
     throw new ReferenceError("invalid_image", referenceErrorMessage("invalid_image"));
   }
 
+  const dimensions = readImageDimensions(bytes, magic);
+  const tooSmallKnown =
+    dimensions != null &&
+    (dimensions.width < MIN_PRODUCT_REFERENCE_EDGE || dimensions.height < MIN_PRODUCT_REFERENCE_EDGE);
+  const tooSmallUnknown = dimensions == null && bytes.byteLength < MIN_PRODUCT_REFERENCE_BYTES;
+  if (tooSmallKnown || tooSmallUnknown) {
+    throw new ReferenceError("invalid_image", referenceErrorMessage("invalid_image"));
+  }
+
   return {
     bytes,
     mime: magic,
     sourceUrl,
     sizeBytes: bytes.byteLength,
-    dimensions: readImageDimensions(bytes, magic),
+    dimensions,
   };
 }

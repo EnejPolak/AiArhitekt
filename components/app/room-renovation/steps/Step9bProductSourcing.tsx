@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import type { ProductSelectionView } from "@/lib/discovery/types";
+import type { UnmatchedRequirement } from "@/lib/discovery/itemSpecs";
 import type { RoomRenderPreferences } from "@/lib/render/preferences";
 import { FinalRoomRenderPanel } from "../FinalRoomRenderPanel";
 import { wizardPanelClass } from "../wizardUi";
@@ -9,6 +10,7 @@ import { wizardPanelClass } from "../wizardUi";
 export interface Step9bProductSourcingProps {
   projectId: string;
   selections: ProductSelectionView[];
+  unmatchedRequirements?: UnmatchedRequirement[];
   preferences: RoomRenderPreferences;
   roomPhotoPreviewUrl: string | null;
   onContinue: () => void;
@@ -17,6 +19,7 @@ export interface Step9bProductSourcingProps {
 export const Step9bProductSourcing: React.FC<Step9bProductSourcingProps> = ({
   projectId,
   selections,
+  unmatchedRequirements = [],
   preferences,
   roomPhotoPreviewUrl,
   onContinue,
@@ -25,11 +28,12 @@ export const Step9bProductSourcing: React.FC<Step9bProductSourcingProps> = ({
     <div className="flex justify-start mb-6">
       <div className={`${wizardPanelClass} space-y-4`}>
         <div className="text-[15px] text-[rgba(255,255,255,0.85)] leading-relaxed">
-          Generate a room visualization from your confirmed products. The shopping list stays the real persisted selections — not anything read from the image.
+          Generate a room visualization from your selected products. The shopping list stays the real persisted selections — not anything read from the image.
         </div>
         <FinalRoomRenderPanel
           projectId={projectId}
           selections={selections}
+          unmatchedRequirements={unmatchedRequirements}
           preferences={preferences}
           roomPhotoPreviewUrl={roomPhotoPreviewUrl}
         />

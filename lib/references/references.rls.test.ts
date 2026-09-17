@@ -11,6 +11,7 @@ import { buildRoomPhotoPath } from "@/lib/uploads/path";
 import { validRoomAnalysisResult } from "@/lib/analysis/fixtures";
 import { acquireProductReferenceAsset } from "./acquire";
 import { PROJECT_ASSETS_BUCKET } from "./constants";
+import { createSolidPng } from "./imageFixtures";
 import { buildProductReferencePath } from "./path";
 
 const LOCAL_URL = localSupabaseApiUrl();
@@ -49,11 +50,8 @@ async function signUp(label: string) {
   return { client, user: data.user };
 }
 
-const JPEG_BYTES = Uint8Array.from([
-  0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01,
-  0x00, 0x01, 0x00, 0x00, 0xff, 0xd9,
-]);
-const JPEG = new Blob([JPEG_BYTES], { type: "image/jpeg" });
+const JPEG_BYTES = createSolidPng(128, 128);
+const JPEG = new Blob([JPEG_BYTES], { type: "image/png" });
 
 async function seedProject(client: Client, userId: string) {
   const created = await client
@@ -179,7 +177,7 @@ describe("product reference assets RLS (local)", () => {
 
   it("anonymous and User A cannot insert reference metadata or upload to project-assets", async () => {
     const anon = publicClient();
-    const path = buildProductReferencePath(seededA.projectId, selectionA, "image/jpeg");
+    const path = buildProductReferencePath(seededA.projectId, selectionA, "image/png");
     const anonUpload = await anon.storage.from(PROJECT_ASSETS_BUCKET).upload(path, JPEG, {
       contentType: "image/jpeg",
     });
@@ -216,26 +214,45 @@ describe("product reference assets RLS (local)", () => {
     expect(rpc.error).toBeTruthy();
   });
 
-  it("trusted acquire stores a private copy after mocked JPEG fetch", async () => {
+  it("trusted acquire stores a private copy after mocked PNG fetch and reuses it", async () => {
+    let fetches = 0;
+    const fetch = async () => {
+      fetches += 1;
+      return new Response(JPEG_BYTES, {
+        status: 200,
+        headers: { "content-type": "image/png", "content-length": String(JPEG_BYTES.byteLength) },
+      });
+    };
     const asset = await acquireProductReferenceAsset({
       persistClient: persistClient(),
       ownerUserId: userA.user.id,
       projectId: seededA.projectId,
       selectionId: selectionA,
       sourceImageUrl: "https://cdn.localhome.si/sofa.jpg",
+      sourcePageUrl: "https://www.localhome.si/p/sofa",
       lookup: async () => ({ address: "203.0.113.10", family: 4 }),
-      fetch: async () =>
-        new Response(JPEG_BYTES, {
-          status: 200,
-          headers: { "content-type": "image/jpeg", "content-length": String(JPEG_BYTES.byteLength) },
-        }),
+      fetch,
     });
     storagePathA = asset.storagePath;
     expect(asset.sourceHash).toBe(createHash("sha256").update(JPEG_BYTES).digest("hex"));
-    expect(asset.mimeType).toBe("image/jpeg");
+    expect(asset.mimeType).toBe("image/png");
+    expect(asset.sourcePageUrl).toBe("https://www.localhome.si/p/sofa");
     expect(asset.storagePath).toBe(
-      buildProductReferencePath(seededA.projectId, selectionA, "image/jpeg")
+      buildProductReferencePath(seededA.projectId, selectionA, "image/png")
     );
+
+    const reused = await acquireProductReferenceAsset({
+      persistClient: persistClient(),
+      ownerUserId: userA.user.id,
+      projectId: seededA.projectId,
+      selectionId: selectionA,
+      sourceImageUrl: "https://cdn.localhome.si/sofa-other.jpg",
+      lookup: async () => ({ address: "203.0.113.10", family: 4 }),
+      fetch,
+    });
+    expect(reused.id).toBe(asset.id);
+    expect(reused.sourceHash).toBe(asset.sourceHash);
+    expect(fetches).toBe(1);
 
     const read = await userA.client
       .from("project_product_reference_assets")

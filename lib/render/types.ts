@@ -18,6 +18,19 @@ export type RenderReferenceSnapshotItem = {
   referenceHash: string;
 };
 
+export function groundedSelectionIdsFromSnapshot(
+  snapshot: RenderReferenceSnapshotItem[] | Json | null | undefined
+): Set<string> {
+  if (!Array.isArray(snapshot)) return new Set();
+  const ids = new Set<string>();
+  for (const item of snapshot) {
+    if (!item || typeof item !== "object") continue;
+    const selectionId = (item as { selectionId?: unknown }).selectionId;
+    if (typeof selectionId === "string" && selectionId) ids.add(selectionId);
+  }
+  return ids;
+}
+
 export type RoomRenderView = {
   id: string;
   projectId: string;

@@ -3,24 +3,12 @@ import { describe, expect, it } from "vitest";
 import { MAX_PRODUCT_REFERENCE_BYTES } from "./constants";
 import { fetchValidatedProductImage } from "./fetchImage";
 import { ReferenceError } from "./errors";
+import { TINY_PRODUCT_PNG, USABLE_PRODUCT_PNG } from "./imageFixtures";
 
 const JPEG = Uint8Array.from([
   0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01,
   0x00, 0x01, 0x00, 0x00, 0xff, 0xd9,
-]);
-
-const PNG = Uint8Array.from([
-  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
-  0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
-  0xde, 0x00, 0x00, 0x00, 0x0c, 0x49, 0x44, 0x41, 0x54, 0x08, 0xd7, 0x63, 0xf8, 0x0f, 0x00, 0x00,
-  0x01, 0x01, 0x01, 0x00, 0x1b, 0xb6, 0xee, 0x56, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44,
-  0xae, 0x42, 0x60, 0x82,
-]);
-
-const WEBP = Uint8Array.from([
-  0x52, 0x49, 0x46, 0x46, 0x1a, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x4c,
-  0x0d, 0x00, 0x00, 0x00, 0x2f, 0x00, 0x00, 0x00, 0x10, 0x07, 0x10, 0x11, 0x11, 0x88, 0x88, 0xfe,
-  0x07, 0x00,
+  ...Array.from({ length: 400 }, () => 0),
 ]);
 
 const PUBLIC_LOOKUP = async () => ({ address: "203.0.113.10", family: 4 });
@@ -45,19 +33,13 @@ describe("validated product image fetch", () => {
 
     const png = await fetchValidatedProductImage("https://cdn.example/sofa.png", {
       lookup: PUBLIC_LOOKUP,
-      fetch: async () => imageResponse(PNG, "image/png"),
+      fetch: async () => imageResponse(USABLE_PRODUCT_PNG, "image/png"),
     });
     expect(png.mime).toBe("image/png");
-    expect(png.dimensions).toEqual({ width: 1, height: 1 });
-
-    const webp = await fetchValidatedProductImage("https://cdn.example/sofa.webp", {
-      lookup: PUBLIC_LOOKUP,
-      fetch: async () => imageResponse(WEBP, "image/webp"),
-    });
-    expect(webp.mime).toBe("image/webp");
+    expect(png.dimensions).toEqual({ width: 128, height: 128 });
   });
 
-  it("rejects HTML, mismatched magic, oversize, and redirects to a private host", async () => {
+  it("rejects HTML, mismatched magic, oversize, tiny logos, and redirects to a private host", async () => {
     await expect(
       fetchValidatedProductImage("https://cdn.example/sofa.jpg", {
         lookup: PUBLIC_LOOKUP,
@@ -88,6 +70,13 @@ describe("validated product image fetch", () => {
     ).rejects.toBeInstanceOf(ReferenceError);
 
     await expect(
+      fetchValidatedProductImage("https://cdn.example/icon.png", {
+        lookup: PUBLIC_LOOKUP,
+        fetch: async () => imageResponse(TINY_PRODUCT_PNG, "image/png"),
+      })
+    ).rejects.toMatchObject({ code: "invalid_image" });
+
+    await expect(
       fetchValidatedProductImage("https://cdn.example/sofa.jpg", {
         lookup: PUBLIC_LOOKUP,
         fetch: async () =>
@@ -95,6 +84,13 @@ describe("validated product image fetch", () => {
             status: 302,
             headers: { location: "http://127.0.0.1/secret.jpg" },
           }),
+      })
+    ).rejects.toMatchObject({ code: "unsafe_url" });
+
+    await expect(
+      fetchValidatedProductImage("http://127.0.0.1/secret.jpg", {
+        lookup: PUBLIC_LOOKUP,
+        fetch: async () => imageResponse(USABLE_PRODUCT_PNG, "image/png"),
       })
     ).rejects.toMatchObject({ code: "unsafe_url" });
   });

@@ -11,6 +11,7 @@ import { buildRoomPhotoPath } from "@/lib/uploads/path";
 import { validRoomAnalysisResult } from "@/lib/analysis/fixtures";
 import { acquireProductReferenceAsset } from "@/lib/references/acquire";
 import { PROJECT_ASSETS_BUCKET } from "@/lib/references/constants";
+import { createSolidPng } from "@/lib/references/imageFixtures";
 import { shoppingPreferenceFingerprint } from "@/lib/discovery/preferenceHash";
 import { generateRoomRender, prepareRenderSource } from "./generate";
 import { expireLocalRoomRenderCooldown } from "./localCooldownSetup";
@@ -56,14 +57,14 @@ async function signUp(label: string) {
   return { client, user: data.user };
 }
 
-function jpeg(tag: number): Uint8Array {
-  return Uint8Array.from([
-    0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01,
-    0x00, 0x01, tag, 0x00, 0xff, 0xd9,
-  ]);
+function productPng(tag: number): Uint8Array {
+  return createSolidPng(128, 128, [tag, 160, 140]);
 }
 
-const ROOM_JPEG = jpeg(0x10);
+const ROOM_JPEG = Uint8Array.from([
+  0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01,
+  0x00, 0x01, 0x10, 0x00, 0xff, 0xd9,
+]);
 const PNG_OUT = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
   "base64"
@@ -214,7 +215,7 @@ async function persistProducts(
         new Response(product.bytes, {
           status: 200,
           headers: {
-            "content-type": "image/jpeg",
+            "content-type": "image/png",
             "content-length": String(product.bytes.byteLength),
           },
         }),
@@ -231,7 +232,7 @@ function sofaOnly(): ProductSeed[] {
       itemSpec: "sofa",
       productTitle: "Modern beige sofa",
       snapshot: validRoomAnalysisResult.designRequirements.furnitureNeeds[0],
-      bytes: jpeg(0x21),
+      bytes: productPng(0x21),
     },
   ];
 }
@@ -283,10 +284,10 @@ describe("product-conditioned room render (local, mocked OpenAI)", () => {
 
   it("supplies room bytes first then deterministic private product bytes, not product titles", async () => {
     vi.stubEnv("OPENAI_IMAGE_RENDER_ENABLED", "true");
-    const sofaBytes = jpeg(0x31);
-    const tableBytes = jpeg(0x32);
-    const lampBytes = jpeg(0x33);
-    const floorBytes = jpeg(0x34);
+    const sofaBytes = productPng(0x31);
+    const tableBytes = productPng(0x32);
+    const lampBytes = productPng(0x33);
+    const floorBytes = productPng(0x34);
     const seeded = await seedProject(userA.client, userA.user.id);
     await persistProducts(userA, seeded, [
       {
@@ -328,10 +329,10 @@ describe("product-conditioned room render (local, mocked OpenAI)", () => {
       expect(Buffer.from(input.images[0].bytes).equals(Buffer.from(ROOM_JPEG))).toBe(true);
       expect(Buffer.from(input.images[1].bytes).equals(Buffer.from(sofaBytes))).toBe(true);
       expect(Buffer.from(input.images[2].bytes).equals(Buffer.from(tableBytes))).toBe(true);
-      expect(Buffer.from(input.images[3].bytes).equals(Buffer.from(floorBytes))).toBe(true);
-      expect(Buffer.from(input.images[4].bytes).equals(Buffer.from(lampBytes))).toBe(true);
-      expect(input.prompt).toContain("Image 1 is the original room");
-      expect(input.prompt).toContain("Image 2 is the exact selected furniture reference");
+      expect(Buffer.from(input.images[3].bytes).equals(Buffer.from(lampBytes))).toBe(true);
+      expect(Buffer.from(input.images[4].bytes).equals(Buffer.from(floorBytes))).toBe(true);
+      expect(input.prompt).toContain("IMAGE A (Image 1)");
+      expect(input.prompt).toContain("exact selected furniture reference");
       expect(input.images.every((image) => !image.filename.includes("http"))).toBe(true);
       return { bytes: PNG_OUT, mime: "image/png" };
     });
@@ -347,7 +348,7 @@ describe("product-conditioned room render (local, mocked OpenAI)", () => {
     expect(edit).toHaveBeenCalledTimes(1);
   });
 
-  it("returns reference_missing without calling the provider", async () => {
+  it("returns reference_grounding_unavailable without calling the provider when no product image can be stored", async () => {
     vi.stubEnv("OPENAI_IMAGE_RENDER_ENABLED", "true");
     const seeded = await seedProject(userA.client, userA.user.id);
     const persist = persistClient();
@@ -405,8 +406,10 @@ describe("product-conditioned room render (local, mocked OpenAI)", () => {
         projectId: seeded.projectId,
         preferences: PREFS,
         editImage: edit,
+        lookup: async () => ({ address: "203.0.113.10", family: 4 }),
+        fetch: async () => new Response("nope", { status: 404 }),
       })
-    ).rejects.toMatchObject({ code: "reference_missing" });
+    ).rejects.toMatchObject({ code: "reference_grounding_unavailable" });
     expect(edit).not.toHaveBeenCalled();
   });
 
@@ -560,7 +563,7 @@ describe("product-conditioned room render (local, mocked OpenAI)", () => {
     expect(edit).toHaveBeenCalledTimes(3);
   });
 
-  it("changing confirmed products makes the previous render stale without auto-generating", async () => {
+  it("changing persisted products makes the previous render stale without auto-generating", async () => {
     vi.stubEnv("OPENAI_IMAGE_RENDER_ENABLED", "true");
     const seeded = await seedProject(userA.client, userA.user.id);
     const products = [
@@ -571,10 +574,10 @@ describe("product-conditioned room render (local, mocked OpenAI)", () => {
         itemSpec: "coffee table",
         productTitle: "Oak coffee table",
         snapshot: { category: "coffee table", quantity: 1, placementNotes: null, constraints: [] },
-        bytes: jpeg(0x41),
+        bytes: productPng(0x41),
       },
     ];
-    const rows = await persistProducts(userA, seeded, products);
+    await persistProducts(userA, seeded, products);
     const edit = vi.fn<RoomImageEditFn>(async () => ({ bytes: PNG_OUT, mime: "image/png" }));
     const first = await generateRoomRender({
       userClient: userA.client,
@@ -584,11 +587,7 @@ describe("product-conditioned room render (local, mocked OpenAI)", () => {
       preferences: PREFS,
       editImage: edit,
     });
-    const table = rows.find((row) => row.requirement_key === "furniture:coffee-table:1");
-    await userA.client
-      .from("project_product_selections")
-      .update({ is_confirmed: false })
-      .eq("id", table!.id);
+    await persistProducts(userA, seeded, sofaOnly());
 
     const source = await prepareRenderSource(userA.client, seeded.projectId, PREFS);
     expect(source.fingerprint).not.toBe(first.render.sourceFingerprint);
@@ -635,11 +634,127 @@ describe("product-conditioned room render (local, mocked OpenAI)", () => {
     });
     const snapshot = JSON.stringify(generated.render.promptSnapshot);
     const refs = JSON.stringify(generated.render.referenceSnapshot);
-    expect(snapshot).toContain("Image 1 is the original room");
+    expect(snapshot).toContain("IMAGE A (Image 1)");
     expect(refs).toContain("furniture:sofa:0");
+    expect(Array.isArray(generated.render.referenceSnapshot)).toBe(true);
+    const manifest = generated.render.referenceSnapshot as Array<{
+      selectionId: string;
+      referenceAssetId: string;
+    }>;
+    expect(manifest[0]?.selectionId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    );
+    expect(manifest[0]?.referenceAssetId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    );
     expect(snapshot).not.toContain("SUPABASE_SECRET");
     expect(refs).not.toContain("token=");
-    expect(PRODUCT_FIDELITY_DISCLAIMER).toContain("selected product references");
+    expect(PRODUCT_FIDELITY_DISCLAIMER).toContain("visual references");
     expect(generated.render.outputHash).toBe(createHash("sha256").update(PNG_OUT).digest("hex"));
+  });
+
+  it("generates with available product images when one reference fetch fails", async () => {
+    vi.stubEnv("OPENAI_IMAGE_RENDER_ENABLED", "true");
+    const seeded = await seedProject(userA.client, userA.user.id);
+    const persist = persistClient();
+    const extra = await persist.rpc("replace_project_product_discovery_result", {
+      p_owner_user_id: userA.user.id,
+      p_project_id: seeded.projectId,
+      p_discovery: {
+        source_analysis_id: seeded.analysisId,
+        source_analysis_updated_at: seeded.analysisUpdatedAt,
+        location_input: "Ljubljana",
+        latitude: 46.05,
+        longitude: 14.5,
+        radius_km: 20,
+        searched_item_count: 2,
+        not_searched_count: 0,
+        allowlist_domains: ["localhome.si"],
+        unmatched_requirements: [
+          {
+            requirementType: "furniture",
+            requirementKey: "furniture:rug:3",
+            itemSpec: "rug",
+            reason: "no_valid_product",
+          },
+        ],
+        source_preferences: shoppingPreferenceFingerprint(PREFS).snapshot,
+        source_preferences_hash: shoppingPreferenceFingerprint(PREFS).hash,
+      } as unknown as Json,
+      p_selections: [
+        {
+          requirement_type: "furniture",
+          requirement_key: "furniture:sofa:0",
+          requirement_snapshot: validRoomAnalysisResult.designRequirements.furnitureNeeds[0],
+          item_spec: "sofa",
+          product_title: "Modern beige sofa",
+          product_url: "https://www.localhome.si/p/1",
+          product_image_url: "https://cdn.localhome.si/1.jpg",
+          price: 199,
+          currency: "EUR",
+          retailer_domain: "localhome.si",
+          retailer_name: "Local Home Store",
+          has_reference_image: true,
+        },
+        {
+          requirement_type: "furniture",
+          requirement_key: "furniture:floor-lamp:2",
+          requirement_snapshot: { category: "floor lamp", quantity: 1, placementNotes: null, constraints: [] },
+          item_spec: "floor lamp",
+          product_title: "Black floor lamp",
+          product_url: "https://www.localhome.si/p/2",
+          product_image_url: "https://cdn.localhome.si/2.jpg",
+          price: 80,
+          currency: "EUR",
+          retailer_domain: "localhome.si",
+          retailer_name: "Local Home Store",
+          has_reference_image: true,
+        },
+      ] as unknown as Json,
+    });
+    expect(extra.error).toBeNull();
+    const rows = await userA.client
+      .from("project_product_selections")
+      .select("id, requirement_key")
+      .eq("project_id", seeded.projectId);
+    const sofa = rows.data?.find((row) => row.requirement_key === "furniture:sofa:0");
+    expect(sofa).toBeTruthy();
+    await acquireProductReferenceAsset({
+      persistClient: persist,
+      ownerUserId: userA.user.id,
+      projectId: seeded.projectId,
+      selectionId: sofa!.id,
+      sourceImageUrl: "https://cdn.localhome.si/1.jpg",
+      lookup: async () => ({ address: "203.0.113.10", family: 4 }),
+      fetch: async () =>
+        new Response(productPng(0x41), {
+          status: 200,
+          headers: {
+            "content-type": "image/png",
+            "content-length": String(productPng(0x41).byteLength),
+          },
+        }),
+    });
+    const edit = vi.fn<RoomImageEditFn>(async (input) => {
+      expect(input.images).toHaveLength(2);
+      expect(input.prompt).toContain("no usable reference image");
+      expect(input.prompt).toContain("furniture:floor-lamp:2");
+      expect(input.prompt).toContain("NOT_FOUND");
+      expect(input.prompt).not.toMatch(/exact selected[\s\S]*Black floor lamp/);
+      return { bytes: PNG_OUT, mime: "image/png" };
+    });
+    const generated = await generateRoomRender({
+      userClient: userA.client,
+      persistClient: persist,
+      ownerUserId: userA.user.id,
+      projectId: seeded.projectId,
+      preferences: PREFS,
+      editImage: edit,
+      lookup: async () => ({ address: "203.0.113.10", family: 4 }),
+      fetch: async () => new Response("nope", { status: 404 }),
+    });
+    expect(generated.providerCalls).toBe(1);
+    const manifest = generated.render.referenceSnapshot as Array<{ selectionId: string }>;
+    expect(manifest.map((item) => item.selectionId)).toEqual([sofa!.id]);
   });
 });
