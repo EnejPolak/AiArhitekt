@@ -10,6 +10,7 @@ import { createPersistClient } from "@/lib/supabase/persist";
 import { acquireProductReferenceAsset } from "@/lib/references/acquire";
 import { discoverProjectProducts, loadCurrentProductDiscovery } from "./discover";
 import { DiscoveryError, discoveryErrorMessage, logDiscoveryError } from "./errors";
+import { captureSafeException } from "@/lib/observability/report";
 import { getOwnedSelection, setSelectionConfirmed } from "./queries";
 import type { ProductDiscoveryView, ProductSelectionView } from "./types";
 import { getProjectRoomPreferences, upsertProjectRoomPreferences } from "@/lib/project-preferences/queries";
@@ -69,15 +70,11 @@ function fromCaught(error: unknown, attemptId?: string): DiscoveryActionFail {
     logDiscoveryError(error, { stage: "server_action", attemptId, ...error.details });
     return fail(error.code, error.message, attemptId);
   }
-  if (process.env.NODE_ENV !== "production") {
-    console.error("[discovery-error]", {
-      stage: "server_action",
-      attemptId,
-      errorCode: "failed",
-      message: error instanceof Error ? error.message : String(error),
-      errorName: error instanceof Error ? error.name : "unknown",
-    });
-  }
+  void captureSafeException(error, {
+    stage: "server_action",
+    attemptId,
+    errorCode: "failed",
+  });
   return fail("failed", undefined, attemptId);
 }
 

@@ -183,7 +183,7 @@ async function main() {
       if (
         result.status === "found" &&
         result.product?.productUrl &&
-        !candidates.some((c) => urlsMatch(c.productUrl, result.product!.productUrl))
+        !candidates.some((c) => urlsMatch(c.url, result.product!.productUrl))
       ) {
         const { candidates: extra } = await prepareEnrichedCandidates({
           sources: [

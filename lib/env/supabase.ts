@@ -1,3 +1,6 @@
+import { getDeploymentEnv } from "./deployment";
+import { assertHostedSupabaseUrl, assertProductionSiteUrl } from "./productionConfig";
+
 /**
  * Public Supabase config (URL + publishable key) plus a separate secret helper
  * used only for trusted persist RPCs.
@@ -35,6 +38,11 @@ export function getSupabasePublicConfig(): SupabasePublicConfig {
     throw new MissingSupabaseConfigError();
   }
 
+  const env = getDeploymentEnv();
+  if (env === "production" || env === "preview") {
+    assertHostedSupabaseUrl(url, env);
+  }
+
   return { url, publishableKey };
 }
 
@@ -50,6 +58,10 @@ export function getSupabaseSecretConfig(): SupabaseSecretConfig {
       "Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SECRET_KEY"
     );
   }
+  const env = getDeploymentEnv();
+  if (env === "production" || env === "preview") {
+    assertHostedSupabaseUrl(url, env);
+  }
   return { url, secretKey };
 }
 
@@ -58,8 +70,9 @@ export function getSupabaseSecretConfig(): SupabaseSecretConfig {
  * Prefer NEXT_PUBLIC_SITE_URL. Do not take this from a user-supplied query param.
  */
 export function getAppOrigin(): string {
-  const configured = (process.env.NEXT_PUBLIC_SITE_URL ?? "").trim();
-  if (configured) return configured.replace(/\/$/, "");
+  const env = getDeploymentEnv();
+  const configured = assertProductionSiteUrl(process.env.NEXT_PUBLIC_SITE_URL, env);
+  if (configured) return configured;
 
   const vercel = (process.env.VERCEL_URL ?? "").trim();
   if (vercel) {

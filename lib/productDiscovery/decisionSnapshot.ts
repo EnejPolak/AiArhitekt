@@ -68,8 +68,8 @@ function mapAcceptanceSourceToPath(source: AcceptanceSource | "price_verificatio
 }
 
 /** JSON-safe clone preserving EvidenceFact fields. */
-export function freezeDecisionSnapshot(snapshot: AcceptedDecisionSnapshot): AcceptedDecisionSnapshot {
-  return JSON.parse(JSON.stringify(snapshot)) as AcceptedDecisionSnapshot;
+export function freezeDecisionSnapshot<T extends AcceptedDecisionSnapshot>(snapshot: T): T {
+  return JSON.parse(JSON.stringify(snapshot)) as T;
 }
 
 export function reloadDecisionSnapshot(raw: unknown): AcceptedDecisionSnapshot {

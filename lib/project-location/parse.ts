@@ -61,8 +61,8 @@ export function parseProjectLocation(
   return {
     locationInput,
     formattedAddress: formatted,
-    latitude: row.latitude,
-    longitude: row.longitude,
+    latitude: row.latitude as number,
+    longitude: row.longitude as number,
     radiusKm,
     countryCode: normalizeCountryCode(row.countryCode),
   };

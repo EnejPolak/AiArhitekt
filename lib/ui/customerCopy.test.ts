@@ -92,7 +92,7 @@ describe("customer copy sanitization", () => {
       const source = readFileSync(join(process.cwd(), file), "utf8");
       expect(source).not.toContain("error.message");
       expect(source).not.toContain("error.stack");
-      expect(source).toContain("console.error");
+      expect(source).toMatch(/captureSafeException|console\.error/);
     }
   });
 

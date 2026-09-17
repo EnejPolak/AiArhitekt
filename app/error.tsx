@@ -1,6 +1,7 @@
 "use client";
 
 import { AppErrorFallback } from "@/components/app/AppErrorFallback";
+import { captureSafeException } from "@/lib/observability/report";
 
 export default function Error({
   error,
@@ -9,6 +10,6 @@ export default function Error({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
-  console.error("[app-error]", { digest: error.digest, name: error.name });
+  void captureSafeException(error, { stage: "react.render", errorCode: error.digest ?? error.name });
   return <AppErrorFallback reset={reset} homeHref="/" homeLabel="Go home" />;
 }

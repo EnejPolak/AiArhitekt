@@ -4,6 +4,7 @@
  */
 import type { OpenAiUsageDiagnostics } from "./sources";
 import { OPENAI_PRODUCT_SEARCH_MODEL } from "./constants";
+import { isProductionDeployment } from "@/lib/env/deployment";
 
 export type ProductDiscoveryStage = "primary" | "targeted";
 
@@ -34,8 +35,9 @@ type ModelStageTrace = {
 
 const stageTraceByClient = new WeakMap<object, ModelStageTrace>();
 
-/** Server-only. Default false. Never expose as NEXT_PUBLIC_*. */
+/** Server-only. Default false. Never expose as NEXT_PUBLIC_*. Forced off in production. */
 export function isProductDiscoveryLunaPrimaryEnabled(): boolean {
+  if (isProductionDeployment()) return false;
   const raw = process.env.PRODUCT_DISCOVERY_LUNA_PRIMARY?.trim().toLowerCase();
   if (raw == null || raw === "") return false;
   return raw === "1" || raw === "true" || raw === "yes" || raw === "on";

@@ -69,8 +69,16 @@ export async function POST(req: Request) {
             placeId: string;
           }> = [];
 
+          const rawResults: Array<{
+            place_id?: string;
+            name?: string;
+            formatted_address?: string;
+            vicinity?: string;
+            rating?: number;
+            user_ratings_total?: number;
+          }> = Array.isArray(data.results) ? data.results : [];
           const inRadius = filterContractorsByRequestedRadius(
-            data.results,
+            rawResults,
             { lat: location.lat, lng: location.lng },
             radiusKm,
             readPlaceCoordinates
@@ -78,33 +86,35 @@ export async function POST(req: Request) {
           const topResults = inRadius.slice(0, 5);
           
           for (const place of topResults) {
+            const placeId = place.place_id;
+            if (!placeId) continue;
             try {
               // Get place details
-              const detailsUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${place.place_id}&fields=name,formatted_address,formatted_phone_number,website,rating,user_ratings_total&key=${process.env.GOOGLE_MAPS_API_KEY}`;
+              const detailsUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&fields=name,formatted_address,formatted_phone_number,website,rating,user_ratings_total&key=${process.env.GOOGLE_MAPS_API_KEY}`;
               const detailsResponse = await fetch(detailsUrl);
               const detailsData = await detailsResponse.json();
 
               if (detailsData.result) {
                 const result = detailsData.result;
                 contractors.push({
-                  name: result.name || place.name,
+                  name: result.name || place.name || "Unknown",
                   address: result.formatted_address || place.formatted_address || place.vicinity || "",
                   phone: result.formatted_phone_number || null,
                   website: result.website || null,
                   rating: result.rating || null,
                   reviewsCount: result.user_ratings_total || null,
-                  placeId: place.place_id,
+                  placeId,
                 });
               } else {
                 // Fallback to basic info
                 contractors.push({
-                  name: place.name,
+                  name: place.name || "Unknown",
                   address: place.formatted_address || place.vicinity || "",
                   phone: null,
                   website: null,
                   rating: place.rating || null,
                   reviewsCount: place.user_ratings_total || null,
-                  placeId: place.place_id,
+                  placeId,
                 });
               }
             } catch (err) {

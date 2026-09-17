@@ -1,3 +1,4 @@
+import { isProductionDeployment } from "@/lib/env/deployment";
 import {
   LOCAL_MARKET_SEARCH_INSTRUCTION,
   marketAwareSearchGuidance,
@@ -137,6 +138,7 @@ Return structured JSON matching the required schema.`;
  * Set PRODUCT_DISCOVERY_PRIMARY_PROMPT_VARIANT=candidate to opt into the experimental prompt.
  */
 export function getProductDiscoverySystemPrompt(): string {
+  if (isProductionDeployment()) return PRODUCT_DISCOVERY_SYSTEM_PROMPT_CONTROL;
   const variant = process.env.PRODUCT_DISCOVERY_PRIMARY_PROMPT_VARIANT?.trim().toLowerCase();
   if (variant === "candidate" || variant === "new") return PRODUCT_DISCOVERY_SYSTEM_PROMPT;
   return PRODUCT_DISCOVERY_SYSTEM_PROMPT_CONTROL;

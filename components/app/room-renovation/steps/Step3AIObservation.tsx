@@ -211,7 +211,7 @@ export const Step3AIObservation: React.FC<Step3AIObservationProps> = ({
             </button>
             <button
               type="button"
-              disabled={status === "analyzing"}
+              disabled={false}
               onClick={() => void runAnalysis(true)}
               className="text-[14px] text-[rgba(255,255,255,0.70)] hover:text-white"
             >
@@ -239,7 +239,7 @@ export const Step3AIObservation: React.FC<Step3AIObservationProps> = ({
         <div className="mt-5">
             <button
               type="button"
-              disabled={!hasPersistedPhoto || status === "analyzing"}
+              disabled={!hasPersistedPhoto}
               onClick={() => void runAnalysis(false)}
             className="text-[14px] text-[rgba(0,230,204,0.85)] hover:text-[rgba(0,230,204,1)] disabled:opacity-40 disabled:cursor-not-allowed"
           >

@@ -8,6 +8,7 @@ import {
 } from "@/lib/auth/errors";
 import { logAuthDiagnostic } from "@/lib/auth/diagnostics";
 import { MissingSupabaseConfigError, getAppOrigin } from "@/lib/env/supabase";
+import { InvalidProductionConfigError } from "@/lib/env/productionConfig";
 import { DEFAULT_POST_AUTH_PATH } from "@/lib/auth/redirect";
 import { signInSchema, signUpSchema } from "@/lib/auth/schemas";
 import { interpretSignUpData } from "@/lib/auth/signUpResult";
@@ -22,7 +23,7 @@ function fail(code: AuthErrorCode, message?: string): AuthActionResult {
 }
 
 function fromCaught(error: unknown, stage: "auth.sign_up" | "auth.sign_in"): AuthActionResult {
-  if (error instanceof MissingSupabaseConfigError) {
+  if (error instanceof MissingSupabaseConfigError || error instanceof InvalidProductionConfigError) {
     logAuthDiagnostic(stage, { code: "config", name: error.name, message: error.message });
     return fail("config");
   }

@@ -77,6 +77,16 @@ describe("product discovery model routing", () => {
     expect(getProductDiscoveryModel("targeted")).not.toBe(getProductDiscoveryModel("primary"));
   });
 
+  it("forces Luna off in production even if the flag is true", () => {
+    const previous = process.env.APP_DEPLOYMENT_ENV;
+    process.env.APP_DEPLOYMENT_ENV = "production";
+    process.env[FLAG] = "true";
+    expect(isProductDiscoveryLunaPrimaryEnabled()).toBe(false);
+    expect(getProductDiscoveryModel("primary")).toBe(PRODUCT_DISCOVERY_TERRA_MODEL);
+    if (previous === undefined) delete process.env.APP_DEPLOYMENT_ENV;
+    else process.env.APP_DEPLOYMENT_ENV = previous;
+  });
+
   it("does not expose the flag as NEXT_PUBLIC", () => {
     const envExample = readFileSync(resolve(process.cwd(), "env.example"), "utf8");
     expect(envExample).not.toMatch(/NEXT_PUBLIC_PRODUCT_DISCOVERY_LUNA_PRIMARY/);

@@ -1,3 +1,5 @@
+import { captureSafeException } from "@/lib/observability/report";
+
 export type DiscoveryErrorCode =
   | "invalid_input"
   | "unauthenticated"
@@ -133,20 +135,30 @@ export function mapDiscoveryDbError(error: { message?: string; code?: string } |
 }
 
 export function logDiscoveryError(error: DiscoveryError, context: DiscoveryErrorDetails = {}): void {
-  if (process.env.NODE_ENV === "production") return;
-  console.error("[discovery-error]", {
-    stage: context.stage ?? "unknown",
+  const payload = {
+    stage: context.stage ?? error.details?.stage ?? "unknown",
     errorCode: error.code,
-    message: error.message,
-    requirementKey: context.requirementKey,
-    queryLevel: context.queryLevel,
-    elapsedMs: context.elapsedMs,
-    serpRequests: context.serpRequests ?? context.providerAttempts,
-    providerAttempts: context.providerAttempts ?? context.serpRequests,
-    providerStatus: context.providerStatus,
-    canonicalError: context.canonicalError,
-    canonicalDetails: context.canonicalDetails,
-  });
+    attemptId: context.attemptId ?? error.details?.attemptId,
+    elapsedMs: context.elapsedMs ?? error.details?.elapsedMs,
+  };
+  console.error("[discovery-error]", payload);
+  const skipCapture = new Set([
+    "rate_limited",
+    "invalid_input",
+    "unauthenticated",
+    "not_found",
+    "location_required",
+    "location_invalid",
+    "missing_analysis",
+  ]);
+  if (!skipCapture.has(error.code)) {
+    void captureSafeException(error, {
+      stage: payload.stage,
+      attemptId: payload.attemptId,
+      errorCode: error.code,
+      level: "error",
+    });
+  }
 }
 
 export function logDiscoveryTiming(timing: {
@@ -161,13 +173,24 @@ export function logDiscoveryTiming(timing: {
   attemptId?: string;
   resultType?: string;
 }): void {
-  if (process.env.NODE_ENV === "production") return;
-  console.info("[discovery-timing]", timing);
+  console.info("[discovery-timing]", {
+    attemptId: timing.attemptId,
+    totalMs: timing.totalMs,
+    geocodeMs: timing.geocodeMs,
+    placesMs: timing.placesMs,
+    serpMs: timing.serpMs,
+    persistMs: timing.persistMs,
+    serpRequests: timing.serpRequests,
+    cacheHits: timing.cacheHits,
+    logicalQueries: timing.logicalQueries,
+    resultType: timing.resultType,
+  });
 }
 
 export function logDiscoveryAttempt(event: {
   attemptId: string;
   phase: "started" | "completed" | "failed";
+  projectId?: string;
   resultType?: string;
   startedAt?: string;
   completedAt?: string;
@@ -175,6 +198,12 @@ export function logDiscoveryAttempt(event: {
   errorCode?: string;
   message?: string;
 }): void {
-  if (process.env.NODE_ENV === "production") return;
-  console.info("[discovery-attempt]", event);
+  console.info("[discovery-attempt]", {
+    projectId: event.projectId,
+    attemptId: event.attemptId,
+    phase: event.phase,
+    resultType: event.resultType,
+    totalMs: event.totalMs,
+    errorCode: event.errorCode,
+  });
 }

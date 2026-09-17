@@ -1,3 +1,5 @@
+import { isProductionDeployment } from "@/lib/env/deployment";
+
 /** Configurable production default for non-primary-experiment stages (rescue, Serp, price verification). */
 export const OPENAI_PRODUCT_SEARCH_MODEL =
   process.env.OPENAI_PRODUCT_SEARCH_MODEL?.trim() || "gpt-5.6-terra";
@@ -40,6 +42,7 @@ export const ACCEPTANCE_RESCUE_MIN_COVERAGE = 0.7;
  * Default OFF — OpenAI-only production path unless explicitly enabled.
  */
 export function isProductDiscoverySerpFallbackEnabled(): boolean {
+  if (isProductionDeployment()) return false;
   const raw = process.env.PRODUCT_DISCOVERY_SERP_FALLBACK?.trim().toLowerCase();
   if (raw == null || raw === "") return false;
   return raw === "1" || raw === "true" || raw === "yes" || raw === "on";

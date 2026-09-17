@@ -358,6 +358,11 @@ async function finalizeWithSerpFallbackIfNeeded(
     requestedItem: string;
     allowlistDomains: string[];
     primarySources: ProductDiscoverySource[];
+    marketContext?: {
+      countryCode?: string | null;
+      formattedLocation?: string | null;
+      merchantDomains?: string[];
+    } | null;
   }
 ): Promise<ProductDiscoveryResult> {
   if (!isProductDiscoverySerpFallbackEnabled()) {
@@ -698,12 +703,15 @@ function buildRescueFinalResult(input: {
       ),
       rescueRejectedDecisionSnapshot:
         input.primaryAcceptance && input.primaryProductEvidence
-          ? buildAcceptanceDiagnostics(
-              "primary",
-              input.primaryAcceptance,
-              input.primaryProductEvidence,
-              input.requestedItem
-            ).rejectedDecisionSnapshot
+          ? (() => {
+              const diag = buildAcceptanceDiagnostics(
+                "primary",
+                input.primaryAcceptance,
+                input.primaryProductEvidence,
+                input.requestedItem
+              );
+              return "rejectedDecisionSnapshot" in diag ? diag.rejectedDecisionSnapshot : undefined;
+            })()
           : undefined,
       ...input.priceVerificationDiagnostics,
     },

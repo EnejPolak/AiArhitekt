@@ -67,7 +67,11 @@ export function mapAuthError(
   const status = error.status;
   const name = normalize(error.name);
 
-  if (code === "config" || error.name === "MissingSupabaseConfigError") {
+  if (
+    code === "config" ||
+    error.name === "MissingSupabaseConfigError" ||
+    error.name === "InvalidProductionConfigError"
+  ) {
     return { code: "config", message: MESSAGES.config };
   }
 

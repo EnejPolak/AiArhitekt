@@ -14,7 +14,7 @@ export type AuthDiagnostic = {
 };
 
 function shouldLogAuthDiagnostics(): boolean {
-  return process.env.NODE_ENV !== "production";
+  return true;
 }
 
 export function sanitizeAuthDiagnosticMessage(value: string | null | undefined): string | null {
@@ -53,7 +53,7 @@ export function buildAuthDiagnostic(
   };
 }
 
-/** Development/test only. Never log passwords, tokens, sessions, or keys. */
+/** Development and production. Never log passwords, tokens, sessions, or keys. */
 export function logAuthDiagnostic(
   stage: AuthDiagnosticStage,
   error:

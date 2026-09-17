@@ -1,6 +1,7 @@
 "use client";
 
 import { APP_ERROR_BODY, APP_ERROR_TITLE } from "@/lib/ui/customerCopy";
+import { captureSafeException } from "@/lib/observability/report";
 
 export default function GlobalError({
   error,
@@ -9,7 +10,7 @@ export default function GlobalError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
-  console.error("[app-global-error]", { digest: error.digest, name: error.name });
+  void captureSafeException(error, { stage: "react.global", errorCode: error.digest ?? error.name });
   return (
     <html lang="en">
       <body className="bg-[#0D0D0F] text-white">
@@ -27,6 +28,8 @@ export default function GlobalError({
               >
                 Try again
               </button>
+              {/* global-error replaces the root layout; a full navigation is required. */}
+              {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
               <a
                 href="/"
                 className="rounded-lg border border-[rgba(255,255,255,0.15)] px-4 py-3 text-center text-[14px] font-medium text-white"

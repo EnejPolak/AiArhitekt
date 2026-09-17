@@ -201,7 +201,7 @@ export async function discoverProjectProducts(
   const startedAt = new Date().toISOString();
   const discoveryStarted = Date.now();
   const deadlineAt = discoveryStarted + DISCOVERY_DEADLINE_MS;
-  logDiscoveryAttempt({ attemptId, phase: "started", startedAt });
+  logDiscoveryAttempt({ attemptId, projectId: parsedId.data, phase: "started", startedAt });
 
   let geocodeMs = 0;
   let placesMs = 0;
@@ -393,6 +393,7 @@ export async function discoverProjectProducts(
     });
     logDiscoveryAttempt({
       attemptId,
+      projectId: parsedId.data,
       phase: "failed",
       startedAt,
       completedAt: new Date().toISOString(),
@@ -403,9 +404,9 @@ export async function discoverProjectProducts(
     if (error instanceof DiscoveryError) {
       logDiscoveryError(error, {
         stage: "resolve_products",
+        attemptId,
         elapsedMs: totalMs,
         serpRequests: providerRequests,
-        attemptId,
         cacheHits,
         logicalQueries,
         ...error.details,
@@ -437,6 +438,7 @@ export async function discoverProjectProducts(
     logDiscoveryError(typedError, typedError.details ?? {});
     logDiscoveryAttempt({
       attemptId,
+      projectId: parsedId.data,
       phase: "failed",
       startedAt,
       completedAt: new Date().toISOString(),
@@ -497,6 +499,7 @@ export async function discoverProjectProducts(
   });
   logDiscoveryAttempt({
     attemptId,
+    projectId: parsedId.data,
     phase: "completed",
     startedAt,
     completedAt: new Date().toISOString(),

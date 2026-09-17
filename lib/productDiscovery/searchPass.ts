@@ -37,6 +37,7 @@ import {
   isProductUrlEvidenceBacked,
   responseUsedWebSearch,
 } from "./sources";
+import { normalizeProductDiscoveryMarketContext } from "./marketContext";
 import type { InitialFailureReason } from "./rescue";
 
 function clampMatchScore(score: number): number {
@@ -377,7 +378,10 @@ export async function attemptTargetedResearch(input: {
                   input.allowlistDomains,
                   { includeRescue: true }
                 ),
-                marketContext: input.marketContext,
+                marketContext: normalizeProductDiscoveryMarketContext(
+                  input.marketContext,
+                  input.allowlistDomains
+                ),
                 priorFailure,
               }),
             },
@@ -487,8 +491,11 @@ export async function attemptTargetedResearch(input: {
         ...(passAcceptanceDiagnostics ?? {}),
         rejectedDecisionSnapshot: preferConcreteRejectedSnapshot(
           input.priorDiagnostics?.rejectedDecisionSnapshot,
-          pass.acceptance && !pass.acceptance.accepted
-            ? passAcceptanceDiagnostics?.rejectedDecisionSnapshot
+          pass.acceptance && !pass.acceptance.accepted && passAcceptanceDiagnostics &&
+            "rejectedDecisionSnapshot" in passAcceptanceDiagnostics
+            ? (passAcceptanceDiagnostics.rejectedDecisionSnapshot as
+                | import("./decisionSnapshot").RejectedDecisionSnapshot
+                | undefined)
             : undefined
         ),
       },

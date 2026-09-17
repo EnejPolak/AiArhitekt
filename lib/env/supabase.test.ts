@@ -12,6 +12,8 @@ const KEYS = [
   "NEXT_PUBLIC_SITE_URL",
   "VERCEL_URL",
   "SUPABASE_SECRET_KEY",
+  "APP_DEPLOYMENT_ENV",
+  "VERCEL_ENV",
 ] as const;
 
 const snapshot: Record<string, string | undefined> = {};
@@ -88,5 +90,12 @@ describe("getAppOrigin", () => {
     process.env.NEXT_PUBLIC_SITE_URL = "https://app.example/";
     process.env.VERCEL_URL = "preview.vercel.app";
     expect(getAppOrigin()).toBe("https://app.example");
+  });
+
+  it("rejects localhost NEXT_PUBLIC_SITE_URL in production", () => {
+    for (const key of KEYS) snapshot[key] = process.env[key];
+    process.env.APP_DEPLOYMENT_ENV = "production";
+    process.env.NEXT_PUBLIC_SITE_URL = "http://localhost:3000";
+    expect(() => getAppOrigin()).toThrow(/localhost/);
   });
 });
