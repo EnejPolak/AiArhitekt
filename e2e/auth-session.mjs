@@ -13,6 +13,7 @@ import {
   ensureAuthStateDir,
   requirePlaywrightTestUser,
 } from "./playwrightEnv.mjs";
+import { fillProductionSignIn } from "./signInForm.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const ORIGIN = "http://localhost:3000";
@@ -151,18 +152,7 @@ page.on("response", (response) => {
 try {
   await page.goto(`${ORIGIN}/sign-in`, { waitUntil: "domcontentloaded", timeout: 60_000 });
   if (!page.url().startsWith(ORIGIN)) originChanged = true;
-  await page.waitForLoadState("networkidle", { timeout: 20_000 }).catch(() => {});
-  await page.waitForFunction(() => {
-    const el = document.querySelector("#email");
-    return Boolean(el && Object.keys(el).some((key) => key.startsWith("__react")));
-  }, { timeout: 15_000 });
-
-  await page.locator("#email").click();
-  await page.locator("#email").fill("");
-  await page.locator("#email").pressSequentially(user.email, { delay: 10 });
-  await page.locator("#password").click();
-  await page.locator("#password").fill("");
-  await page.locator("#password").pressSequentially(user.password, { delay: 10 });
+  await fillProductionSignIn(page, user);
 
   const emailValue = await page.locator("#email").inputValue();
   const passwordValue = await page.locator("#password").inputValue();

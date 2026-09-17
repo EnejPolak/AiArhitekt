@@ -71,7 +71,11 @@ export function ProductShoppingSections({
                       </a>
                     ) : null}
                   </div>
-                  {selection.isConfirmed ? (
+                  {selection.referenceStatus === "unavailable" ? (
+                    <div className="text-[11px] text-[rgba(255,255,255,0.40)] mt-1">
+                      Found product · visualization reference unavailable
+                    </div>
+                  ) : selection.isConfirmed ? (
                     <div className="text-[11px] text-[rgba(0,230,204,0.75)] mt-1">
                       Selected for design
                     </div>

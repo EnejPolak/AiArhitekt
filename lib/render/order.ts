@@ -77,6 +77,10 @@ export function orderRenderReferences(
   }> = [];
 
   selections.forEach((selection, originalIndex) => {
+    if (selection.referenceStatus === "unavailable") {
+      missing.push(selection);
+      return;
+    }
     const asset = assetsBySelectionId.get(selection.id);
     if (!isValidReferenceForSelection(selection, asset)) {
       missing.push(selection);

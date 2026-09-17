@@ -27,6 +27,16 @@ vi.mock("@/lib/analysis/openai", () => ({
   analyzeRoomImage: vi.fn(),
 }));
 
+vi.mock("@/lib/references/ensure", () => ({
+  ensureProductReferenceAssets: vi.fn(async () => ({
+    assetsBySelectionId: new Map(),
+    failedSelectionIds: [],
+    reusedCount: 0,
+    fetchedCount: 0,
+    rescueAttemptedCount: 0,
+  })),
+}));
+
 const LOCAL_URL = localSupabaseApiUrl();
 const analyzeRoomImageMock = vi.mocked(analyzeRoomImage);
 

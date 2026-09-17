@@ -39,6 +39,9 @@ import { localizeSearchableRequirements } from "./locales";
 import { resolveProductsForRequirements } from "./resolveProducts";
 import { resolveProductsWithOpenAI } from "./resolveProductsOpenAI";
 import { enrichDiscoveryWinners } from "./enrichWinners";
+import { ensureProductReferenceAssets } from "@/lib/references/ensure";
+import type { FetchLike } from "@/lib/references/fetchImage";
+import type { AddressLookup } from "@/lib/references/ssrf";
 import {
   deleteProjectProductDiscovery,
   getProjectProductDiscovery,
@@ -67,6 +70,9 @@ export type DiscoverProjectProductsOptions = {
   searchProducts?: typeof runOpenAIProductDiscovery;
   /** Legacy test/injection hook for SerpAPI resolver. Not used by the room-renovation wizard. */
   searchSerp?: (input: CanonicalSerpSearchInput) => Promise<CanonicalSerpSearchOutcome>;
+  /** Optional HTTP hooks for post-persist reference acquisition. Tests inject a blocked fetch. */
+  fetch?: FetchLike;
+  lookup?: AddressLookup;
 };
 
 function clampRadiusKm(value: number | undefined): number {
@@ -484,6 +490,31 @@ export async function discoverProjectProducts(
   );
   persistMs = Date.now() - persistStarted;
 
+  const selectionsWithEvidence = persisted.selections.map((row) => {
+    const source = selections.find((item) => item.requirementKey === row.requirementKey);
+    return {
+      ...row,
+      imageEvidence: source?.product.imageEvidence?.length
+        ? source.product.imageEvidence
+        : row.imageEvidence,
+    };
+  });
+  try {
+    await ensureProductReferenceAssets({
+      persistClient: options.persistClient,
+      ownerUserId: options.ownerUserId,
+      projectId: parsedId.data,
+      selections: selectionsWithEvidence,
+      fetch: options.fetch,
+      lookup: options.lookup,
+    });
+  } catch {
+    // Image acquisition must not un-FOUND a persisted product.
+  }
+  const refreshed = await getProjectProductSelections(client, persisted.discovery.id);
+  const selectionsOut =
+    refreshed.length === persisted.selections.length ? refreshed : persisted.selections;
+
   const totalMs = Date.now() - discoveryStarted;
   logDiscoveryTiming({
     geocodeMs,
@@ -507,5 +538,5 @@ export async function discoverProjectProducts(
     resultType: "success",
   });
 
-  return { ...persisted, reused: false };
+  return { discovery: persisted.discovery, selections: selectionsOut, reused: false };
 }

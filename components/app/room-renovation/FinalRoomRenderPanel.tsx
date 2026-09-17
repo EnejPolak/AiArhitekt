@@ -24,12 +24,15 @@ export interface FinalRoomRenderPanelProps {
 }
 
 function statusLabel(args: {
-  hasRender: boolean;
   grounded: boolean;
+  referenceStatus?: ProductSelectionView["referenceStatus"];
 }): string {
   if (args.grounded) return "Used as visual reference";
-  if (args.hasRender) return "Selected product — render reference unavailable";
-  return "Selected product — render reference unavailable";
+  if (args.referenceStatus === "ready") return "Eligible for exact-product visualization";
+  if (args.referenceStatus === "unavailable") {
+    return "Found product — visualization reference unavailable";
+  }
+  return "Found product";
 }
 
 export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
@@ -222,7 +225,10 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
                       {item.retailerName ?? item.retailerDomain}
                     </div>
                     <div className="text-[12px] text-[rgba(255,255,255,0.45)]">
-                      {statusLabel({ hasRender: hasCurrent, grounded })}
+                      {statusLabel({
+                        grounded,
+                        referenceStatus: item.referenceStatus,
+                      })}
                     </div>
                     <a
                       href={item.productUrl}

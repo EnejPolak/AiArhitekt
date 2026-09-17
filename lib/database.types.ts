@@ -189,6 +189,7 @@ export type Database = {
           discovery_id: string
           has_reference_image: boolean
           id: string
+          image_evidence: Json
           is_confirmed: boolean
           item_spec: string
           price: number | null
@@ -196,6 +197,9 @@ export type Database = {
           product_title: string
           product_url: string
           project_id: string
+          reference_failure_code: string | null
+          reference_rescue_attempted: boolean
+          reference_status: string
           requirement_key: string
           requirement_snapshot: Json
           requirement_type: string
@@ -209,6 +213,7 @@ export type Database = {
           discovery_id: string
           has_reference_image?: boolean
           id?: string
+          image_evidence?: Json
           is_confirmed?: boolean
           item_spec: string
           price?: number | null
@@ -216,6 +221,9 @@ export type Database = {
           product_title: string
           product_url: string
           project_id: string
+          reference_failure_code?: string | null
+          reference_rescue_attempted?: boolean
+          reference_status?: string
           requirement_key: string
           requirement_snapshot: Json
           requirement_type: string
@@ -229,6 +237,7 @@ export type Database = {
           discovery_id?: string
           has_reference_image?: boolean
           id?: string
+          image_evidence?: Json
           is_confirmed?: boolean
           item_spec?: string
           price?: number | null
@@ -236,6 +245,9 @@ export type Database = {
           product_title?: string
           product_url?: string
           project_id?: string
+          reference_failure_code?: string | null
+          reference_rescue_attempted?: boolean
+          reference_status?: string
           requirement_key?: string
           requirement_snapshot?: Json
           requirement_type?: string

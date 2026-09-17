@@ -1,4 +1,9 @@
 import type { DesignRequirements } from "@/lib/analysis/schema";
+import type {
+  ProductImageEvidence,
+  ProductReferenceFailureCode,
+  ProductReferenceStatus,
+} from "@/lib/references/imageEvidence";
 import type { UnmatchedRequirement } from "./itemSpecs";
 import type { ShoppingPreferenceSnapshot } from "./preferences";
 
@@ -38,6 +43,10 @@ export type ProductSelectionView = {
   retailerName: string | null;
   hasReferenceImage: boolean;
   isConfirmed: boolean;
+  referenceStatus?: ProductReferenceStatus;
+  referenceFailureCode?: ProductReferenceFailureCode | null;
+  referenceRescueAttempted?: boolean;
+  imageEvidence?: ProductImageEvidence[];
   createdAt: string;
   updatedAt: string;
 };

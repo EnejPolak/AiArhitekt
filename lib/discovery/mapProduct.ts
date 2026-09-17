@@ -2,6 +2,11 @@ import { serpPickedSchema } from "@/lib/schemas/serp";
 import { normalizeDomainToRoot } from "@/lib/serp/domains";
 import type { PlaceResult } from "@/lib/places/placesService";
 import type { CanonicalSerpPicked } from "@/lib/serp/search";
+import {
+  associateProductImage,
+  mergeImageEvidence,
+  type ProductImageEvidence,
+} from "@/lib/references/imageEvidence";
 
 export function isHttpUrl(value: string | null | undefined): value is string {
   if (!value) return false;
@@ -29,6 +34,7 @@ export type CanonicalSelectionFields = {
   retailerDomain: string;
   retailerName: string | null;
   hasReferenceImage: boolean;
+  imageEvidence?: ProductImageEvidence[];
 };
 
 export function mapCanonicalPickedToSelection(
@@ -46,6 +52,20 @@ export function mapCanonicalPickedToSelection(
   const domain =
     normalizeDomainToRoot(parsed.data.domain) || normalizeDomainToRoot(parsed.data.url);
   if (!domain) return null;
+  const imageEvidence = mergeImageEvidence(
+    [],
+    [
+      image
+        ? associateProductImage({
+            url: image,
+            source: "search_evidence",
+            productUrl: parsed.data.url,
+            merchantDomain: domain,
+            sourcePageUrl: parsed.data.url,
+          })
+        : null,
+    ]
+  );
 
   const retailer = stores.find(
     (store) => normalizeDomainToRoot(store.websiteDomain) === domain
@@ -65,6 +85,7 @@ export function mapCanonicalPickedToSelection(
     retailerDomain: domain,
     retailerName: retailer?.name?.trim() ? retailer.name.trim() : null,
     hasReferenceImage: image !== null,
+    imageEvidence,
   };
 }
 
@@ -91,6 +112,20 @@ export function mapTopCandidateToSelection(
   const domain =
     normalizeDomainToRoot(candidate.domain) || normalizeDomainToRoot(candidate.url);
   if (!domain) return null;
+  const imageEvidence = mergeImageEvidence(
+    [],
+    [
+      image
+        ? associateProductImage({
+            url: image,
+            source: "search_evidence",
+            productUrl: candidate.url,
+            merchantDomain: domain,
+            sourcePageUrl: candidate.url,
+          })
+        : null,
+    ]
+  );
 
   const retailer = stores.find(
     (store) => normalizeDomainToRoot(store.websiteDomain) === domain
@@ -110,5 +145,6 @@ export function mapTopCandidateToSelection(
     retailerDomain: domain,
     retailerName: retailer?.name?.trim() ? retailer.name.trim() : null,
     hasReferenceImage: image !== null,
+    imageEvidence,
   };
 }

@@ -25,6 +25,16 @@ import {
 import { getProjectRoomPreferences, upsertProjectRoomPreferences } from "./queries";
 import { parseProjectLocation } from "@/lib/project-location/parse";
 
+vi.mock("@/lib/references/ensure", () => ({
+  ensureProductReferenceAssets: vi.fn(async () => ({
+    assetsBySelectionId: new Map(),
+    failedSelectionIds: [],
+    reusedCount: 0,
+    fetchedCount: 0,
+    rescueAttemptedCount: 0,
+  })),
+}));
+
 const LOCAL_URL = localSupabaseApiUrl();
 type Client = SupabaseClient<Database>;
 

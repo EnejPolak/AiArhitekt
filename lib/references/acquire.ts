@@ -93,7 +93,12 @@ export async function acquireProductReferenceAsset(
 
   await input.persistClient
     .from("project_product_selections")
-    .update({ has_reference_image: true })
+    .update({
+      has_reference_image: true,
+      product_image_url: fetched.sourceUrl,
+      reference_status: "ready",
+      reference_failure_code: null,
+    })
     .eq("id", input.selectionId)
     .eq("project_id", input.projectId);
 

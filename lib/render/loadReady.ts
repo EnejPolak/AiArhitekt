@@ -52,7 +52,7 @@ export function toRenderReadySelectedProduct(
   selection: ProductSelectionView,
   asset: ProductReferenceAssetView | undefined
 ): RenderReadySelectedProduct {
-  const grounded = isValidReferenceForSelection(selection, asset);
+  const grounded = isValidReferenceForSelection(selection, asset) && selection.referenceStatus !== "unavailable";
   return {
     selectionId: selection.id,
     requirementId: selection.requirementKey,

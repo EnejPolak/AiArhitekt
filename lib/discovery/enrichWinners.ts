@@ -11,6 +11,11 @@ import {
   type ProductPageEnrichment,
   type TrustedProductPageFetchOptions,
 } from "@/lib/serp/productPageEnrichment";
+import {
+  associateProductImage,
+  enrichmentSourceToEvidenceSource,
+  mergeImageEvidence,
+} from "@/lib/references/imageEvidence";
 
 export const DISCOVERY_ENRICHMENT_MIN_REMAINING_MS = 8_000;
 export const DISCOVERY_ENRICHMENT_PER_PAGE_TIMEOUT_MS = 3_000;
@@ -68,6 +73,17 @@ function mergeEnrichmentIntoProduct(
     product.currency ?? (nextPrice != null ? enriched.currency ?? "EUR" : null);
   const nextImage =
     needsImage && enriched.image ? enriched.image : usableProductImageUrl(product.productImageUrl);
+  const evidenceSource = enrichmentSourceToEvidenceSource(enriched.imageSource);
+  const enrichmentEvidence =
+    needsImage && enriched.image && evidenceSource
+      ? associateProductImage({
+          url: enriched.image,
+          source: evidenceSource,
+          productUrl: product.productUrl,
+          merchantDomain: product.retailerDomain,
+          sourcePageUrl: product.productUrl,
+        })
+      : null;
 
   return {
     ...product,
@@ -75,6 +91,7 @@ function mergeEnrichmentIntoProduct(
     currency: nextCurrency,
     productImageUrl: nextImage,
     hasReferenceImage: nextImage != null,
+    imageEvidence: mergeImageEvidence(product.imageEvidence, [enrichmentEvidence]),
   };
 }
 

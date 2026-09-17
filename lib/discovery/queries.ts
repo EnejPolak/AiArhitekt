@@ -10,6 +10,11 @@ import type { FurnitureNeed, MaterialNeed } from "./itemSpecs";
 import type { ShoppingPreferenceInput, ShoppingPreferenceSnapshot } from "./preferences";
 import { canonicalShoppingPreferences, loadStoredShoppingPreferenceSnapshot } from "./preferences";
 import { removeProductReferenceStorageObjects } from "@/lib/references/storageCleanup";
+import {
+  parseProductImageEvidence,
+  type ProductReferenceFailureCode,
+  type ProductReferenceStatus,
+} from "@/lib/references/imageEvidence";
 
 type Client = SupabaseClient<Database>;
 
@@ -73,6 +78,12 @@ function asSelection(
     retailerName: row.retailer_name,
     hasReferenceImage: row.has_reference_image,
     isConfirmed: row.is_confirmed,
+    referenceStatus: (row.reference_status === "ready" || row.reference_status === "unavailable"
+      ? row.reference_status
+      : "pending") as ProductReferenceStatus,
+    referenceFailureCode: (row.reference_failure_code as ProductReferenceFailureCode | null) ?? null,
+    referenceRescueAttempted: Boolean(row.reference_rescue_attempted),
+    imageEvidence: parseProductImageEvidence(row.image_evidence),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -186,6 +197,7 @@ export async function persistProductDiscoveryResult(
       retailer_domain: item.product.retailerDomain,
       retailer_name: item.product.retailerName,
       has_reference_image: item.product.hasReferenceImage,
+      image_evidence: item.product.imageEvidence ?? [],
     })) as unknown as Json,
   });
 

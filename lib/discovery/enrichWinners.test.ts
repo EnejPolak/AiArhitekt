@@ -76,6 +76,13 @@ describe("winner-only enrichment", () => {
     expect(stats.winnerEnrichmentAttempts).toBe(2);
     expect(selections[1]?.product.price).toBe(99.9);
     expect(selections[1]?.product.productImageUrl).toBe("https://cdn.example-retailer.si/product.jpg");
+    expect(selections[1]?.product.imageEvidence).toEqual([
+      expect.objectContaining({
+        url: "https://cdn.example-retailer.si/product.jpg",
+        source: "json_ld_product",
+        exactProductAssociation: true,
+      }),
+    ]);
   });
 
   it("skips enrichment when SERP metadata is already complete", async () => {

@@ -30,7 +30,7 @@ export function loadPlaywrightTestEnv() {
   const email = String(process.env.PLAYWRIGHT_TEST_EMAIL || fileEnv.PLAYWRIGHT_TEST_EMAIL || "").trim();
   const password = String(
     process.env.PLAYWRIGHT_TEST_PASSWORD || fileEnv.PLAYWRIGHT_TEST_PASSWORD || ""
-  );
+  ).trim();
   const baseUrl = String(
     process.env.PLAYWRIGHT_BASE_URL || fileEnv.PLAYWRIGHT_BASE_URL || "http://localhost:3000"
   ).replace(/\/$/, "");
