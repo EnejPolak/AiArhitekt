@@ -1,4 +1,7 @@
-import type { ExpectedRenderInventoryItem } from "./inventory";
+import {
+  overlayInventoryQualityFromAssets,
+  type ExpectedRenderInventoryItem,
+} from "./inventory";
 import type { ArchitecturalFinishes, FinishGrounding, FinishResolvedMode, FloorFinishMode, WallFinishMode } from "./finishes";
 import {
   architecturalFinishesFromSnapshot,
@@ -10,6 +13,7 @@ import {
   formatReferenceQualityLabel,
   type ReferenceQualityClass,
 } from "@/lib/references/referenceQuality";
+import type { ProductReferenceAssetView } from "@/lib/references/types";
 
 export type FinishIntentSummary = {
   surface: "wall_finish" | "floor_finish";
@@ -217,4 +221,49 @@ export function renderHonestyReportFromSnapshot(
     exactVisualizedItems: report.exactVisualizedItems as ExactVisualizedItem[],
     conceptOnlyFinishChoices: report.conceptOnlyFinishChoices as ConceptOnlyFinishChoice[],
   };
+}
+
+export function overlayHonestyReportQualityFromAssets(
+  report: RenderHonestyReport,
+  assetsBySelectionId: Map<string, ProductReferenceAssetView>
+): RenderHonestyReport {
+  return {
+    ...report,
+    productsToBuy: overlayInventoryQualityFromAssets(report.productsToBuy, assetsBySelectionId),
+    exactVisualizedItems: overlayInventoryQualityFromAssets(
+      report.exactVisualizedItems,
+      assetsBySelectionId
+    ),
+  };
+}
+
+export function overlayPromptSnapshotReferenceQuality(
+  snapshot: Json | { expectedRenderInventory?: unknown; renderReport?: unknown } | null | undefined,
+  assetsBySelectionId: Map<string, ProductReferenceAssetView>
+): Json | { expectedRenderInventory?: unknown; renderReport?: unknown } | null | undefined {
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) return snapshot;
+  const record = { ...(snapshot as Record<string, unknown>) };
+  if (Array.isArray(record.expectedRenderInventory)) {
+    record.expectedRenderInventory = overlayInventoryQualityFromAssets(
+      record.expectedRenderInventory as Array<{ selectionId: string }>,
+      assetsBySelectionId
+    );
+  }
+  if (record.renderReport && typeof record.renderReport === "object" && !Array.isArray(record.renderReport)) {
+    const report = { ...(record.renderReport as Record<string, unknown>) };
+    if (Array.isArray(report.productsToBuy)) {
+      report.productsToBuy = overlayInventoryQualityFromAssets(
+        report.productsToBuy as Array<{ selectionId: string }>,
+        assetsBySelectionId
+      );
+    }
+    if (Array.isArray(report.exactVisualizedItems)) {
+      report.exactVisualizedItems = overlayInventoryQualityFromAssets(
+        report.exactVisualizedItems as Array<{ selectionId: string }>,
+        assetsBySelectionId
+      );
+    }
+    record.renderReport = report;
+  }
+  return record as typeof snapshot;
 }

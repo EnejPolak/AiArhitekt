@@ -43,6 +43,25 @@ export function isReadyShoppableSelection(
   return true;
 }
 
+export function overlayInventoryQualityFromAssets<T extends { selectionId: string }>(
+  items: T[],
+  assetsBySelectionId: Map<string, ProductReferenceAssetView>
+): T[] {
+  return items.map((item) => {
+    const asset = assetsBySelectionId.get(item.selectionId);
+    if (!asset) return item;
+    return {
+      ...item,
+      referenceQuality: referenceQualityFromDimensions(asset.width, asset.height),
+      referenceWidth: asset.width,
+      referenceHeight: asset.height,
+      referenceSizeBytes: asset.sizeBytes,
+      referenceSource: asset.sourceImageUrl,
+      exactProductAssociation: true,
+    };
+  });
+}
+
 export function toExpectedRenderInventory(
   references: OrderedRenderReference[]
 ): ExpectedRenderInventoryItem[] {

@@ -9,7 +9,7 @@ import {
 import { referencePriority, type OrderedRenderReference } from "./order";
 import { buildRoomRenderPrompt } from "./prompt";
 import type { RoomRenderPreferences } from "./preferences";
-import { buildRenderHonestyReport, referenceQualityDiagnostic } from "./report";
+import { buildRenderHonestyReport, overlayHonestyReportQualityFromAssets, referenceQualityDiagnostic } from "./report";
 import { toExpectedRenderInventory } from "./inventory";
 
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
@@ -281,5 +281,51 @@ describe("architectural finishes", () => {
     );
     expect(built.architecturalFinishes).toEqual(honesty.finishDecisions);
     expect(built.renderReport.conceptOnlyFinishChoices).toEqual(honesty.conceptOnlyFinishChoices);
+  });
+
+  it("overlays live reference quality onto an older snapshot without blocking READY", () => {
+    const finishes = resolveArchitecturalFinishes({
+      preferences: prefs({ flooring: "hardwood", keepExistingWalls: true }),
+      references: [sofa, floorProduct],
+    });
+    const honesty = reportFrom(finishes, [sofa, floorProduct]);
+    const upgraded = overlayHonestyReportQualityFromAssets(
+      honesty,
+      new Map([
+        [
+          sofa.selection.id,
+          {
+            ...sofa.asset,
+            width: 950,
+            height: 700,
+            sizeBytes: 96431,
+          },
+        ],
+        [
+          floorProduct.selection.id,
+          {
+            ...floorProduct.asset,
+            width: 415,
+            height: 415,
+            sizeBytes: 7450,
+          },
+        ],
+      ])
+    );
+    expect(upgraded.exactVisualizedItems.find((item) => item.productName === "Velpa sofa")).toMatchObject({
+      referenceStatus: "ready",
+      referenceQuality: "high",
+      referenceWidth: 950,
+      referenceHeight: 700,
+    });
+    expect(upgraded.exactVisualizedItems.find((item) => item.productName === "Oak plank floor")).toMatchObject({
+      referenceStatus: "ready",
+      referenceQuality: "medium",
+      referenceWidth: 415,
+      referenceHeight: 415,
+    });
+    expect(referenceQualityDiagnostic(upgraded.exactVisualizedItems.find((item) => item.productName === "Velpa sofa")!)).toEqual(
+      ["READY", "Reference quality: HIGH", "950 × 700"]
+    );
   });
 });

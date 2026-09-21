@@ -119,9 +119,13 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
     setProcessing(Boolean(result.processing));
     setReadinessMessage(result.readinessMessage);
     setHasCurrent(Boolean(result.currentRender));
-    setGroundedIds(groundedSelectionIdsFromSnapshot(result.currentRender?.referenceSnapshot));
-    setUsedInventory(expectedRenderInventoryFromSnapshot(result.currentRender?.promptSnapshot));
-    setHonestyReport(renderHonestyReportFromSnapshot(result.currentRender?.promptSnapshot));
+    const displaySnapshot =
+      result.currentRender?.promptSnapshot ?? result.latestSucceeded?.promptSnapshot;
+    const displayReferences =
+      result.currentRender?.referenceSnapshot ?? result.latestSucceeded?.referenceSnapshot;
+    setGroundedIds(groundedSelectionIdsFromSnapshot(displayReferences));
+    setUsedInventory(expectedRenderInventoryFromSnapshot(displaySnapshot));
+    setHonestyReport(renderHonestyReportFromSnapshot(displaySnapshot));
   }, [projectId]);
 
   React.useEffect(() => {

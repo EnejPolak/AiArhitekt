@@ -14,6 +14,8 @@ import { completeRoomBlockMessage } from "./readiness";
 import { getProjectRoomPreferences } from "@/lib/project-preferences/queries";
 import { projectRoomPreferencesToRenderPreferences } from "@/lib/project-preferences/adapter";
 import { EMPTY_PROJECT_ROOM_PREFERENCES } from "@/lib/project-preferences/types";
+import { listProjectProductReferenceAssets } from "@/lib/references/queries";
+import { overlayPromptSnapshotReferenceQuality } from "./report";
 import { listProjectRoomRenders, markCurrent } from "./queries";
 import { parseRoomRenderPath } from "./path";
 import type { MissingRenderReference, RoomRenderView } from "./types";
@@ -100,6 +102,18 @@ async function signedPreview(
   return data?.signedUrl ?? null;
 }
 
+function overlayRenderQuality(
+  render: RoomRenderView | null,
+  assetsBySelectionId: Map<string, Awaited<ReturnType<typeof listProjectProductReferenceAssets>>[number]>
+): RoomRenderView | null {
+  if (!render) return null;
+  const promptSnapshot = overlayPromptSnapshotReferenceQuality(
+    render.promptSnapshot,
+    assetsBySelectionId
+  ) as RoomRenderView["promptSnapshot"];
+  return { ...render, promptSnapshot };
+}
+
 const READINESS_CODES = new Set([
   "missing_photo",
   "missing_analysis",
@@ -128,7 +142,12 @@ export async function loadRoomRenderState(input: {
       stored ?? EMPTY_PROJECT_ROOM_PREFERENCES
     );
     const renders = await listProjectRoomRenders(supabase, parsed.data.projectId);
-    const latestSucceeded = renders.find((row) => row.status === "succeeded") ?? null;
+    const assets = await listProjectProductReferenceAssets(supabase, parsed.data.projectId);
+    const assetsBySelectionId = new Map(assets.map((asset) => [asset.selectionId, asset]));
+    const latestSucceeded = overlayRenderQuality(
+      renders.find((row) => row.status === "succeeded") ?? null,
+      assetsBySelectionId
+    );
     const processing = renders.find((row) => row.status === "processing") ?? null;
 
     try {
@@ -154,16 +173,19 @@ export async function loadRoomRenderState(input: {
           readinessMessage: completeRoomBlockMessage(source.completeRoom),
         };
       }
-      const marked = markCurrent(renders, source.fingerprint);
+      const marked = markCurrent(renders, source.fingerprint).map((row) =>
+        overlayRenderQuality(row, assetsBySelectionId) ?? row
+      );
       const current = marked.find((row) => row.isCurrent) ?? null;
+      const display = current ?? latestSucceeded;
       return {
         ok: true,
         fingerprint: source.fingerprint,
         currentRender: current,
-        latestSucceeded: marked.find((row) => row.status === "succeeded") ?? null,
+        latestSucceeded: marked.find((row) => row.status === "succeeded") ?? latestSucceeded,
         processing: marked.find((row) => row.status === "processing") ?? null,
         stale: Boolean(latestSucceeded && !current),
-        previewUrl: await signedPreview(supabase, current),
+        previewUrl: await signedPreview(supabase, display),
         renders: marked,
         missingReferences: source.missing,
         readinessCode: null,
