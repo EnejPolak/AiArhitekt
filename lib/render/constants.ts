@@ -1,4 +1,4 @@
-export const ROOM_RENDER_SCHEMA_VERSION = 1;
+export const ROOM_RENDER_SCHEMA_VERSION = 2;
 export const ROOM_RENDER_PROVIDER = "openai";
 export const ROOM_RENDER_MODEL = "gpt-image-1.5";
 export const ROOM_RENDER_GUARD_OPERATION = "room_render";

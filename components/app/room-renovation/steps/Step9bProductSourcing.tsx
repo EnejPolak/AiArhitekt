@@ -19,6 +19,9 @@ export interface Step9bProductSourcingProps {
   onChangeConstraints?: (requirementKey: string) => void;
   onIncreaseBudget?: (requirementKey: string) => void;
   onRemoveRequirement?: (requirementKey: string) => void;
+  onKeepExistingFloor?: () => void;
+  onSwitchWallToConceptColor?: () => void;
+  onKeepExistingWalls?: () => void;
   retryBusyKey?: string | null;
 }
 
@@ -34,6 +37,9 @@ export const Step9bProductSourcing: React.FC<Step9bProductSourcingProps> = ({
   onChangeConstraints,
   onIncreaseBudget,
   onRemoveRequirement,
+  onKeepExistingFloor,
+  onSwitchWallToConceptColor,
+  onKeepExistingWalls,
   retryBusyKey,
 }) => {
   return (
@@ -53,6 +59,9 @@ export const Step9bProductSourcing: React.FC<Step9bProductSourcingProps> = ({
           onChangeConstraints={onChangeConstraints}
           onIncreaseBudget={onIncreaseBudget}
           onRemoveRequirement={onRemoveRequirement}
+          onKeepExistingFloor={onKeepExistingFloor}
+          onSwitchWallToConceptColor={onSwitchWallToConceptColor}
+          onKeepExistingWalls={onKeepExistingWalls}
           retryBusyKey={retryBusyKey}
         />
         <button

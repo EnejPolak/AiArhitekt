@@ -3,8 +3,13 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/database.types";
 import { getProjectRoomAnalysis } from "@/lib/analysis/queries";
 import { isCurrentRoomAnalysis } from "@/lib/analysis/stale";
-import { completeRoomGate, type CompleteRoomGate } from "@/lib/discovery/completeRoom";
+import { type CompleteRoomGate } from "@/lib/discovery/completeRoom";
 import { getProjectProductDiscovery, getProjectProductSelections } from "@/lib/discovery/queries";
+import {
+  canonicalShoppingPreferences,
+  loadStoredShoppingPreferenceSnapshot,
+  shoppingPreferencesMatch,
+} from "@/lib/discovery/preferences";
 import { isCurrentProductDiscovery } from "@/lib/discovery/stale";
 import { PROJECT_ASSETS_BUCKET } from "@/lib/references/constants";
 import { ensureProductReferenceAssets } from "@/lib/references/ensure";
@@ -25,6 +30,7 @@ import { buildRoomRenderPath } from "./path";
 import { completeRoomRender, failRoomRender, insertProcessingRoomRender } from "./persist";
 import { canonicalRenderPreferences, type RoomRenderPreferences } from "./preferences";
 import { buildRoomRenderPrompt } from "./prompt";
+import { completeRoomBlockMessage, evaluateCompleteRoomReadiness } from "./readiness";
 import {
   getLatestSucceededRenderByFingerprint,
   getProcessingRenderByFingerprint,
@@ -87,6 +93,24 @@ function sha256Hex(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+function shoppingSourceCurrentForRender(
+  stored: unknown,
+  preferences: RoomRenderPreferences
+): boolean {
+  if (shoppingPreferencesMatch(stored, preferences)) return true;
+  const snapshot = loadStoredShoppingPreferenceSnapshot(stored);
+  const current = canonicalShoppingPreferences(preferences);
+  return (
+    JSON.stringify(snapshot.selectedStyles) === JSON.stringify(current.selectedStyles) &&
+    snapshot.wallMainColor === current.wallMainColor &&
+    snapshot.wallAccentColor === current.wallAccentColor &&
+    snapshot.flooring === current.flooring &&
+    snapshot.underfloorHeating === current.underfloorHeating &&
+    snapshot.bedType === current.bedType &&
+    snapshot.keepExistingWalls === current.keepExistingWalls
+  );
+}
+
 export async function prepareRenderSource(
   userClient: Client,
   projectId: string,
@@ -108,7 +132,10 @@ export async function prepareRenderSource(
   if (!discovery) {
     throw new RenderError("missing_discovery", renderErrorMessage("missing_discovery"));
   }
-  if (!isCurrentProductDiscovery(discovery, analysis, { preferences })) {
+  if (!isCurrentProductDiscovery(discovery, analysis)) {
+    throw new RenderError("stale_source", renderErrorMessage("stale_source"));
+  }
+  if (!shoppingSourceCurrentForRender(discovery.sourcePreferences, preferences)) {
     throw new RenderError("stale_source", renderErrorMessage("stale_source"));
   }
 
@@ -135,10 +162,11 @@ export async function prepareRenderSource(
     references: orderedResult.ordered,
   });
 
-  const completeRoom = completeRoomGate({
+  const completeRoom = evaluateCompleteRoomReadiness({
     searchedItemCount: discovery.searchedItemCount,
     unmatched: discovery.unmatchedRequirements,
     readyRequirementKeys: orderedResult.ordered.map((item) => item.selection.requirementKey),
+    preferences,
   });
 
   return {
@@ -175,7 +203,7 @@ export async function generateRoomRender(
       ? await prepareRenderSource(input.userClient, input.projectId, input.preferences)
       : probe;
   if (!source.completeRoom.allowed) {
-    throw new RenderError("incomplete_room", renderErrorMessage("incomplete_room"), {
+    throw new RenderError("incomplete_room", completeRoomBlockMessage(source.completeRoom), {
       missingReferences:
         source.completeRoom.unresolvedLabels.length > 0
           ? source.completeRoom.unresolvedLabels.map((label) => ({

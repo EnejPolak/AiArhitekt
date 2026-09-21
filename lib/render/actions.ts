@@ -10,6 +10,7 @@ import { createPersistClient } from "@/lib/supabase/persist";
 import { PROJECT_ASSETS_BUCKET, RENDER_SIGNED_PREVIEW_TTL_SECONDS } from "./constants";
 import { RenderError, renderErrorMessage } from "./errors";
 import { generateRoomRender, prepareRenderSource } from "./generate";
+import { completeRoomBlockMessage } from "./readiness";
 import { getProjectRoomPreferences } from "@/lib/project-preferences/queries";
 import { projectRoomPreferencesToRenderPreferences } from "@/lib/project-preferences/adapter";
 import { EMPTY_PROJECT_ROOM_PREFERENCES } from "@/lib/project-preferences/types";
@@ -150,7 +151,7 @@ export async function loadRoomRenderState(input: {
                 }))
               : source.missing,
           readinessCode: "incomplete_room",
-          readinessMessage: renderErrorMessage("incomplete_room"),
+          readinessMessage: completeRoomBlockMessage(source.completeRoom),
         };
       }
       const marked = markCurrent(renders, source.fingerprint);

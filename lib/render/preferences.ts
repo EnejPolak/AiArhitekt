@@ -17,6 +17,23 @@ export const renderFlooringPreferenceSchema = z.enum([
 
 export const renderBedTypeSchema = z.enum(["none", "king", "queen", "bunk", "single"]);
 
+export const wallFinishModeSchema = z.enum(["keep_existing", "concept_color", "exact_product"]);
+
+export type WallFinishMode = z.infer<typeof wallFinishModeSchema>;
+
+export function keepExistingWallsFromWallFinishMode(mode: WallFinishMode): boolean {
+  return mode !== "exact_product";
+}
+
+export function inferWallFinishMode(input: {
+  wallFinishMode?: unknown;
+  keepExistingWalls?: unknown;
+}): WallFinishMode {
+  const parsed = wallFinishModeSchema.safeParse(input.wallFinishMode);
+  if (parsed.success) return parsed.data;
+  return input.keepExistingWalls === false ? "concept_color" : "keep_existing";
+}
+
 const trimmedNote = z
   .string()
   .trim()
@@ -30,14 +47,29 @@ export const roomRenderPreferencesSchema = z.object({
   flooring: renderFlooringPreferenceSchema.default("keep"),
   underfloorHeating: z.boolean().default(false),
   bedType: renderBedTypeSchema.default("none"),
-  keepExistingWalls: z.boolean().default(false),
+  keepExistingWalls: z.boolean().default(true),
+  wallFinishMode: wallFinishModeSchema.default("keep_existing"),
   notes: trimmedNote.default(""),
 });
 
 export type RoomRenderPreferences = z.infer<typeof roomRenderPreferencesSchema>;
 
 export function parseRoomRenderPreferences(raw: unknown): RoomRenderPreferences {
-  return roomRenderPreferencesSchema.parse(raw ?? {});
+  const record = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  const hasExplicitWallFinishMode = typeof record.wallFinishMode === "string";
+  const wallFinishMode = inferWallFinishMode(record);
+  const keepExistingWalls = !hasExplicitWallFinishMode
+    ? record.keepExistingWalls
+    : wallFinishMode === "exact_product"
+      ? false
+      : wallFinishMode === "keep_existing"
+        ? true
+        : record.keepExistingWalls;
+  return roomRenderPreferencesSchema.parse({
+    ...(raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {}),
+    wallFinishMode,
+    keepExistingWalls,
+  });
 }
 
 export function canonicalRenderPreferences(raw: unknown): RoomRenderPreferences {

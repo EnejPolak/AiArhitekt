@@ -35,11 +35,13 @@ import {
 import { loadStoredShoppingPreferenceSnapshot, shoppingPreferenceInputFromSnapshot } from "@/lib/discovery/preferences";
 import { saveProjectRoomPreferencesAction } from "@/lib/project-preferences/actions";
 import { projectRoomPreferencesToShoppingPreferences } from "@/lib/project-preferences/adapter";
+import { EMPTY_PROJECT_ROOM_PREFERENCES, type ProjectRoomPreferences, type ProjectRoomPreferencesPatch } from "@/lib/project-preferences/types";
 import {
-  EMPTY_PROJECT_ROOM_PREFERENCES,
-  type ProjectRoomPreferences,
-  type ProjectRoomPreferencesPatch,
-} from "@/lib/project-preferences/types";
+  isFloorFinishRequirementKey,
+  isWallFinishRequirementKey,
+} from "@/lib/render/finishes";
+import { inferWallFinishMode, keepExistingWallsFromWallFinishMode } from "@/lib/render/preferences";
+import { isRequiredUnresolvedReason } from "@/lib/discovery/itemSpecs";
 
 export interface RoomRenovationData {
   roomType: "kitchen" | "bathroom" | "bedroom" | "living-room" | "other" | null;
@@ -148,7 +150,8 @@ function wizardStateFromPreferences(prefs: ProjectRoomPreferences | null): Pick<
         underfloorHeating: EMPTY_PROJECT_ROOM_PREFERENCES.underfloorHeating,
         bedType: EMPTY_PROJECT_ROOM_PREFERENCES.bedType,
         notes: EMPTY_PROJECT_ROOM_PREFERENCES.notes,
-        keepExistingWalls: EMPTY_PROJECT_ROOM_PREFERENCES.keepExistingWalls,
+        keepExistingWalls: true,
+        wallFinishMode: "keep_existing",
       },
     };
   }
@@ -164,6 +167,7 @@ function wizardStateFromPreferences(prefs: ProjectRoomPreferences | null): Pick<
       bedType: prefs.bedType,
       notes: prefs.notes,
       keepExistingWalls: prefs.keepExistingWalls,
+      wallFinishMode: inferWallFinishMode(prefs),
     },
   };
 }
@@ -386,7 +390,8 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
       flooring: data.preferences?.flooring ?? "keep",
       underfloorHeating: data.preferences?.underfloorHeating ?? false,
       bedType: data.preferences?.bedType ?? "none",
-      keepExistingWalls: data.preferences?.keepExistingWalls ?? false,
+      keepExistingWalls: data.preferences?.keepExistingWalls ?? EMPTY_PROJECT_ROOM_PREFERENCES.keepExistingWalls,
+      wallFinishMode: data.preferences?.wallFinishMode ?? EMPTY_PROJECT_ROOM_PREFERENCES.wallFinishMode,
     });
   }, [roomPrefs, persistedDiscovery?.sourcePreferences, data.selectedStyles, data.preferences]);
 
@@ -428,6 +433,64 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
     },
     [projectId]
   );
+  const floorReadySelection = persistedSelections.find(
+    (item) => item.referenceStatus === "ready" && isFloorFinishRequirementKey(item.requirementKey)
+  );
+  const wallPaintReadySelection = persistedSelections.find(
+    (item) => item.referenceStatus === "ready" && isWallFinishRequirementKey(item.requirementKey)
+  );
+  const floorUnresolved = (persistedDiscovery?.unmatchedRequirements ?? []).some(
+    (item) => isRequiredUnresolvedReason(item.reason) && isFloorFinishRequirementKey(item.requirementKey)
+  );
+  const wallPaintUnresolved = (persistedDiscovery?.unmatchedRequirements ?? []).some(
+    (item) => isRequiredUnresolvedReason(item.reason) && isWallFinishRequirementKey(item.requirementKey)
+  );
+  const retryFloorKey =
+    (persistedDiscovery?.unmatchedRequirements ?? []).find(
+      (item) => isFloorFinishRequirementKey(item.requirementKey)
+    )?.requirementKey ?? persistedSelections.find((item) => isFloorFinishRequirementKey(item.requirementKey))?.requirementKey;
+  const retryWallPaintKey =
+    (persistedDiscovery?.unmatchedRequirements ?? []).find(
+      (item) => isWallFinishRequirementKey(item.requirementKey)
+    )?.requirementKey ?? persistedSelections.find((item) => isWallFinishRequirementKey(item.requirementKey))?.requirementKey;
+
+  const persistKeepExistingFloor = async () => {
+    const saved = await persistRoomPreferences({ flooring: "keep" });
+    if (saved) {
+      updateData({
+        preferences: {
+          ...(data.preferences ?? {
+            wallMainColor: "",
+            wallAccentColor: "",
+            flooring: "keep",
+            underfloorHeating: false,
+            bedType: "none",
+            notes: "",
+            keepExistingWalls: true,
+            wallFinishMode: "keep_existing",
+          }),
+          flooring: "keep",
+        },
+      });
+    }
+  };
+
+  const persistWallFinishMode = async (mode: "keep_existing" | "concept_color") => {
+    const saved = await persistRoomPreferences({
+      wallFinishMode: mode,
+      keepExistingWalls: keepExistingWallsFromWallFinishMode(mode),
+    });
+    if (saved && data.preferences) {
+      updateData({
+        preferences: {
+          ...data.preferences,
+          wallFinishMode: mode,
+          keepExistingWalls: keepExistingWallsFromWallFinishMode(mode),
+        },
+      });
+    }
+  };
+
   const persistedProjectLocation = parseProjectLocation(roomPrefs);
   const searchLocation = persistedProjectLocation
     ? wizardLocationFromProject(persistedProjectLocation)
@@ -625,8 +688,15 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
             roomType={data.roomType!}
             value={data.preferences!}
             onChange={(value) => updateData({ preferences: value })}
+            floorProductName={floorReadySelection?.productTitle ?? null}
+            floorUnresolved={Boolean(data.preferences?.flooring !== "keep" && (floorUnresolved || (!floorReadySelection && persistedDiscovery)))}
+            wallPaintProductName={wallPaintReadySelection?.productTitle ?? null}
+            wallPaintUnresolved={Boolean(data.preferences?.wallFinishMode === "exact_product" && (wallPaintUnresolved || (!wallPaintReadySelection && persistedDiscovery)))}
+            onRetryFloor={retryFloorKey ? () => void handleRetryRequirement(retryFloorKey) : undefined}
+            onRetryWallPaint={retryWallPaintKey ? () => void handleRetryRequirement(retryWallPaintKey) : undefined}
             onContinue={async () => {
               const p = data.preferences!;
+              const wallFinishMode = inferWallFinishMode(p);
               const saved = await persistRoomPreferences({
                 wallMainColor: p.wallMainColor,
                 wallAccentColor: p.wallAccentColor,
@@ -634,13 +704,17 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
                 underfloorHeating: p.underfloorHeating,
                 bedType: p.bedType,
                 notes: p.notes,
-                keepExistingWalls: p.keepExistingWalls ?? false,
+                keepExistingWalls: keepExistingWallsFromWallFinishMode(wallFinishMode),
+                wallFinishMode,
               });
               if (!saved) return;
               const parts: string[] = [];
-              if (p.wallMainColor) parts.push(`Wall main: ${p.wallMainColor}`);
-              if (p.wallAccentColor) parts.push(`Accent: ${p.wallAccentColor}`);
-              parts.push(`Floor: ${p.flooring}`);
+              if (wallFinishMode === "keep_existing") parts.push("Walls: keep existing");
+              else if (wallFinishMode === "concept_color") parts.push("Walls: choose color (concept, not shoppable)");
+              else parts.push("Walls: exact paint product required");
+              if (wallFinishMode !== "keep_existing" && p.wallMainColor) parts.push(`Wall main: ${p.wallMainColor}`);
+              if (wallFinishMode !== "keep_existing" && p.wallAccentColor) parts.push(`Accent: ${p.wallAccentColor}`);
+              parts.push(p.flooring === "keep" ? "Floor: keep existing" : `Floor: change to ${p.flooring}`);
               parts.push(`Underfloor heating: ${p.underfloorHeating ? "yes" : "no"}`);
               if (data.roomType === "bedroom") parts.push(`Bed: ${p.bedType}`);
               if (p.notes?.trim()) parts.push(`Notes: ${p.notes.trim()}`);
@@ -878,7 +952,8 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
               flooring: data.preferences?.flooring ?? "keep",
               underfloorHeating: data.preferences?.underfloorHeating ?? false,
               bedType: data.preferences?.bedType ?? "none",
-              keepExistingWalls: data.preferences?.keepExistingWalls ?? false,
+              keepExistingWalls: data.preferences?.keepExistingWalls ?? EMPTY_PROJECT_ROOM_PREFERENCES.keepExistingWalls,
+              wallFinishMode: data.preferences?.wallFinishMode ?? EMPTY_PROJECT_ROOM_PREFERENCES.wallFinishMode,
               notes: data.preferences?.notes ?? "",
             }}
             roomPhotoPreviewUrl={roomPhoto?.previewUrl ?? null}
@@ -886,6 +961,9 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
             onChangeConstraints={() => goToStepKey("design-preferences")}
             onIncreaseBudget={() => goToStepKey("budget-signal")}
             onRemoveRequirement={(requirementKey) => void handleRemoveRequirement(requirementKey)}
+            onKeepExistingFloor={() => void persistKeepExistingFloor()}
+            onSwitchWallToConceptColor={() => void persistWallFinishMode("concept_color")}
+            onKeepExistingWalls={() => void persistWallFinishMode("keep_existing")}
             retryBusyKey={retryBusyKey}
             onContinue={() => {
               nextStep();

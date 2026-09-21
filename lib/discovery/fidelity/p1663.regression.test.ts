@@ -74,6 +74,7 @@ const liveProjectPrefs = {
   flooring: "marble" as const,
   selectedStyles: ["luxury", "modern", "minimal"],
   notes: "gaming chair",
+  keepExistingWalls: false,
 };
 
 describe("P1.6.6.3 live regression fixtures", () => {

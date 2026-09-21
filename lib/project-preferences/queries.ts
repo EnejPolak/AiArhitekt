@@ -9,6 +9,7 @@ import {
 import { projectRoomPreferencesPatchSchema, projectRoomPreferencesRowSchema } from "./schema";
 import { EMPTY_PROJECT_ROOM_PREFERENCES, type ProjectRoomPreferences, type ProjectRoomPreferencesPatch } from "./types";
 import type { ProjectRoomPreferenceFields } from "./adapter";
+import { inferWallFinishMode } from "@/lib/render/preferences";
 
 type Client = SupabaseClient<Database>;
 
@@ -27,6 +28,10 @@ function asPreferences(row: PreferenceRow): ProjectRoomPreferences {
     bedType: row.bed_type,
     notes: row.notes,
     keepExistingWalls: row.keep_existing_walls,
+    wallFinishMode: inferWallFinishMode({
+      wallFinishMode: row.wall_finish_mode,
+      keepExistingWalls: row.keep_existing_walls,
+    }),
     locationInput: row.location_input?.trim() ? row.location_input.trim() : null,
     formattedAddress: row.formatted_address?.trim() ? row.formatted_address.trim() : null,
     latitude: row.latitude,
@@ -115,6 +120,7 @@ export async function upsertProjectRoomPreferences(
           bedType: existing.bedType,
           notes: existing.notes,
           keepExistingWalls: existing.keepExistingWalls,
+          wallFinishMode: existing.wallFinishMode,
           locationInput: existing.locationInput,
           formattedAddress: existing.formattedAddress,
           latitude: existing.latitude,

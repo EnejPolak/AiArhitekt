@@ -232,6 +232,7 @@ const marblePatch = {
   underfloorHeating: false,
   bedType: "none" as const,
   keepExistingWalls: false,
+  wallFinishMode: "concept_color" as const,
 };
 
 describe("persisted room preferences + discovery (local, mocked providers)", () => {
@@ -248,6 +249,27 @@ describe("persisted room preferences + discovery (local, mocked providers)", () 
     userA = await signUp("a");
     persist = persistClient();
     seeded = await seedWithAnalysis(userA.client, userA.user.id);
+  });
+
+  it("G. new preference rows default keep_existing_walls to true", async () => {
+    const created = await userA.client
+      .from("projects")
+      .insert({
+        user_id: userA.user.id,
+        name: "Default walls",
+        project_type: "room-renovation",
+      })
+      .select("id")
+      .single();
+    if (!created.data) throw new Error(created.error?.message ?? "project");
+    const inserted = await persist
+      .from("project_room_preferences")
+      .insert({ project_id: created.data.id })
+      .select("keep_existing_walls, wall_finish_mode")
+      .single();
+    expect(inserted.error).toBeNull();
+    expect(inserted.data?.keep_existing_walls).toBe(true);
+    expect(inserted.data?.wall_finish_mode).toBe("keep_existing");
   });
 
   it("rehydrates marble / metallic black / olive green after reload", async () => {

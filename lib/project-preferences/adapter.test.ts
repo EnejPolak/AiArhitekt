@@ -16,6 +16,8 @@ const persistedMarble = {
   wallAccentColor: "olive green",
   flooring: "marble" as const,
   selectedStyles: ["modern"],
+  keepExistingWalls: false,
+  wallFinishMode: "concept_color",
 };
 
 const remountDefaults = {

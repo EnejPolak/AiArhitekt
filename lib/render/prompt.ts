@@ -1,7 +1,14 @@
 import type { DesignRequirements, RoomAnalysisObservation } from "@/lib/analysis/schema";
 import type { UnmatchedRequirement } from "@/lib/discovery/itemSpecs";
 import type { ProductSelectionView } from "@/lib/discovery/types";
-import { resolveRenderIntentFromSource, type RenderIntent } from "./intent";
+import {
+  isArchitecturalFinishReference,
+  resolveArchitecturalFinishes,
+  type ArchitecturalFinishes,
+  type FloorFinishDecision,
+  type WallFinishDecision,
+} from "./finishes";
+import { resolveRenderIntentFromFinishes, type RenderIntent } from "./intent";
 import {
   toExpectedRenderInventory,
   type ExpectedRenderInventoryItem,
@@ -10,15 +17,18 @@ import { verifiedProductAppearance } from "./productFacts";
 import type { OrderedRenderReference } from "./order";
 import type { RoomRenderPreferences } from "./preferences";
 import { canonicalRenderPreferences } from "./preferences";
+import { buildRenderHonestyReport, type RenderHonestyReport } from "./report";
 
 export type RenderPromptSnapshot = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   renderIntent: RenderIntent;
   expectedRenderInventory: ExpectedRenderInventoryItem[];
+  architecturalFinishes: ArchitecturalFinishes;
+  renderReport: RenderHonestyReport;
   prompt: string;
   imageMapping: Array<{
     imageIndex: number;
-    role: "original_room" | "product_reference";
+    role: "original_room" | "product_reference" | "finish_reference";
     selectionId: string | null;
     requirementKey: string | null;
     requirementType: "furniture" | "material" | null;
@@ -129,7 +139,8 @@ function roomAuthoritySection(input: {
       : [
           "Render mode: COMPLETE_INTERIOR.",
           "Preserve room geometry: camera, perspective, wall planes, windows, doors, floor geometry, ceiling plane, and room proportions.",
-          "Surface completion is intentional and allowed: wall finishes, flooring, ceiling finish, lighting treatment, and architectural surface completion.",
+          "Change architectural surfaces only as listed in ARCHITECTURAL FINISHES. Do not invent other finishes.",
+          "Preserve the photographed ceiling unless a grounded ceiling finish is listed.",
           "Lighting treatment means ambient light on existing fixtures and surfaces, not adding lamps or other purchasable lighting unless listed in the physical object inventory.",
           "Do not move, add, or remove windows, doors, or structural openings.",
         ];
@@ -157,11 +168,15 @@ function physicalObjectInventorySection(
   references: OrderedRenderReference[],
   inventory: ExpectedRenderInventoryItem[]
 ): string {
-  const productBlocks = references.map((item, index) => {
+  const productRefs = references.filter((item) => !isArchitecturalFinishReference(item));
+  const productInventory = inventory.filter((item) =>
+    productRefs.some((ref) => ref.selection.id === item.selectionId)
+  );
+  const productBlocks = productRefs.map((item) => {
     const kind = item.selection.requirementType === "material" ? "material/surface" : "furniture";
     const letter = letterForIndex(item.imageIndex);
     const appearance = verifiedProductAppearance(item.selection.requirementSnapshot);
-    const row = inventory[index];
+    const row = productInventory.find((entry) => entry.selectionId === item.selection.id);
     const verifiedFacts = [
       appearance.material ? `Known material: ${appearance.material}.` : null,
       appearance.color ? `Known color: ${appearance.color}.` : null,
@@ -189,8 +204,10 @@ function physicalObjectInventorySection(
   });
 
   const names =
-    inventory.length > 0
-      ? inventory.map((item) => `${item.productName} (${item.category}, Image ${item.referenceImageIndex})`).join("; ")
+    productInventory.length > 0
+      ? productInventory
+          .map((item) => `${item.productName} (${item.category}, Image ${item.referenceImageIndex})`)
+          .join("; ")
       : "none";
 
   return [
@@ -208,9 +225,90 @@ function physicalObjectInventorySection(
   ].join("\n");
 }
 
+function wallFinishLines(wall: WallFinishDecision): string[] {
+  const requested = `Wall finish requestedMode: ${wall.requestedMode}.`;
+  const resolved = `Wall finish resolvedMode: ${wall.resolvedMode}.`;
+  if (wall.requestedMode === "keep_existing") {
+    return [
+      requested,
+      resolved,
+      "Preserve the photographed wall finish, color, and surface condition.",
+      "Do not paint, plaster, or invent a wall product.",
+    ];
+  }
+  if (wall.requestedMode === "concept_color") {
+    const colors = [
+      wall.colorDirection ? `main ${wall.colorDirection}` : null,
+      wall.accentColorDirection ? `accent ${wall.accentColorDirection}` : null,
+    ]
+      .filter(Boolean)
+      .join("; ");
+    return [
+      requested,
+      resolved,
+      `Apply this approved wall color direction: ${colors || "as specified"}.`,
+      "This is a concept-only wall finish, not a shoppable merchant product.",
+      "Do not invent a paint SKU, brand, label, or product listing.",
+    ];
+  }
+  if (wall.resolvedMode === "unresolved") {
+    return [
+      requested,
+      resolved,
+      "Exact wall paint was requested and is unresolved.",
+      "Do not invent a wall paint product. Do not silently fall back to concept color or keep existing.",
+    ];
+  }
+  return [
+    requested,
+    resolved,
+    `IMAGE ${letterForIndex(wall.referenceImageIndex)} (Image ${wall.referenceImageIndex}) is the exact wall finish product: ${wall.productName}.`,
+    "Apply that referenced product as the wall surface. Preserve its color, sheen, and material identity.",
+    "This wall finish is a grounded shoppable product.",
+  ];
+}
+
+function floorFinishLines(floor: FloorFinishDecision): string[] {
+  const requested = `Floor finish requestedMode: ${floor.requestedMode}.`;
+  const resolved = `Floor finish resolvedMode: ${floor.resolvedMode}.`;
+  if (floor.requestedMode === "keep_existing") {
+    return [
+      requested,
+      resolved,
+      "Preserve the photographed floor finish. Do not replace flooring. Do not invent a floor product.",
+    ];
+  }
+  if (floor.resolvedMode === "unresolved") {
+    return [
+      requested,
+      resolved,
+      "A floor change was requested and is unresolved.",
+      "Do not invent a floor finish. Do not silently keep the existing floor.",
+    ];
+  }
+  return [
+    requested,
+    resolved,
+    `IMAGE ${letterForIndex(floor.referenceImageIndex)} (Image ${floor.referenceImageIndex}) is the exact floor finish product: ${floor.productName}.`,
+    "Apply that referenced product as the floor surface only. Do not invent another floor covering.",
+    "This floor finish is a grounded shoppable product.",
+  ];
+}
+
+function architecturalFinishesSection(finishes: ArchitecturalFinishes): string {
+  return [
+    "ARCHITECTURAL FINISHES",
+    "Architectural finishes are separate from shoppable furniture.",
+    "Do not invent extra purchasable furniture or decor to complete the room.",
+    ...wallFinishLines(finishes.wall_finish),
+    ...floorFinishLines(finishes.floor_finish),
+  ].join("\n");
+}
+
 function allowedChangesSection(
   preferences: RoomRenderPreferences,
-  renderIntent: RenderIntent
+  renderIntent: RenderIntent,
+  finishes: ArchitecturalFinishes
 ): string {
   const styleLine =
     preferences.selectedStyles.length > 0
@@ -219,16 +317,6 @@ function allowedChangesSection(
   const budgetLine = preferences.budgetLevel
     ? `Budget signal for visual density and finish quality: ${preferences.budgetLevel}.`
     : "No budget signal specified.";
-  const colorLine = [
-    preferences.wallMainColor ? `main wall color direction: ${preferences.wallMainColor}` : null,
-    preferences.wallAccentColor ? `accent wall color direction: ${preferences.wallAccentColor}` : null,
-  ]
-    .filter(Boolean)
-    .join("; ");
-  const floorLine =
-    preferences.flooring === "keep"
-      ? "Keep the existing flooring appearance unless a supplied material reference is for flooring."
-      : `User flooring preference: ${preferences.flooring}. Prefer a matching supplied flooring reference if one exists.`;
   const bedLine =
     preferences.bedType === "none"
       ? "No bed is requested unless a supplied product reference is a bed."
@@ -237,9 +325,19 @@ function allowedChangesSection(
   const finishLines =
     renderIntent === "complete_interior"
       ? [
-          "Allowed room-surface changes: wall finishes, flooring, ceiling finish, lighting treatment, and architectural surface completion when they follow the user direction below.",
-          colorLine ? `Color direction: ${colorLine}.` : "No explicit wall color direction.",
-          floorLine,
+          "Allowed room-surface changes: only the wall and floor decisions in ARCHITECTURAL FINISHES.",
+          finishes.wall_finish.resolvedMode === "keep_existing"
+            ? "Keep the existing wall finish."
+            : finishes.wall_finish.resolvedMode === "concept_color"
+              ? "Wall color may change as a concept direction only."
+              : finishes.wall_finish.resolvedMode === "exact_product"
+                ? "Walls use the grounded exact wall product."
+                : "Exact wall paint is unresolved. Do not invent a wall finish.",
+          finishes.floor_finish.resolvedMode === "exact_product"
+            ? "Floor uses the grounded exact floor product."
+            : finishes.floor_finish.resolvedMode === "unresolved"
+              ? "Floor change is unresolved. Do not invent a floor covering and do not silently keep the old floor."
+              : "Keep the existing floor finish. Do not invent a floor covering.",
         ]
       : [
           "Allowed room changes: add only the referenced inventory products. Leave remaining space empty.",
@@ -259,7 +357,7 @@ function allowedChangesSection(
     .join("\n");
 }
 
-function forbiddenChangesSection(renderIntent: RenderIntent): string {
+function forbiddenChangesSection(renderIntent: RenderIntent, finishes: ArchitecturalFinishes): string {
   const surfaceForbidden =
     renderIntent === "furnish_only"
       ? [
@@ -268,6 +366,18 @@ function forbiddenChangesSection(renderIntent: RenderIntent): string {
         ]
       : [
           "Do not change camera, room proportions, or structural openings while completing interior surfaces.",
+          finishes.floor_finish.resolvedMode === "exact_product"
+            ? "Do not replace the grounded floor product with a different design."
+            : finishes.floor_finish.resolvedMode === "unresolved"
+              ? "Do not invent a floor finish. Do not silently keep the existing floor."
+              : "Do not invent a floor finish.",
+          finishes.wall_finish.resolvedMode === "keep_existing"
+            ? "Do not invent a wall finish product."
+            : finishes.wall_finish.resolvedMode === "concept_color"
+              ? "Do not present the wall color as a shoppable merchant product."
+              : finishes.wall_finish.resolvedMode === "exact_product"
+                ? "Do not replace the grounded wall product with a different design."
+                : "Do not invent a wall paint product. Do not silently fall back to concept color.",
         ];
 
   return [
@@ -311,7 +421,7 @@ function excludedProductsSection(input: {
     "There is no invented furniture in a customer render.",
     "Do not introduce sofas, chairs, tables, rugs, lamps, plants, planters, shelves, cabinets, decorative objects, cushions, artwork, books, or purchasable accessories unless they are listed in PHYSICAL OBJECT INVENTORY.",
     "Plants are not an exception. If no plant or planter is in the inventory, do not render a plant or planter.",
-    "Architectural or material transformations such as wall paint, flooring finish, ceiling finish, and built-in surface treatment are not shopping objects and may follow render mode. Loose physical furniture and decor must always be inventory products.",
+    "Architectural finishes follow ARCHITECTURAL FINISHES only. Wall concept color is not a shoppable product. Floor changes require a grounded floor product. Loose physical furniture and decor must always be inventory products.",
   ];
 
   if (unmatched.length > 0) {
@@ -333,11 +443,16 @@ function excludedProductsSection(input: {
 
 export function buildRoomRenderPrompt(input: BuildRenderPromptInput): RenderPromptSnapshot {
   const preferences = canonicalRenderPreferences(input.preferences);
-  const renderIntent = resolveRenderIntentFromSource({
+  const architecturalFinishes = resolveArchitecturalFinishes({
     preferences,
     references: input.references,
   });
+  const renderIntent = resolveRenderIntentFromFinishes(architecturalFinishes);
   const expectedRenderInventory = toExpectedRenderInventory(input.references);
+  const renderReport = buildRenderHonestyReport({
+    inventory: expectedRenderInventory,
+    finishes: architecturalFinishes,
+  });
   const mapping: RenderPromptSnapshot["imageMapping"] = [
     {
       imageIndex: 1,
@@ -349,7 +464,9 @@ export function buildRoomRenderPrompt(input: BuildRenderPromptInput): RenderProm
     },
     ...input.references.map((item) => ({
       imageIndex: item.imageIndex,
-      role: "product_reference" as const,
+      role: isArchitecturalFinishReference(item)
+        ? ("finish_reference" as const)
+        : ("product_reference" as const),
       selectionId: item.selection.id,
       requirementKey: item.selection.requirementKey,
       requirementType: item.selection.requirementType,
@@ -367,8 +484,9 @@ export function buildRoomRenderPrompt(input: BuildRenderPromptInput): RenderProm
     }),
     existingRoomObjectsSection(),
     physicalObjectInventorySection(input.references, expectedRenderInventory),
-    allowedChangesSection(preferences, renderIntent),
-    forbiddenChangesSection(renderIntent),
+    architecturalFinishesSection(architecturalFinishes),
+    allowedChangesSection(preferences, renderIntent, architecturalFinishes),
+    forbiddenChangesSection(renderIntent, architecturalFinishes),
     excludedProductsSection({
       unmatchedRequirements: input.unmatchedRequirements,
       ungroundedSelections: input.ungroundedSelections ?? [],
@@ -378,9 +496,11 @@ export function buildRoomRenderPrompt(input: BuildRenderPromptInput): RenderProm
     .join("\n\n");
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     renderIntent,
     expectedRenderInventory,
+    architecturalFinishes,
+    renderReport,
     prompt,
     imageMapping: mapping,
   };

@@ -505,6 +505,26 @@ describe("zero-candidate + true multi-candidate hardening", () => {
     expect(gate.unresolvedSlots).toBe(0);
   });
 
+  it("does not block render on unmatched wall or floor finishes", () => {
+    const gate = completeRoomGate({
+      searchedItemCount: 4,
+      readyRequirementKeys: ["furniture:sofa:0", "furniture:coffee-table:1", "furniture:rug:2"],
+      unmatched: [
+        {
+          requirementKey: "material:floor:user-flooring:hardwood",
+          requirementType: "material",
+          itemSpec: "hardwood flooring",
+          displayLabel: "Hardwood flooring",
+          reason: "no_valid_product",
+        },
+      ],
+    });
+    expect(gate.allowed).toBe(true);
+    expect(gate.requiredSlots).toBe(3);
+    expect(gate.unresolvedSlots).toBe(0);
+    expect(gate.unresolvedLabels).toEqual([]);
+  });
+
   it("K. candidate failure does not rerun geocode, Places, or the full project", async () => {
     const counters = { geocode: 0, places: 0, fullProject: 0, recover: 0 };
     await resolveRequirementSlot({

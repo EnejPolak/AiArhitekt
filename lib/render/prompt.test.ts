@@ -110,7 +110,8 @@ describe("buildRoomRenderPrompt", () => {
     expect(snapshot.prompt).toContain("Leave that area empty");
     expect(snapshot.prompt).toContain("Do not generate shopping text, prices, URLs");
     expect(snapshot.prompt).toContain("Do not claim pixel-identical photographic identity");
-    expect(snapshot.prompt).not.toContain("concept-only");
+    expect(snapshot.prompt).toContain("This is a concept-only wall finish, not a shoppable merchant product.");
+    expect(snapshot.prompt).not.toContain("concept-only furniture");
     expect(snapshot.prompt).toContain("window and radiator");
     expect(snapshot.prompt).toContain("existing sofa");
     expect(snapshot.prompt).toContain("furniture:rug:3");
@@ -124,9 +125,9 @@ describe("buildRoomRenderPrompt", () => {
       merchantName: "Local",
     });
     expect(snapshot.prompt).toContain("Render mode: COMPLETE_INTERIOR.");
-    expect(snapshot.prompt).toContain(
-      "Surface completion is intentional and allowed: wall finishes, flooring, ceiling finish"
-    );
+    expect(snapshot.prompt).toContain("ARCHITECTURAL FINISHES");
+    expect(snapshot.prompt).toContain("Wall finish requestedMode: concept_color.");
+    expect(snapshot.prompt).toContain("Change architectural surfaces only as listed in ARCHITECTURAL FINISHES.");
     expect(snapshot.prompt).toContain("The supplied product reference image is authoritative");
     expect(snapshot.prompt).toContain(
       "Do not change a grounded product's doors, drawers, shelves, openings, handles/pulls"
@@ -174,7 +175,8 @@ describe("buildRoomRenderPrompt", () => {
         flooring: "keep",
         underfloorHeating: false,
         bedType: "none",
-        keepExistingWalls: false,
+        keepExistingWalls: true,
+        wallFinishMode: "keep_existing",
         notes: "",
       },
       references: [
@@ -323,8 +325,12 @@ describe("buildRoomRenderPrompt", () => {
 
     expect(snapshot.renderIntent).toBe("complete_interior");
     expect(snapshot.prompt).toContain("Render mode: COMPLETE_INTERIOR.");
-    expect(snapshot.prompt).toContain("wall finishes, flooring, ceiling finish, lighting treatment");
+    expect(snapshot.prompt).toContain("Wall finish requestedMode: concept_color.");
+    expect(snapshot.prompt).toContain("Floor finish requestedMode: exact_product.");
+    expect(snapshot.prompt).toContain("Floor finish resolvedMode: unresolved.");
+    expect(snapshot.prompt).toContain("Do not invent a floor finish.");
     expect(snapshot.prompt).not.toContain("Do not paint, plaster, refinish, or complete unfinished walls");
     expect(snapshot.prompt).not.toContain("Render mode: FURNISH_ONLY.");
+    expect(snapshot.prompt).not.toContain("Surface completion is intentional and allowed");
   });
 });

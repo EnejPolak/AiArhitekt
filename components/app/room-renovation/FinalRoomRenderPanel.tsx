@@ -10,11 +10,18 @@ import {
   expectedRenderInventoryFromSnapshot,
   type ExpectedRenderInventoryItem,
 } from "@/lib/render/inventory";
+import { renderHonestyReportFromSnapshot, type RenderHonestyReport } from "@/lib/render/report";
 import { groundedSelectionIdsFromSnapshot } from "@/lib/render/types";
 import type { RoomRenderPreferences } from "@/lib/render/preferences";
+import {
+  isFloorFinishRequirementKey,
+  isWallFinishRequirementKey,
+  requestedFloorFinishMode,
+  requestedWallFinishMode,
+} from "@/lib/render/finishes";
+import { completeRoomBlockMessage, evaluateCompleteRoomReadiness } from "@/lib/render/readiness";
 import type { ProductDiscoveryView, ProductSelectionView } from "@/lib/discovery/types";
 import type { UnmatchedRequirement } from "@/lib/discovery/itemSpecs";
-import { isRequiredUnresolvedReason } from "@/lib/discovery/itemSpecs";
 import { formatVerifiedProductPrice, toProjectProductShoppingState } from "@/lib/discovery/shoppingState";
 import { ProductShoppingSections } from "./ProductShoppingSections";
 
@@ -29,6 +36,9 @@ export interface FinalRoomRenderPanelProps {
   onChangeConstraints?: (requirementKey: string) => void;
   onIncreaseBudget?: (requirementKey: string) => void;
   onRemoveRequirement?: (requirementKey: string) => void;
+  onKeepExistingFloor?: () => void;
+  onSwitchWallToConceptColor?: () => void;
+  onKeepExistingWalls?: () => void;
   retryBusyKey?: string | null;
 }
 
@@ -37,12 +47,15 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
   selections,
   discovery = null,
   unmatchedRequirements = [],
-  preferences: _preferences,
+  preferences,
   roomPhotoPreviewUrl,
   onRetryRequirement,
   onChangeConstraints,
   onIncreaseBudget,
   onRemoveRequirement,
+  onKeepExistingFloor,
+  onSwitchWallToConceptColor,
+  onKeepExistingWalls,
   retryBusyKey,
 }) => {
   const [busy, setBusy] = React.useState(false);
@@ -57,6 +70,7 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
   const [hasCurrent, setHasCurrent] = React.useState(false);
   const [groundedIds, setGroundedIds] = React.useState<Set<string>>(new Set());
   const [usedInventory, setUsedInventory] = React.useState<ExpectedRenderInventoryItem[]>([]);
+  const [honestyReport, setHonestyReport] = React.useState<RenderHonestyReport | null>(null);
   const inFlight = React.useRef(false);
   const visualizationItems = React.useMemo(() => {
     if (usedInventory.length > 0) {
@@ -101,6 +115,7 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
     setHasCurrent(Boolean(result.currentRender));
     setGroundedIds(groundedSelectionIdsFromSnapshot(result.currentRender?.referenceSnapshot));
     setUsedInventory(expectedRenderInventoryFromSnapshot(result.currentRender?.promptSnapshot));
+    setHonestyReport(renderHonestyReportFromSnapshot(result.currentRender?.promptSnapshot));
   }, [projectId]);
 
   React.useEffect(() => {
@@ -129,6 +144,7 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
       setReadinessMessage(null);
       setGroundedIds(groundedSelectionIdsFromSnapshot(result.render.referenceSnapshot));
       setUsedInventory(expectedRenderInventoryFromSnapshot(result.render.promptSnapshot));
+      setHonestyReport(renderHonestyReportFromSnapshot(result.render.promptSnapshot));
       if (result.render.status === "processing") {
         await refresh();
       }
@@ -140,13 +156,39 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
     }
   };
 
-  const unresolved = unmatchedRequirements.filter((item) => isRequiredUnresolvedReason(item.reason));
+  const completeRoom = React.useMemo(() => {
+    if (!discovery) return null;
+    const readyRequirementKeys = selections
+      .filter((item) => item.referenceStatus === "ready")
+      .map((item) => item.requirementKey);
+    return evaluateCompleteRoomReadiness({
+      searchedItemCount: discovery.searchedItemCount,
+      unmatched: unmatchedRequirements,
+      readyRequirementKeys,
+      preferences,
+    });
+  }, [discovery, selections, unmatchedRequirements, preferences]);
+  const floorReady = selections.find(
+    (item) => item.referenceStatus === "ready" && isFloorFinishRequirementKey(item.requirementKey)
+  );
+  const wallPaintReady = selections.find(
+    (item) => item.referenceStatus === "ready" && isWallFinishRequirementKey(item.requirementKey)
+  );
+  const floorKey =
+    unmatchedRequirements.find((item) => isFloorFinishRequirementKey(item.requirementKey))?.requirementKey ??
+    floorReady?.requirementKey;
+  const wallPaintKey =
+    unmatchedRequirements.find((item) => isWallFinishRequirementKey(item.requirementKey))?.requirementKey ??
+    wallPaintReady?.requirementKey;
+  const changeFloorRequested = requestedFloorFinishMode(preferences) === "exact_product";
+  const exactWallRequested = requestedWallFinishMode(preferences) === "exact_product";
   const shoppingState = React.useMemo(
     () => toProjectProductShoppingState(discovery, selections),
     [discovery, selections]
   );
   const buttonLabel = hasCurrent && !stale ? "Regenerate design" : "Generate design";
-  const canGenerate = selections.length > 0 && unresolved.length === 0;
+  const canGenerate = Boolean(completeRoom?.allowed);
+  const blockMessage = completeRoom && !completeRoom.allowed ? completeRoomBlockMessage(completeRoom) : null;
 
   return (
     <div className="space-y-5">
@@ -199,9 +241,110 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
         <p className="text-[13px] text-[rgba(255,255,255,0.65)]">{readinessMessage}</p>
       ) : null}
 
+      {blockMessage ? (
+        <p className="text-[13px] text-[rgba(255,210,80,0.85)]" role="status">
+          {blockMessage}
+        </p>
+      ) : null}
+
       {error ? <p className="text-[13px] text-[rgba(255,140,140,0.9)]">{error}</p> : null}
 
-      {unresolved.length > 0 ? (
+      {changeFloorRequested ? (
+        <div className="space-y-2 rounded-[12px] border border-[rgba(255,255,255,0.08)] p-3">
+          <div className="text-[13px] font-medium text-white">Floor change</div>
+          {floorReady ? (
+            <p className="text-[13px] text-white">Selected floor: {floorReady.productTitle} · READY</p>
+          ) : (
+            <>
+              <p className="text-[13px] text-[rgba(255,210,80,0.85)]">Floor change is unresolved.</p>
+              <div className="flex flex-wrap gap-3">
+                {onRetryRequirement && floorKey ? (
+                  <button
+                    type="button"
+                    disabled={retryBusyKey === floorKey}
+                    onClick={() => onRetryRequirement(floorKey)}
+                    className="text-[12px] text-[#3B82F6] hover:underline disabled:opacity-40"
+                  >
+                    {retryBusyKey === floorKey ? "Retrying…" : "Retry"}
+                  </button>
+                ) : null}
+                {onChangeConstraints && floorKey ? (
+                  <button
+                    type="button"
+                    onClick={() => onChangeConstraints(floorKey)}
+                    className="text-[12px] text-[#3B82F6] hover:underline"
+                  >
+                    Change constraints
+                  </button>
+                ) : null}
+                {onKeepExistingFloor ? (
+                  <button
+                    type="button"
+                    onClick={onKeepExistingFloor}
+                    className="text-[12px] text-[#3B82F6] hover:underline"
+                  >
+                    Keep existing
+                  </button>
+                ) : null}
+              </div>
+            </>
+          )}
+        </div>
+      ) : null}
+
+      {exactWallRequested ? (
+        <div className="space-y-2 rounded-[12px] border border-[rgba(255,255,255,0.08)] p-3">
+          <div className="text-[13px] font-medium text-white">Exact wall paint</div>
+          {wallPaintReady ? (
+            <p className="text-[13px] text-white">Selected paint: {wallPaintReady.productTitle} · READY</p>
+          ) : (
+            <>
+              <p className="text-[13px] text-[rgba(255,210,80,0.85)]">Exact wall paint is unresolved.</p>
+              <div className="flex flex-wrap gap-3">
+                {onRetryRequirement && wallPaintKey ? (
+                  <button
+                    type="button"
+                    disabled={retryBusyKey === wallPaintKey}
+                    onClick={() => onRetryRequirement(wallPaintKey)}
+                    className="text-[12px] text-[#3B82F6] hover:underline disabled:opacity-40"
+                  >
+                    {retryBusyKey === wallPaintKey ? "Retrying…" : "Retry"}
+                  </button>
+                ) : null}
+                {onChangeConstraints && wallPaintKey ? (
+                  <button
+                    type="button"
+                    onClick={() => onChangeConstraints(wallPaintKey)}
+                    className="text-[12px] text-[#3B82F6] hover:underline"
+                  >
+                    Change constraints
+                  </button>
+                ) : null}
+                {onSwitchWallToConceptColor ? (
+                  <button
+                    type="button"
+                    onClick={onSwitchWallToConceptColor}
+                    className="text-[12px] text-[#3B82F6] hover:underline"
+                  >
+                    Switch to concept color
+                  </button>
+                ) : null}
+                {onKeepExistingWalls ? (
+                  <button
+                    type="button"
+                    onClick={onKeepExistingWalls}
+                    className="text-[12px] text-[#3B82F6] hover:underline"
+                  >
+                    Keep existing
+                  </button>
+                ) : null}
+              </div>
+            </>
+          )}
+        </div>
+      ) : null}
+
+      {shoppingState.hasDiscovery ? (
         <ProductShoppingSections
           state={shoppingState}
           onRetryRequirement={onRetryRequirement}
@@ -221,56 +364,168 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
         {busy ? "Working…" : buttonLabel}
       </button>
 
-      <div className="space-y-3">
-        <div className="text-[13px] text-[rgba(255,255,255,0.55)]">
-          Products used in this visualization
-        </div>
-        {visualizationItems.length === 0 ? (
-          <p className="text-[13px] text-[rgba(255,255,255,0.45)]">
-            Only ready merchant products with a cached reference image appear here. If a product
-            was not found or has no usable image, that space stays empty.
-          </p>
-        ) : (
-          visualizationItems.map(({ inventory, selection }) => {
-            const imageUrl = selection?.productImageUrl ?? null;
-            const price = selection?.price ?? inventory.price;
-            const currency = selection?.currency ?? inventory.currency;
-            return (
-              <div
-                key={inventory.selectionId}
-                className="flex gap-3 rounded-[12px] border border-[rgba(255,255,255,0.08)] p-3"
-              >
-                {imageUrl ? (
-                  <img
-                    src={imageUrl}
-                    alt=""
-                    className="w-16 h-16 object-cover rounded-md bg-[rgba(255,255,255,0.04)]"
+      {honestyReport ? (
+        <div className="space-y-5">
+          <ReportBlock title="Products to buy">
+            {honestyReport.productsToBuy.length === 0 ? (
+              <p className="text-[13px] text-[rgba(255,255,255,0.45)]">
+                No shoppable merchant products were used in this visualization.
+              </p>
+            ) : (
+              honestyReport.productsToBuy.map((item) => {
+                const selection = selections.find((row) => row.id === item.selectionId) ?? null;
+                return (
+                  <ProductRow
+                    key={item.selectionId}
+                    name={item.productName}
+                    merchant={item.merchantName}
+                    url={item.productUrl}
+                    imageUrl={selection?.productImageUrl ?? null}
+                    price={selection?.price ?? item.price}
+                    currency={selection?.currency ?? item.currency}
+                    note="Shoppable product"
                   />
-                ) : (
-                  <div className="w-16 h-16 rounded-md bg-[rgba(255,255,255,0.04)]" />
-                )}
-                <div className="min-w-0 flex-1">
-                  <div className="text-[14px] text-white break-words">{inventory.productName}</div>
-                  <div className="text-[12px] text-[rgba(255,255,255,0.55)] break-words">
-                    {formatVerifiedProductPrice(price, currency)} · {inventory.merchantName}
-                  </div>
-                  <div className="text-[12px] text-[rgba(0,230,204,0.75)]">Visual reference</div>
-                  {inventory.productUrl ? (
-                    <a
-                      href={inventory.productUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-[12px] text-[rgba(0,230,204,0.85)]"
-                    >
-                      Poglej izdelek
-                    </a>
-                  ) : null}
-                </div>
-              </div>
-            );
-          })
-        )}
-      </div>
+                );
+              })
+            )}
+          </ReportBlock>
+
+          <ReportBlock title="Finish decisions">
+            <p className="text-[13px] text-white">
+              Walls requested: {honestyReport.finishIntent.wall_finish.requestedLabel}
+            </p>
+            <p className="text-[13px] text-white">
+              Walls resolved: {honestyReport.finishIntent.wall_finish.resolvedLabel}
+              {honestyReport.finishDecisions.wall_finish.resolvedMode === "concept_color"
+                ? ` (${honestyReport.finishDecisions.wall_finish.colorDirection || "color direction"}, not shoppable)`
+                : ""}
+            </p>
+            <p className="text-[13px] text-white">
+              Floor requested: {honestyReport.finishIntent.floor_finish.requestedLabel}
+            </p>
+            <p className="text-[13px] text-white">
+              Floor resolved: {honestyReport.finishIntent.floor_finish.resolvedLabel}
+            </p>
+          </ReportBlock>
+
+          <ReportBlock title="Exact visualized items">
+            {honestyReport.exactVisualizedItems.length === 0 ? (
+              <p className="text-[13px] text-[rgba(255,255,255,0.45)]">
+                No exact merchant products were visualized.
+              </p>
+            ) : (
+              honestyReport.exactVisualizedItems.map((item) => (
+                <p key={`${item.kind}-${item.selectionId}`} className="text-[13px] text-white">
+                  {item.productName}
+                  <span className="text-[rgba(255,255,255,0.55)]">
+                    {" "}
+                    · {item.kind === "exact_finish" ? "exact finish" : "shoppable product"}
+                  </span>
+                </p>
+              ))
+            )}
+          </ReportBlock>
+
+          <ReportBlock title="Concept-only finish choices">
+            {honestyReport.conceptOnlyFinishChoices.length === 0 ? (
+              <p className="text-[13px] text-[rgba(255,255,255,0.45)]">
+                No concept-only finishes. Wall color is either kept or an exact product.
+              </p>
+            ) : (
+              honestyReport.conceptOnlyFinishChoices.map((item) => (
+                <p key={`${item.surface}-${item.colorDirection}`} className="text-[13px] text-white">
+                  Walls: {item.colorDirection || "color direction"}
+                  {item.accentColorDirection ? ` / accent ${item.accentColorDirection}` : ""}
+                  <span className="text-[rgba(255,255,255,0.55)]"> · not a shoppable product</span>
+                </p>
+              ))
+            )}
+          </ReportBlock>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div className="text-[13px] text-[rgba(255,255,255,0.55)]">
+            Products used in this visualization
+          </div>
+          {visualizationItems.length === 0 ? (
+            <p className="text-[13px] text-[rgba(255,255,255,0.45)]">
+              Only ready merchant products with a cached reference image appear here. If a product
+              was not found or has no usable image, that space stays empty.
+            </p>
+          ) : (
+            visualizationItems.map(({ inventory, selection }) => (
+              <ProductRow
+                key={inventory.selectionId}
+                name={inventory.productName}
+                merchant={inventory.merchantName}
+                url={inventory.productUrl}
+                imageUrl={selection?.productImageUrl ?? null}
+                price={selection?.price ?? inventory.price}
+                currency={selection?.currency ?? inventory.currency}
+                note="Visual reference"
+              />
+            ))
+          )}
+        </div>
+      )}
     </div>
   );
 };
+
+function ReportBlock({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-2">
+      <div className="text-[13px] text-[rgba(255,255,255,0.55)]">{title}</div>
+      {children}
+    </div>
+  );
+}
+
+function ProductRow({
+  name,
+  merchant,
+  url,
+  imageUrl,
+  price,
+  currency,
+  note,
+}: {
+  name: string;
+  merchant: string;
+  url: string;
+  imageUrl: string | null;
+  price: number | null;
+  currency: "EUR" | null;
+  note: string;
+}) {
+  return (
+    <div className="flex gap-3 rounded-[12px] border border-[rgba(255,255,255,0.08)] p-3">
+      {imageUrl ? (
+        <img
+          src={imageUrl}
+          alt=""
+          className="w-16 h-16 object-cover rounded-md bg-[rgba(255,255,255,0.04)]"
+        />
+      ) : (
+        <div className="w-16 h-16 rounded-md bg-[rgba(255,255,255,0.04)]" />
+      )}
+      <div className="min-w-0 flex-1">
+        <div className="text-[14px] text-white break-words">{name}</div>
+        <div className="text-[12px] text-[rgba(255,255,255,0.55)] break-words">
+          {formatVerifiedProductPrice(price, currency)} · {merchant}
+        </div>
+        <div className="text-[12px] text-[rgba(0,230,204,0.75)]">{note}</div>
+        {url ? (
+          <a
+            href={url}
+            target="_blank"
+            rel="noreferrer"
+            className="text-[12px] text-[rgba(0,230,204,0.85)]"
+          >
+            Poglej izdelek
+          </a>
+        ) : null}
+      </div>
+    </div>
+  );
+}

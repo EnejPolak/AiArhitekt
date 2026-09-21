@@ -13,11 +13,9 @@ import {
 } from "./candidatePageEnrichment";
 import {
   unmatchedRequirementSchema,
-  isRequiredUnresolvedReason,
   type SearchableRequirement,
   type UnmatchedRequirement,
 } from "./itemSpecs";
-import { unmatchedRequirementDisplayLabel } from "./requirementLabels";
 import type { RankedProductCandidate } from "./style/types";
 import type { ResolvedDiscoverySelection } from "./resolveProducts";
 import {
@@ -64,13 +62,11 @@ export type RenderReadyEvaluation = {
   cachedBytesValid?: boolean;
 };
 
-export type CompleteRoomGate = {
-  requiredSlots: number;
-  readySlots: number;
-  unresolvedSlots: number;
-  allowed: boolean;
-  unresolvedLabels: string[];
-};
+export {
+  completeRoomGate,
+  isArchitecturalFinishRequirement,
+  type CompleteRoomGate,
+} from "./completeRoomGate";
 
 export function isRejectedCandidateUrl(
   rejected: RejectedCandidate[],
@@ -424,28 +420,6 @@ export async function resolveCompleteRoomSelections(input: {
   }
 
   return { selections, unmatched, recoverySearchCount, rejectedByRequirement };
-}
-
-export function completeRoomGate(input: {
-  searchedItemCount: number;
-  unmatched: UnmatchedRequirement[];
-  readyRequirementKeys: string[];
-}): CompleteRoomGate {
-  const userRemoved = input.unmatched.filter((item) => item.reason === "user_removed");
-  const requiredSlots = Math.max(0, input.searchedItemCount - userRemoved.length);
-  const readyKeys = new Set(input.readyRequirementKeys);
-  const readySlots = Math.min(requiredSlots, readyKeys.size);
-  const unresolvedSlots = Math.max(0, requiredSlots - readySlots);
-  const unresolvedLabels = input.unmatched
-    .filter((item) => isRequiredUnresolvedReason(item.reason) && !readyKeys.has(item.requirementKey))
-    .map((item) => unmatchedRequirementDisplayLabel(item));
-  return {
-    requiredSlots,
-    readySlots,
-    unresolvedSlots,
-    allowed: requiredSlots > 0 && unresolvedSlots === 0,
-    unresolvedLabels,
-  };
 }
 
 export function renderInventoryExcludesRejected(
