@@ -25,6 +25,7 @@ export function projectRoomPreferencesToShoppingPreferences(
     | "bedType"
     | "keepExistingWalls"
     | "wallFinishMode"
+    | "floorFinishMode"
     | "notes"
   > | null
 ): ShoppingPreferenceInput {
@@ -36,7 +37,7 @@ export function projectRoomPreferencesToShoppingPreferences(
     flooring: source.flooring,
     underfloorHeating: source.underfloorHeating,
     bedType: source.bedType,
-    keepExistingWalls: source.wallFinishMode === "exact_product" ? false : source.keepExistingWalls,
+    keepExistingWalls: source.wallFinishMode === "exact_product" ? false : true,
     notes: source.notes,
   };
 }
@@ -61,6 +62,7 @@ export function projectRoomPreferencesToRenderPreferences(
     bedType: source.bedType,
     keepExistingWalls: source.keepExistingWalls,
     wallFinishMode: source.wallFinishMode,
+    floorFinishMode: source.floorFinishMode,
     notes: source.notes,
   });
 }

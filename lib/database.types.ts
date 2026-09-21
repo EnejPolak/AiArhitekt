@@ -349,7 +349,8 @@ export type Database = {
           underfloor_heating: boolean
           updated_at: string
           wall_accent_color: string
-          wall_finish_mode?: string
+          wall_finish_mode: string | null
+          floor_finish_mode: string | null
           wall_main_color: string
         }
         Insert: {
@@ -371,7 +372,8 @@ export type Database = {
           underfloor_heating?: boolean
           updated_at?: string
           wall_accent_color?: string
-          wall_finish_mode?: string
+          wall_finish_mode?: string | null
+          floor_finish_mode?: string | null
           wall_main_color?: string
         }
         Update: {
@@ -393,7 +395,8 @@ export type Database = {
           underfloor_heating?: boolean
           updated_at?: string
           wall_accent_color?: string
-          wall_finish_mode?: string
+          wall_finish_mode?: string | null
+          floor_finish_mode?: string | null
           wall_main_color?: string
         }
         Relationships: [

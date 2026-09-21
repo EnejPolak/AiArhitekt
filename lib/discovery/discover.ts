@@ -204,7 +204,6 @@ export async function discoverProjectProducts(
     const existing = await getProjectProductDiscovery(client, parsedId.data);
     if (
       existing &&
-      existing.sourcePreferencesHash === preferenceFingerprint.hash &&
       isCurrentProductDiscovery(existing, analysis, {
         locationInput,
         latitude: storedLocation?.latitude,

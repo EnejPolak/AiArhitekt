@@ -1,7 +1,7 @@
 import type { ProjectRoomAnalysisRow } from "@/lib/analysis/queries";
 import { normalizeGeocodeAddress } from "@/lib/geocode/normalize";
 import { searchLocationsMatch } from "@/lib/project-location/parse";
-import { shoppingPreferencesMatch } from "./preferences";
+import { furnitureShoppingPreferencesMatch } from "./preferences";
 import type { ProductDiscoveryView } from "./types";
 
 export type DiscoverySearchContext = {
@@ -62,7 +62,7 @@ export function discoveryMatchesShoppingSource(
   current: DiscoverySearchContext
 ): boolean {
   if (!discoveryMatchesSearchLocation(discovery, current)) return false;
-  return shoppingPreferencesMatch(discovery.sourcePreferences, current.preferences);
+  return furnitureShoppingPreferencesMatch(discovery.sourcePreferences, current.preferences);
 }
 
 export function isCurrentProductDiscovery(

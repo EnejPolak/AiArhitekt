@@ -4,6 +4,7 @@ import {
   renderBudgetLevelSchema,
   renderFlooringPreferenceSchema,
   wallFinishModeSchema,
+  floorFinishModeSchema,
 } from "@/lib/render/preferences";
 
 export const ROOM_PREFERENCE_ROOM_TYPES = [
@@ -31,6 +32,9 @@ export const projectRoomPreferencesRowSchema = z.object({
   notes: z.string().trim().max(400),
   keepExistingWalls: z.boolean(),
   wallFinishMode: wallFinishModeSchema,
+  wallFinishModeExplicit: z.boolean(),
+  floorFinishMode: floorFinishModeSchema,
+  floorFinishModeExplicit: z.boolean(),
   locationInput: z.string().trim().min(3).max(500).nullable(),
   formattedAddress: z.string().trim().max(500).nullable(),
   latitude: z.number().finite().min(-90).max(90).nullable(),
@@ -54,6 +58,7 @@ export const projectRoomPreferencesPatchSchema = z
     notes: z.string().max(400),
     keepExistingWalls: z.boolean(),
     wallFinishMode: wallFinishModeSchema,
+    floorFinishMode: floorFinishModeSchema,
     locationInput: z.string().trim().min(3).max(500).nullable(),
     formattedAddress: z.string().trim().max(500).nullable(),
     latitude: z.number().finite().min(-90).max(90).nullable(),

@@ -7,6 +7,7 @@ import { type CompleteRoomGate } from "@/lib/discovery/completeRoom";
 import { getProjectProductDiscovery, getProjectProductSelections } from "@/lib/discovery/queries";
 import {
   canonicalShoppingPreferences,
+  furnitureShoppingPreferencesMatch,
   loadStoredShoppingPreferenceSnapshot,
   shoppingPreferencesMatch,
 } from "@/lib/discovery/preferences";
@@ -97,17 +98,14 @@ function shoppingSourceCurrentForRender(
   stored: unknown,
   preferences: RoomRenderPreferences
 ): boolean {
+  if (furnitureShoppingPreferencesMatch(stored, preferences)) return true;
   if (shoppingPreferencesMatch(stored, preferences)) return true;
   const snapshot = loadStoredShoppingPreferenceSnapshot(stored);
   const current = canonicalShoppingPreferences(preferences);
   return (
     JSON.stringify(snapshot.selectedStyles) === JSON.stringify(current.selectedStyles) &&
-    snapshot.wallMainColor === current.wallMainColor &&
-    snapshot.wallAccentColor === current.wallAccentColor &&
-    snapshot.flooring === current.flooring &&
     snapshot.underfloorHeating === current.underfloorHeating &&
-    snapshot.bedType === current.bedType &&
-    snapshot.keepExistingWalls === current.keepExistingWalls
+    snapshot.bedType === current.bedType
   );
 }
 

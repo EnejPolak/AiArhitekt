@@ -162,4 +162,28 @@ export function shoppingPreferencesMatch(stored: unknown, current?: unknown): bo
   return canonicalJson(storedSnapshot) === canonicalJson(currentSnapshot);
 }
 
+function furnitureIdentityFromSnapshot(snapshot: ShoppingPreferenceSnapshot) {
+  return {
+    schemaVersion: snapshot.schemaVersion,
+    selectedStyles: snapshot.selectedStyles,
+    underfloorHeating: snapshot.underfloorHeating,
+    bedType: snapshot.bedType,
+    noteShoppingIntents: snapshot.noteShoppingIntents,
+  };
+}
+
+export function furnitureShoppingPreferencesMatch(stored: unknown, current?: unknown): boolean {
+  const storedSnapshot = normalizeStoredSnapshot(stored);
+  const currentSnapshot =
+    current &&
+    typeof current === "object" &&
+    "schemaVersion" in (current as Record<string, unknown>)
+      ? normalizeStoredSnapshot(current)
+      : canonicalShoppingPreferences(current as ShoppingPreferenceInput | null | undefined);
+  return (
+    canonicalJson(furnitureIdentityFromSnapshot(storedSnapshot)) ===
+    canonicalJson(furnitureIdentityFromSnapshot(currentSnapshot))
+  );
+}
+
 export const EMPTY_SHOPPING_PREFERENCE_SNAPSHOT = canonicalShoppingPreferences(null);

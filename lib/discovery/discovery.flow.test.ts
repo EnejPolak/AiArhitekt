@@ -573,7 +573,7 @@ describe("product discovery pipeline (local, mocked providers)", () => {
     expect(serpFn.mock.calls.length).toBe(serpCallsAfterFirst);
   });
 
-  it("becomes stale when flooring changes from marble to wood without provider calls", async () => {
+  it("reuses furniture discovery when flooring changes from marble to wood without provider calls", async () => {
     const analysis = await loadReusableRoomAnalysis(userA.client, preferenceSeed.projectId);
     expect(analysis).toBeTruthy();
     const existing = await getProjectProductDiscovery(userA.client, preferenceSeed.projectId);
@@ -587,14 +587,14 @@ describe("product discovery pipeline (local, mocked providers)", () => {
         locationInput: "Ljubljana",
         preferences: { ...marblePrefs, flooring: "hardwood" },
       })
-    ).toBe(false);
+    ).toBe(true);
     expect(await loadCurrentProductDiscovery(userA.client, preferenceSeed.projectId)).toBeTruthy();
     expect(geocodeFn).not.toHaveBeenCalled();
     expect(placesFn).not.toHaveBeenCalled();
     expect(serpFn).not.toHaveBeenCalled();
   });
 
-  it("becomes stale when wall color changes from metallic black to white without provider calls", async () => {
+  it("reuses furniture discovery when wall color changes from metallic black to white without provider calls", async () => {
     const analysis = await loadReusableRoomAnalysis(userA.client, preferenceSeed.projectId);
     const existing = await getProjectProductDiscovery(userA.client, preferenceSeed.projectId);
     expect(existing).toBeTruthy();
@@ -607,7 +607,7 @@ describe("product discovery pipeline (local, mocked providers)", () => {
         locationInput: "Ljubljana",
         preferences: { ...marblePrefs, wallMainColor: "white" },
       })
-    ).toBe(false);
+    ).toBe(true);
     expect(geocodeFn).not.toHaveBeenCalled();
     expect(placesFn).not.toHaveBeenCalled();
     expect(serpFn).not.toHaveBeenCalled();
@@ -625,7 +625,7 @@ describe("product discovery pipeline (local, mocked providers)", () => {
         locationInput: "Ljubljana",
         preferences: { ...marblePrefs, flooring: "hardwood" },
       })
-    ).toBe(false);
+    ).toBe(true);
     expect(await loadCurrentProductDiscovery(userA.client, preferenceSeed.projectId)).not.toBeNull();
     expect(geocodeFn).not.toHaveBeenCalled();
     expect(placesFn).not.toHaveBeenCalled();

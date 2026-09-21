@@ -9,13 +9,29 @@ import {
 import { projectRoomPreferencesPatchSchema, projectRoomPreferencesRowSchema } from "./schema";
 import { EMPTY_PROJECT_ROOM_PREFERENCES, type ProjectRoomPreferences, type ProjectRoomPreferencesPatch } from "./types";
 import type { ProjectRoomPreferenceFields } from "./adapter";
-import { inferWallFinishMode } from "@/lib/render/preferences";
+import {
+  floorFinishModeFromFlooring,
+  inferFloorFinishMode,
+  inferLegacyFloorFinishMode,
+  inferWallFinishMode,
+  keepExistingWallsFromWallFinishMode,
+} from "@/lib/render/preferences";
 
 type Client = SupabaseClient<Database>;
 
 type PreferenceRow = Database["public"]["Tables"]["project_room_preferences"]["Row"];
 
-function asPreferences(row: PreferenceRow): ProjectRoomPreferences {
+export type FinishModeReadContext = {
+  hasReadyExactWallProduct?: boolean;
+  hasReadyExactFloorProduct?: boolean;
+};
+
+export function mapProjectRoomPreferenceRow(
+  row: PreferenceRow,
+  context: FinishModeReadContext = {}
+): ProjectRoomPreferences {
+  const wallFinishModeExplicit = typeof row.wall_finish_mode === "string" && row.wall_finish_mode.length > 0;
+  const floorFinishModeExplicit = typeof row.floor_finish_mode === "string" && row.floor_finish_mode.length > 0;
   const parsed = projectRoomPreferencesRowSchema.safeParse({
     projectId: row.project_id,
     roomType: row.room_type,
@@ -31,7 +47,25 @@ function asPreferences(row: PreferenceRow): ProjectRoomPreferences {
     wallFinishMode: inferWallFinishMode({
       wallFinishMode: row.wall_finish_mode,
       keepExistingWalls: row.keep_existing_walls,
+      wallMainColor: row.wall_main_color,
+      wallAccentColor: row.wall_accent_color,
+      hasReadyExactWallProduct: context.hasReadyExactWallProduct,
     }),
+    wallFinishModeExplicit,
+    floorFinishMode: (() => {
+      const persisted = inferFloorFinishMode({
+        floorFinishMode: row.floor_finish_mode,
+        flooring: row.flooring,
+      });
+      if (typeof row.floor_finish_mode === "string" && row.floor_finish_mode.length > 0) {
+        return persisted;
+      }
+      return inferLegacyFloorFinishMode({
+        flooring: row.flooring,
+        hasReadyExactFloorProduct: context.hasReadyExactFloorProduct,
+      });
+    })(),
+    floorFinishModeExplicit,
     locationInput: row.location_input?.trim() ? row.location_input.trim() : null,
     formattedAddress: row.formatted_address?.trim() ? row.formatted_address.trim() : null,
     latitude: row.latitude,
@@ -54,9 +88,14 @@ function asPreferences(row: PreferenceRow): ProjectRoomPreferences {
   return parsed.data;
 }
 
+function asPreferences(row: PreferenceRow): ProjectRoomPreferences {
+  return mapProjectRoomPreferenceRow(row);
+}
+
 export async function getProjectRoomPreferences(
   client: Client,
-  projectId: string
+  projectId: string,
+  context: FinishModeReadContext = {}
 ): Promise<ProjectRoomPreferences | null> {
   const parsed = projectIdSchema.safeParse(projectId);
   if (!parsed.success) return null;
@@ -69,11 +108,15 @@ export async function getProjectRoomPreferences(
 
   if (error) throw mapProjectPreferencesDbError(error, "load");
   if (!data) return null;
-  return asPreferences(data);
+  return mapProjectRoomPreferenceRow(data, context);
 }
 
-function toInsert(projectId: string, values: ProjectRoomPreferenceFields) {
-  return {
+function toInsert(
+  projectId: string,
+  values: ProjectRoomPreferenceFields,
+  options: { writeWallFinishMode: boolean; writeFloorFinishMode: boolean }
+) {
+  const payload: Database["public"]["Tables"]["project_room_preferences"]["Insert"] = {
     project_id: projectId,
     room_type: values.roomType,
     selected_styles: values.selectedStyles as Json,
@@ -92,6 +135,13 @@ function toInsert(projectId: string, values: ProjectRoomPreferenceFields) {
     radius_km: values.radiusKm,
     country_code: values.countryCode,
   };
+  if (options.writeWallFinishMode) {
+    payload.wall_finish_mode = values.wallFinishMode;
+  }
+  if (options.writeFloorFinishMode) {
+    payload.floor_finish_mode = values.floorFinishMode;
+  }
+  return payload;
 }
 
 export async function upsertProjectRoomPreferences(
@@ -105,7 +155,25 @@ export async function upsertProjectRoomPreferences(
     throw new ProjectPreferencesError("invalid_input", projectPreferencesErrorMessage("invalid_input"));
   }
 
-  const existing = await getProjectRoomPreferences(client, id.data);
+  const { data: rawExisting, error: loadError } = await client
+    .from("project_room_preferences")
+    .select("*")
+    .eq("project_id", id.data)
+    .maybeSingle();
+  if (loadError) throw mapProjectPreferencesDbError(loadError, "load");
+
+  const existing = rawExisting ? asPreferences(rawExisting) : null;
+  const patchData: ProjectRoomPreferencesPatch = { ...parsedPatch.data };
+  if (patchData.flooring !== undefined && patchData.floorFinishMode === undefined) {
+    patchData.floorFinishMode = floorFinishModeFromFlooring(patchData.flooring);
+  }
+  if (patchData.floorFinishMode === "keep_existing" && patchData.flooring === undefined) {
+    patchData.flooring = "keep";
+  }
+  if (patchData.wallFinishMode !== undefined && patchData.keepExistingWalls === undefined) {
+    patchData.keepExistingWalls = keepExistingWallsFromWallFinishMode(patchData.wallFinishMode);
+  }
+
   const next = {
     ...EMPTY_PROJECT_ROOM_PREFERENCES,
     ...(existing
@@ -121,6 +189,9 @@ export async function upsertProjectRoomPreferences(
           notes: existing.notes,
           keepExistingWalls: existing.keepExistingWalls,
           wallFinishMode: existing.wallFinishMode,
+          wallFinishModeExplicit: existing.wallFinishModeExplicit,
+          floorFinishMode: existing.floorFinishMode,
+          floorFinishModeExplicit: existing.floorFinishModeExplicit,
           locationInput: existing.locationInput,
           formattedAddress: existing.formattedAddress,
           latitude: existing.latitude,
@@ -129,10 +200,21 @@ export async function upsertProjectRoomPreferences(
           countryCode: existing.countryCode,
         }
       : {}),
-    ...parsedPatch.data,
+    ...patchData,
   };
 
-  const payload = toInsert(id.data, next);
+  const isInsert = !rawExisting;
+  const writeWallFinishMode =
+    isInsert ||
+    existing?.wallFinishModeExplicit === true ||
+    patchData.wallFinishMode !== undefined;
+  const writeFloorFinishMode =
+    isInsert ||
+    existing?.floorFinishModeExplicit === true ||
+    patchData.floorFinishMode !== undefined ||
+    patchData.flooring !== undefined;
+
+  const payload = toInsert(id.data, next, { writeWallFinishMode, writeFloorFinishMode });
   const { data, error } = await client
     .from("project_room_preferences")
     .upsert(payload, { onConflict: "project_id" })

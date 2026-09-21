@@ -18,20 +18,71 @@ export const renderFlooringPreferenceSchema = z.enum([
 export const renderBedTypeSchema = z.enum(["none", "king", "queen", "bunk", "single"]);
 
 export const wallFinishModeSchema = z.enum(["keep_existing", "concept_color", "exact_product"]);
+export const floorFinishModeSchema = z.enum(["keep_existing", "exact_product"]);
 
 export type WallFinishMode = z.infer<typeof wallFinishModeSchema>;
+export type FloorFinishMode = z.infer<typeof floorFinishModeSchema>;
 
 export function keepExistingWallsFromWallFinishMode(mode: WallFinishMode): boolean {
   return mode !== "exact_product";
 }
 
+export function floorFinishModeFromFlooring(
+  flooring: z.infer<typeof renderFlooringPreferenceSchema>
+): FloorFinishMode {
+  return flooring === "keep" ? "keep_existing" : "exact_product";
+}
+
+function hasIntentionalColor(value: unknown): boolean {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+export function inferLegacyWallFinishMode(input: {
+  keepExistingWalls?: unknown;
+  wallMainColor?: unknown;
+  wallAccentColor?: unknown;
+  hasReadyExactWallProduct?: boolean;
+}): WallFinishMode {
+  if (input.keepExistingWalls === true) return "keep_existing";
+  if (input.hasReadyExactWallProduct) return "exact_product";
+  if (hasIntentionalColor(input.wallMainColor) || hasIntentionalColor(input.wallAccentColor)) {
+    return "concept_color";
+  }
+  return "keep_existing";
+}
+
 export function inferWallFinishMode(input: {
   wallFinishMode?: unknown;
   keepExistingWalls?: unknown;
+  wallMainColor?: unknown;
+  wallAccentColor?: unknown;
+  hasReadyExactWallProduct?: boolean;
 }): WallFinishMode {
   const parsed = wallFinishModeSchema.safeParse(input.wallFinishMode);
   if (parsed.success) return parsed.data;
-  return input.keepExistingWalls === false ? "concept_color" : "keep_existing";
+  return inferLegacyWallFinishMode(input);
+}
+
+export function inferLegacyFloorFinishMode(input: {
+  flooring?: unknown;
+  hasReadyExactFloorProduct?: boolean;
+}): FloorFinishMode {
+  const flooringParsed = renderFlooringPreferenceSchema.safeParse(input.flooring ?? "keep");
+  const flooring = flooringParsed.success ? flooringParsed.data : "keep";
+  if (input.hasReadyExactFloorProduct && flooring !== "keep") return "exact_product";
+  return "keep_existing";
+}
+
+export function inferFloorFinishMode(input: {
+  floorFinishMode?: unknown;
+  flooring?: unknown;
+  hasReadyExactFloorProduct?: boolean;
+}): FloorFinishMode {
+  const parsed = floorFinishModeSchema.safeParse(input.floorFinishMode);
+  if (parsed.success) return parsed.data;
+  const flooringParsed = renderFlooringPreferenceSchema.safeParse(input.flooring ?? "keep");
+  const flooring = flooringParsed.success ? flooringParsed.data : "keep";
+  return flooring === "keep" ? "keep_existing" : "exact_product";
 }
 
 const trimmedNote = z
@@ -49,6 +100,7 @@ export const roomRenderPreferencesSchema = z.object({
   bedType: renderBedTypeSchema.default("none"),
   keepExistingWalls: z.boolean().default(true),
   wallFinishMode: wallFinishModeSchema.default("keep_existing"),
+  floorFinishMode: floorFinishModeSchema.default("keep_existing"),
   notes: trimmedNote.default(""),
 });
 
@@ -58,6 +110,7 @@ export function parseRoomRenderPreferences(raw: unknown): RoomRenderPreferences 
   const record = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
   const hasExplicitWallFinishMode = typeof record.wallFinishMode === "string";
   const wallFinishMode = inferWallFinishMode(record);
+  const floorFinishMode = inferFloorFinishMode(record);
   const keepExistingWalls = !hasExplicitWallFinishMode
     ? record.keepExistingWalls
     : wallFinishMode === "exact_product"
@@ -68,6 +121,7 @@ export function parseRoomRenderPreferences(raw: unknown): RoomRenderPreferences 
   return roomRenderPreferencesSchema.parse({
     ...(raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {}),
     wallFinishMode,
+    floorFinishMode,
     keepExistingWalls,
   });
 }

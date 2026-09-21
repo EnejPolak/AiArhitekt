@@ -330,7 +330,7 @@ describe("persisted room preferences + discovery (local, mocked providers)", () 
     expect(serpFn.mock.calls.length).toBeGreaterThan(0);
   });
 
-  it("marks discovery stale after hardwood change without provider calls", async () => {
+  it("keeps furniture discovery current after hardwood change without provider calls", async () => {
     const geocodeFn = vi.fn(async (): Promise<GeocodeResult> => ({
       ok: false,
       code: GEOCODING_ERROR_CODES.DISABLED,
@@ -348,7 +348,7 @@ describe("persisted room preferences + discovery (local, mocked providers)", () 
         locationInput: "Ljubljana",
         preferences: shopping,
       })
-    ).toBe(false);
+    ).toBe(true);
     expect(existing).toBeTruthy();
     expect(geocodeFn).not.toHaveBeenCalled();
     expect(placesFn).not.toHaveBeenCalled();

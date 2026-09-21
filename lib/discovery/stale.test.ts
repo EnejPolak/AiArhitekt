@@ -90,24 +90,24 @@ describe("discovery shopping source identity", () => {
     ).toBe(true);
   });
 
-  it("is stale when flooring changes from marble to wood", () => {
+  it("does not stale furniture discovery when flooring changes from marble to wood", () => {
     const row = discovery();
     expect(
       isCurrentProductDiscovery(row, analysis, {
         locationInput: "Velenje, Slovenia",
         preferences: { ...marblePrefs, flooring: "hardwood" },
       })
-    ).toBe(false);
+    ).toBe(true);
   });
 
-  it("is stale when wall color changes from metallic black to white", () => {
+  it("does not stale furniture discovery when wall color changes from metallic black to white", () => {
     const row = discovery();
     expect(
       isCurrentProductDiscovery(row, analysis, {
         locationInput: "Velenje, Slovenia",
         preferences: { ...marblePrefs, wallMainColor: "white" },
       })
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("does not invalidate for notes or budget-only UI state", () => {

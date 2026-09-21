@@ -30,6 +30,7 @@ export type FinishGrounding = {
 
 type FinishBase<Surface extends string, Requested extends string> = {
   surface: Surface;
+  mode: Requested;
   requestedMode: Requested;
   resolvedMode: Requested | "unresolved";
 };
@@ -78,6 +79,8 @@ export type FloorFinishDecision =
 export type ArchitecturalFinishes = {
   wall_finish: WallFinishDecision;
   floor_finish: FloorFinishDecision;
+  wall: { mode: WallFinishMode };
+  floor: { mode: FloorFinishMode };
 };
 
 export type RequiredExactFinishSlot = {
@@ -150,10 +153,10 @@ export function requestedWallFinishMode(preferences: RoomRenderPreferences): Wal
 export function requestedFloorFinishMode(
   preferences: RoomRenderPreferences
 ): FloorFinishMode {
-  return canonicalRenderPreferences(preferences).flooring === "keep" ? "keep_existing" : "exact_product";
+  return canonicalRenderPreferences(preferences).floorFinishMode;
 }
 
-export { keepExistingWallsFromWallFinishMode, inferWallFinishMode } from "./preferences";
+export { keepExistingWallsFromWallFinishMode, inferWallFinishMode, inferFloorFinishMode } from "./preferences";
 
 export function requestedFinishLabel(
   surface: "wall_finish" | "floor_finish",
@@ -203,6 +206,7 @@ export function resolveWallFinish(input: {
   if (requestedMode === "keep_existing") {
     return {
       surface: "wall_finish",
+      mode: "keep_existing",
       requestedMode: "keep_existing",
       resolvedMode: "keep_existing",
       shoppable: false,
@@ -211,6 +215,7 @@ export function resolveWallFinish(input: {
   if (requestedMode === "concept_color") {
     return {
       surface: "wall_finish",
+      mode: "concept_color",
       requestedMode: "concept_color",
       resolvedMode: "concept_color",
       shoppable: false,
@@ -222,6 +227,7 @@ export function resolveWallFinish(input: {
   if (grounded) {
     return {
       surface: "wall_finish",
+      mode: "exact_product",
       requestedMode: "exact_product",
       resolvedMode: "exact_product",
       shoppable: true,
@@ -230,6 +236,7 @@ export function resolveWallFinish(input: {
   }
   return {
     surface: "wall_finish",
+    mode: "exact_product",
     requestedMode: "exact_product",
     resolvedMode: "unresolved",
     shoppable: true,
@@ -245,6 +252,7 @@ export function resolveFloorFinish(input: {
   if (requestedMode === "keep_existing") {
     return {
       surface: "floor_finish",
+      mode: "keep_existing",
       requestedMode: "keep_existing",
       resolvedMode: "keep_existing",
       shoppable: false,
@@ -254,6 +262,7 @@ export function resolveFloorFinish(input: {
   if (grounded) {
     return {
       surface: "floor_finish",
+      mode: "exact_product",
       requestedMode: "exact_product",
       resolvedMode: "exact_product",
       shoppable: true,
@@ -262,6 +271,7 @@ export function resolveFloorFinish(input: {
   }
   return {
     surface: "floor_finish",
+    mode: "exact_product",
     requestedMode: "exact_product",
     resolvedMode: "unresolved",
     shoppable: true,
@@ -272,9 +282,13 @@ export function resolveArchitecturalFinishes(input: {
   preferences: RoomRenderPreferences;
   references: OrderedRenderReference[];
 }): ArchitecturalFinishes {
+  const wall_finish = resolveWallFinish(input);
+  const floor_finish = resolveFloorFinish(input);
   return {
-    wall_finish: resolveWallFinish(input),
-    floor_finish: resolveFloorFinish(input),
+    wall_finish,
+    floor_finish,
+    wall: { mode: wall_finish.mode },
+    floor: { mode: floor_finish.mode },
   };
 }
 
@@ -327,7 +341,12 @@ export function architecturalFinishesFromSnapshot(value: unknown): Architectural
   const wall = parseWallFinish(finishes.wall_finish);
   const floor = parseFloorFinish(finishes.floor_finish);
   if (!wall || !floor) return null;
-  return { wall_finish: wall, floor_finish: floor };
+  return {
+    wall_finish: wall,
+    floor_finish: floor,
+    wall: { mode: wall.mode },
+    floor: { mode: floor.mode },
+  };
 }
 
 function parseGrounding(record: Record<string, unknown>): FinishGrounding | null {
@@ -357,6 +376,7 @@ function requestedOf(record: Record<string, unknown>, fallback: string): string 
 
 function resolvedOf(record: Record<string, unknown>, fallback: string): string {
   if (typeof record.resolvedMode === "string") return record.resolvedMode;
+  if (typeof record.requestedMode === "string") return fallback;
   if (typeof record.mode === "string") return record.mode;
   return fallback;
 }
@@ -370,6 +390,7 @@ function parseWallFinish(value: unknown): WallFinishDecision | null {
   if (requested === "keep_existing" && resolved === "keep_existing") {
     return {
       surface: "wall_finish",
+      mode: "keep_existing",
       requestedMode: "keep_existing",
       resolvedMode: "keep_existing",
       shoppable: false,
@@ -378,6 +399,7 @@ function parseWallFinish(value: unknown): WallFinishDecision | null {
   if (requested === "concept_color" && resolved === "concept_color") {
     return {
       surface: "wall_finish",
+      mode: "concept_color",
       requestedMode: "concept_color",
       resolvedMode: "concept_color",
       shoppable: false,
@@ -388,6 +410,7 @@ function parseWallFinish(value: unknown): WallFinishDecision | null {
   if (requested === "exact_product" && resolved === "unresolved") {
     return {
       surface: "wall_finish",
+      mode: "exact_product",
       requestedMode: "exact_product",
       resolvedMode: "unresolved",
       shoppable: true,
@@ -398,6 +421,7 @@ function parseWallFinish(value: unknown): WallFinishDecision | null {
     if (!grounded) return null;
     return {
       surface: "wall_finish",
+      mode: "exact_product",
       requestedMode: "exact_product",
       resolvedMode: "exact_product",
       shoppable: true,
@@ -416,6 +440,7 @@ function parseFloorFinish(value: unknown): FloorFinishDecision | null {
   if (requested === "keep_existing" && resolved === "keep_existing") {
     return {
       surface: "floor_finish",
+      mode: "keep_existing",
       requestedMode: "keep_existing",
       resolvedMode: "keep_existing",
       shoppable: false,
@@ -424,6 +449,7 @@ function parseFloorFinish(value: unknown): FloorFinishDecision | null {
   if (requested === "exact_product" && resolved === "unresolved") {
     return {
       surface: "floor_finish",
+      mode: "exact_product",
       requestedMode: "exact_product",
       resolvedMode: "unresolved",
       shoppable: true,
@@ -434,6 +460,7 @@ function parseFloorFinish(value: unknown): FloorFinishDecision | null {
     if (!grounded) return null;
     return {
       surface: "floor_finish",
+      mode: "exact_product",
       requestedMode: "exact_product",
       resolvedMode: "exact_product",
       shoppable: true,

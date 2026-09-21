@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { cn } from "@/lib/utils";
-import type { WallFinishMode } from "@/lib/render/preferences";
+import type { FloorFinishMode, WallFinishMode } from "@/lib/render/preferences";
 import { keepExistingWallsFromWallFinishMode } from "@/lib/render/preferences";
 
 export type RoomDesignPreferences = {
@@ -14,6 +14,7 @@ export type RoomDesignPreferences = {
   notes: string;
   keepExistingWalls: boolean;
   wallFinishMode: WallFinishMode;
+  floorFinishMode: FloorFinishMode;
 };
 
 export interface Step6DesignPreferencesProps {
@@ -206,21 +207,23 @@ export const Step6DesignPreferences: React.FC<Step6DesignPreferencesProps> = ({
         <div className="text-sm font-medium text-white mb-2">Floor</div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
           <ChoiceButton
-            selected={value.flooring === "keep"}
+            selected={value.floorFinishMode === "keep_existing" || value.flooring === "keep"}
             title="Keep existing"
             description="Preserve the photographed floor"
-            onClick={() => set({ flooring: "keep" })}
+            onClick={() => set({ flooring: "keep", floorFinishMode: "keep_existing" })}
           />
           <ChoiceButton
-            selected={value.flooring !== "keep"}
+            selected={value.floorFinishMode === "exact_product" || value.flooring !== "keep"}
             title="Change floor"
             description="Exact product required — never invented"
             onClick={() => {
-              if (value.flooring === "keep") set({ flooring: "hardwood" });
+              if (value.flooring === "keep") {
+                set({ flooring: "hardwood", floorFinishMode: "exact_product" });
+              }
             }}
           />
         </div>
-        {value.flooring !== "keep" ? (
+        {value.flooring !== "keep" || value.floorFinishMode === "exact_product" ? (
           <>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {flooringOptions
@@ -229,7 +232,7 @@ export const Step6DesignPreferences: React.FC<Step6DesignPreferencesProps> = ({
                   <button
                     key={o.id}
                     type="button"
-                    onClick={() => set({ flooring: o.id })}
+                    onClick={() => set({ flooring: o.id, floorFinishMode: "exact_product" })}
                     className={cn(
                       "p-4 rounded-[14px] text-left border transition-all",
                       value.flooring === o.id
@@ -266,7 +269,7 @@ export const Step6DesignPreferences: React.FC<Step6DesignPreferencesProps> = ({
                   <span className="text-[12px] text-[rgba(255,255,255,0.55)]">Change constraints above</span>
                   <button
                     type="button"
-                    onClick={() => set({ flooring: "keep" })}
+                    onClick={() => set({ flooring: "keep", floorFinishMode: "keep_existing" })}
                     className="text-[12px] text-[#3B82F6] hover:underline"
                   >
                     Keep existing
