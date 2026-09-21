@@ -150,6 +150,7 @@ export async function discoverProjectProductsAction(input: {
         persistClient,
         preferences,
         attemptId,
+        fetch: globalThis.fetch,
         projectLocation,
         persistResolvedLocation: async (location) => {
           await upsertProjectRoomPreferences(supabase, parsed.data.projectId, {
@@ -241,6 +242,7 @@ export async function retryUnresolvedRequirementAction(input: {
       {
         ownerUserId: project.user_id,
         persistClient,
+        fetch: globalThis.fetch,
       }
     );
     return {

@@ -129,11 +129,13 @@ export async function runOpenAIProductDiscovery(
         dailyUsed: 0,
         dailyRemaining: 0,
         results: productDiscoveryResults.map((result) =>
-          productDiscoveryResultToCanonicalItem(attachStepCCandidatePool(result))
+          productDiscoveryResultToCanonicalItem(attachStepCCandidatePool(result, input.excludeProductUrls))
         ),
         status: 200,
         stoppedReason: null,
-        productDiscoveryResults: productDiscoveryResults.map(attachStepCCandidatePool),
+        productDiscoveryResults: productDiscoveryResults.map((result) =>
+          attachStepCCandidatePool(result, input.excludeProductUrls)
+        ),
       },
     };
   }
@@ -165,6 +167,8 @@ export async function runOpenAIProductDiscovery(
         allowlistDomains,
         timeoutMs,
         marketContext: input.marketContext,
+        excludeProductUrls: input.excludeProductUrls,
+        referenceFetchBlockedDomains: input.referenceFetchBlockedDomains,
       });
     }
   }
@@ -210,11 +214,13 @@ export async function runOpenAIProductDiscovery(
     dailyUsed: 0,
     dailyRemaining: 0,
     results: productDiscoveryResults.map((result) =>
-      productDiscoveryResultToCanonicalItem(attachStepCCandidatePool(result))
+      productDiscoveryResultToCanonicalItem(attachStepCCandidatePool(result, input.excludeProductUrls))
     ),
     status: 200,
     stoppedReason: stoppedForDeadline ? "deadline" : null,
-    productDiscoveryResults: productDiscoveryResults.map(attachStepCCandidatePool),
+    productDiscoveryResults: productDiscoveryResults.map((result) =>
+      attachStepCCandidatePool(result, input.excludeProductUrls)
+    ),
   };
 
   return { ok: true, response };

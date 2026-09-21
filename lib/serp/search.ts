@@ -113,6 +113,10 @@ export type CanonicalSerpSearchInput = {
   debug?: boolean;
   /** Wall-clock ms timestamp — do not start new provider calls near this deadline. */
   deadlineAt?: number;
+  /** Canonical product URLs already rejected for this requirement. Recovery must not search these. */
+  excludeProductUrls?: string[];
+  /** Merchant domains that repeatedly returned merchant_blocked in this resolution attempt. */
+  referenceFetchBlockedDomains?: string[];
   /** Minimum ms that must remain before starting another provider call. */
   minRemainingBeforeRequestMs?: number;
   /** Per-request timeout passed to fetchSerp. */

@@ -3,10 +3,14 @@ import {
   associateProductImage,
   type ProductReferenceFailureCode,
 } from "@/lib/references/imageEvidence";
-import { fetchValidatedProductImage, type FetchLike } from "@/lib/references/fetchImage";
-import { ReferenceError } from "@/lib/references/errors";
+import type { FetchLike } from "@/lib/references/fetchImage";
 import type { AddressLookup } from "@/lib/references/ssrf";
 import type { CanonicalSelectionFields } from "./mapProduct";
+import { usableProductImageUrl } from "./mapProduct";
+import {
+  downloadCandidateReferenceImage,
+  enrichRankedCandidateFromProductPage,
+} from "./candidatePageEnrichment";
 import {
   unmatchedRequirementSchema,
   isRequiredUnresolvedReason,
@@ -117,33 +121,95 @@ export function evaluateCandidateRenderReady(
   return { ready: true, cachedBytesValid: false };
 }
 
+export function recoveryExcludeProductUrls(rejected: RejectedCandidate[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of rejected) {
+    const key = candidateUrlKey(item.productUrl);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(item.productUrl);
+  }
+  return out;
+}
+
+/** Session-only: merchant pages repeatedly failed reference fetch in this resolution attempt. */
+export const MERCHANT_DOMAIN_STATUS_REFERENCE_FETCH_BLOCKED = "reference_fetch_blocked";
+const REFERENCE_FETCH_BLOCKED_DOMAIN_MIN = 2;
+
+function merchantDomainKey(value: string | null | undefined): string {
+  return (value ?? "").trim().toLowerCase().replace(/^www\./, "");
+}
+
+export function referenceFetchBlockedDomains(rejected: RejectedCandidate[]): string[] {
+  const counts = new Map<string, number>();
+  for (const item of rejected) {
+    if (item.failureCode !== "merchant_blocked") continue;
+    const domain = merchantDomainKey(item.merchant);
+    if (!domain) continue;
+    counts.set(domain, (counts.get(domain) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .filter(([, count]) => count >= REFERENCE_FETCH_BLOCKED_DOMAIN_MIN)
+    .map(([domain]) => domain)
+    .sort();
+}
+
+export function deprioritizeBlockedMerchantCandidates(
+  candidates: RankedProductCandidate[],
+  blockedDomains: string[]
+): RankedProductCandidate[] {
+  if (!blockedDomains.length) return candidates;
+  const blocked = new Set(blockedDomains.map((domain) => merchantDomainKey(domain)));
+  const preferred: RankedProductCandidate[] = [];
+  const rest: RankedProductCandidate[] = [];
+  for (const candidate of candidates) {
+    const domain = merchantDomainKey(candidate.product.retailerDomain);
+    if (blocked.has(domain)) rest.push(candidate);
+    else preferred.push(candidate);
+  }
+  return [...preferred, ...rest];
+}
+
+export function requirementRetrySearchHints(rejected: RejectedCandidate[]): {
+  excludeProductUrls: string[];
+  referenceFetchBlockedDomains: string[];
+} {
+  return {
+    excludeProductUrls: recoveryExcludeProductUrls(rejected),
+    referenceFetchBlockedDomains: referenceFetchBlockedDomains(rejected),
+  };
+}
+
 export async function evaluateCandidateRenderReadyWithFetch(
   candidate: RankedProductCandidate,
   options: { fetch?: FetchLike; lookup?: AddressLookup } = {}
 ): Promise<RenderReadyEvaluation> {
+  if (!candidate.hardValid) {
+    return { ready: false, failureCode: "category_unverified" };
+  }
+  if (!candidate.product.productUrl) {
+    return { ready: false, failureCode: "wrong_product" };
+  }
+
+  // Valid merchant URL + category is enough to attempt one product-page enrichment.
+  // Step C imageUrl is only a claim and must not block that fetch.
+  // Production actions pass fetch: globalThis.fetch. Tests omit fetch to stay offline.
+  if (options.fetch) {
+    const page = await enrichRankedCandidateFromProductPage(candidate, options);
+    const hasImage =
+      usableProductImageUrl(candidate.product.productImageUrl) != null ||
+      ((candidate.product as CanonicalSelectionFields).imageEvidence ?? []).some(
+        (item) => item.exactProductAssociation
+      );
+    if (!hasImage) {
+      return { ready: false, failureCode: page.failureCode ?? "no_image" };
+    }
+  }
+
   const base = evaluateCandidateRenderReady(candidate);
   if (!base.ready) return base;
-  if (!options.fetch) {
-    return { ready: true, cachedBytesValid: true };
-  }
-  const imageUrl = candidate.product.productImageUrl;
-  if (!imageUrl) return { ready: false, failureCode: "no_image" };
-  try {
-    const image = await fetchValidatedProductImage(imageUrl, {
-      fetch: options.fetch,
-      lookup: options.lookup,
-    });
-    if (!image.bytes.length || image.sizeBytes <= 0) {
-      return { ready: false, failureCode: "invalid_image" };
-    }
-    return { ready: true, cachedBytesValid: true };
-  } catch (error) {
-    if (error instanceof ReferenceError) {
-      if (error.code === "invalid_image") return { ready: false, failureCode: "invalid_image" };
-      if (error.code === "unsafe_url") return { ready: false, failureCode: "merchant_blocked" };
-    }
-    return { ready: false, failureCode: "fetch_failed" };
-  }
+  return downloadCandidateReferenceImage(candidate, options);
 }
 
 export async function selectFirstRenderReadyCandidate(input: {

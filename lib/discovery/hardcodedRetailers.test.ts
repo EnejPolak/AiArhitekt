@@ -22,6 +22,9 @@ describe("no hardcoded retailer allowlist", () => {
       "actions.ts",
       "queries.ts",
       "constants.ts",
+      "completeRoom.ts",
+      "candidatePageEnrichment.ts",
+      "noteIntents.ts",
     ];
     const combined = files
       .map((name) => readFileSync(join(discoveryDir, name), "utf8"))
@@ -33,5 +36,6 @@ describe("no hardcoded retailer allowlist", () => {
     }
     expect(combined).not.toMatch(/const\s+stores\s*=\s*\[/);
     expect(combined).not.toMatch(/allowlist\s*=\s*\["ikea/);
+    expect(combined).not.toMatch(/harveynorman|xxxlesnina|querySelectorAll\(/i);
   });
 });

@@ -329,6 +329,31 @@ function intentFromClause(clause: string, suppressions: Set<ProductConcept>): No
   };
 }
 
+function isGlobalRoomInstruction(text: string): boolean {
+  const clause = normalizeClause(text);
+  if (!clause) return false;
+  if (/\bdo not add extra\b|\bdon'?t add extra\b|\bno extra (?:loose )?decor\b|\bloose decor\b/i.test(clause)) {
+    return true;
+  }
+  return /\bliving room\b/i.test(clause) && !/\b(rug|sofa|table|lamp|chair|desk|bed|wardrobe|carpet|preproga)\b/i.test(clause);
+}
+
+function sanitizeListedProductClause(part: string): string {
+  const sentences = normalizeClause(part)
+    .split(/(?<=[.!?])\s+/)
+    .map(normalizeClause)
+    .filter(Boolean);
+  const kept: string[] = [];
+  for (const sentence of sentences) {
+    if (isGlobalRoomInstruction(sentence)) break;
+    kept.push(sentence);
+  }
+  let text = normalizeClause(kept.join(" "));
+  text = text.replace(/\s+(?:modern\s+warm\s+minimalist\s+)?living\s+room\b.*$/i, "");
+  text = text.replace(/\s+do not add extra(?:\s+loose)?(?:\s+decor)?\b.*$/i, "");
+  return normalizeClause(text);
+}
+
 function splitNumberedOrListedItems(notes: string): string[] | null {
   const text = normalizeClause(notes);
   if (!/(?:^|\s)\d+[.)]\s+\S/.test(` ${text}`)) return null;
@@ -406,9 +431,12 @@ export function extractShoppingIntentsFromNotes(notes: string): NoteShoppingInte
   if (listed && listed.length > 0) {
     const remainder: string[] = [];
     for (const part of listed) {
-      if (isExplicitProductRequest(part, true)) {
-        const intent = intentFromClause(part, suppressions);
+      const sanitized = sanitizeListedProductClause(part);
+      if (isExplicitProductRequest(sanitized, true)) {
+        const intent = intentFromClause(sanitized, suppressions);
         if (intent) collected.push(intent);
+      } else if (isExplicitProductRequest(part, true)) {
+        remainder.push(part);
       } else {
         remainder.push(part);
       }

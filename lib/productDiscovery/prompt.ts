@@ -56,6 +56,8 @@ Best-effort example:
 Candidate pool (mandatory):
 - Return 3 to 5 ranked plausible product candidates from the same allowlisted merchant-domain context when that many distinct direct product pages exist.
 - Do NOT return only one winner when other plausible allowlisted product pages were found.
+- If excludeProductUrls is non-empty, never return those canonical product URLs. Search for different distinct product pages.
+- If merchantDomainStatus lists domains with status reference_fetch_blocked, prefer other allowed merchant domains. Do not return only products from those domains when other allowlisted domains exist.
 - "product" is the strongest candidate when status is found. "candidates" is the bounded ranked pool of proposals (up to 5).
 - Each candidate must include: name, retailer, retailerDomain, productUrl, price (or null), imageUrl (or null), sku if present, category, rank, sourceUrls, and requirement fields.
 - These are proposals only. Server-side ProductEvidence remains the authority. Never fabricate URLs, prices, images, or SKUs.
@@ -141,6 +143,8 @@ Best-effort example:
 Candidate pool (mandatory):
 - Return 3 to 5 ranked plausible product candidates from the same allowlisted merchant-domain context when that many distinct direct product pages exist.
 - Do NOT return only one winner when other plausible allowlisted product pages were found.
+- If excludeProductUrls is non-empty, never return those canonical product URLs. Search for different distinct product pages.
+- If merchantDomainStatus lists domains with status reference_fetch_blocked, prefer other allowed merchant domains. Do not return only products from those domains when other allowlisted domains exist.
 - "product" is the strongest candidate when status is found. "candidates" is the bounded ranked pool of proposals (up to 5).
 - Each candidate must include: name, retailer, retailerDomain, productUrl, price (or null), imageUrl (or null), sku if present, category, rank, sourceUrls, and requirement fields.
 - These are proposals only. Server-side ProductEvidence remains the authority. Never fabricate URLs, prices, images, or SKUs.
@@ -166,6 +170,8 @@ export function buildProductDiscoveryUserMessage(input: {
   requirementPolicy?: Record<string, unknown>;
   suggestedSearchQueries?: Array<{ query: string; intent: string; priority: number }>;
   marketContext?: ProductDiscoveryMarketContext | null;
+  excludeProductUrls?: string[];
+  referenceFetchBlockedDomains?: string[];
 }): string {
   const marketContext = normalizeProductDiscoveryMarketContext(
     input.marketContext,
@@ -175,6 +181,11 @@ export function buildProductDiscoveryUserMessage(input: {
     task: "find_ranked_product_candidates",
     requestedItem: input.requestedItem,
     allowedDomains: input.allowedDomains,
+    excludeProductUrls: input.excludeProductUrls ?? [],
+    merchantDomainStatus: (input.referenceFetchBlockedDomains ?? []).map((domain) => ({
+      domain,
+      status: "reference_fetch_blocked",
+    })),
     marketContext: {
       countryCode: marketContext.countryCode,
       formattedLocation: marketContext.formattedLocation,

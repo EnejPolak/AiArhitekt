@@ -75,6 +75,8 @@ export type SearchProductItemOptions = {
   client?: OpenAI;
   /** Caps the OpenAI client timeout. Cannot exceed OPENAI_PRODUCT_SEARCH_TIMEOUT_MS. */
   timeoutMs?: number;
+  excludeProductUrls?: string[];
+  referenceFetchBlockedDomains?: string[];
   marketContext?: {
     countryCode?: string | null;
     formattedLocation?: string | null;
@@ -360,14 +362,16 @@ async function finalizeWithSerpFallbackIfNeeded(
     allowlistDomains: string[];
     primarySources: ProductDiscoverySource[];
     proposedCandidates?: ProductDiscoveryProduct[];
+    excludeProductUrls?: string[];
     marketContext?: {
       countryCode?: string | null;
       formattedLocation?: string | null;
       merchantDomains?: string[];
     } | null;
+    referenceFetchBlockedDomains?: string[];
   }
 ): Promise<ProductDiscoveryResult> {
-  result = withModelCandidatePool(result, ctx.proposedCandidates);
+  result = withModelCandidatePool(result, ctx.proposedCandidates, ctx.excludeProductUrls);
   if (!isProductDiscoverySerpFallbackEnabled()) {
     return attachTrackedUsage(
       {
@@ -432,11 +436,13 @@ async function finalizeWithTargetedResearchIfNeeded(
     primarySources: ProductDiscoverySource[];
     proposedCandidates?: ProductDiscoveryProduct[];
     priceVerificationAttempted?: boolean;
+    excludeProductUrls?: string[];
     marketContext?: {
       countryCode?: string | null;
       formattedLocation?: string | null;
       merchantDomains?: string[];
     } | null;
+    referenceFetchBlockedDomains?: string[];
   }
 ): Promise<ProductDiscoveryResult> {
   if (result.status !== "not_found") {
@@ -457,6 +463,8 @@ async function finalizeWithTargetedResearchIfNeeded(
     priorDiagnostics: result.diagnostics,
     priorRejectedProduct: result.diagnostics?.rejectedProduct ?? null,
     marketContext: ctx.marketContext,
+    excludeProductUrls: ctx.excludeProductUrls,
+    referenceFetchBlockedDomains: ctx.referenceFetchBlockedDomains,
   });
 
     if (targeted.result?.status === "found") {
@@ -880,6 +888,8 @@ export async function searchProductItem(
                   allowlistDomains
                 ),
                 marketContext,
+                excludeProductUrls: options.excludeProductUrls,
+                referenceFetchBlockedDomains: options.referenceFetchBlockedDomains,
               }),
             },
           ],
@@ -915,6 +925,7 @@ export async function searchProductItem(
         parsed,
         requestedItem,
         allowlistDomains,
+        excludeProductUrls: options.excludeProductUrls,
       });
     }
 
@@ -943,7 +954,7 @@ export async function searchProductItem(
             ...primarySearchDiagFields,
           },
         },
-        { client, requestedItem, allowlistDomains, primarySources: sources, marketContext, proposedCandidates }
+        { client, requestedItem, allowlistDomains, primarySources: sources, marketContext, proposedCandidates, excludeProductUrls: options.excludeProductUrls, referenceFetchBlockedDomains: options.referenceFetchBlockedDomains }
       );
     }
 
@@ -963,7 +974,7 @@ export async function searchProductItem(
             ...primarySearchDiagFields,
           },
         },
-        { client, requestedItem, allowlistDomains, primarySources: sources, marketContext, proposedCandidates }
+        { client, requestedItem, allowlistDomains, primarySources: sources, marketContext, proposedCandidates, excludeProductUrls: options.excludeProductUrls, referenceFetchBlockedDomains: options.referenceFetchBlockedDomains }
       );
     }
 
@@ -1038,7 +1049,7 @@ export async function searchProductItem(
               ...evidenceDiagnosticsForProduct(finalized.product, sources),
             }),
           },
-          { client, requestedItem, allowlistDomains, primarySources: sources, marketContext, proposedCandidates }
+          { client, requestedItem, allowlistDomains, primarySources: sources, marketContext, proposedCandidates, excludeProductUrls: options.excludeProductUrls, referenceFetchBlockedDomains: options.referenceFetchBlockedDomains }
         );
       }
 
@@ -1119,7 +1130,7 @@ export async function searchProductItem(
                 ...primarySearchDiagFields,
               },
             },
-            { client, requestedItem, allowlistDomains, primarySources: sources, marketContext, proposedCandidates }
+            { client, requestedItem, allowlistDomains, primarySources: sources, marketContext, proposedCandidates, excludeProductUrls: options.excludeProductUrls, referenceFetchBlockedDomains: options.referenceFetchBlockedDomains }
           );
         }
 
@@ -1138,7 +1149,7 @@ export async function searchProductItem(
             priceVerificationDiagnostics,
             primarySearchDiagFields,
           }),
-          { client, requestedItem, allowlistDomains, primarySources: sources, priceVerificationAttempted, marketContext, proposedCandidates }
+          { client, requestedItem, allowlistDomains, primarySources: sources, priceVerificationAttempted, marketContext, proposedCandidates, excludeProductUrls: options.excludeProductUrls, referenceFetchBlockedDomains: options.referenceFetchBlockedDomains }
         );
       }
 
@@ -1166,7 +1177,7 @@ export async function searchProductItem(
             ...primarySearchDiagFields,
           },
         },
-        { client, requestedItem, allowlistDomains, primarySources: sources, priceVerificationAttempted, marketContext, proposedCandidates }
+        { client, requestedItem, allowlistDomains, primarySources: sources, priceVerificationAttempted, marketContext, proposedCandidates, excludeProductUrls: options.excludeProductUrls, referenceFetchBlockedDomains: options.referenceFetchBlockedDomains }
       );
     }
 
@@ -1196,7 +1207,7 @@ export async function searchProductItem(
             ...primarySearchDiagFields,
           },
         },
-        { client, requestedItem, allowlistDomains, primarySources: sources, marketContext, proposedCandidates }
+        { client, requestedItem, allowlistDomains, primarySources: sources, marketContext, proposedCandidates, excludeProductUrls: options.excludeProductUrls, referenceFetchBlockedDomains: options.referenceFetchBlockedDomains }
       );
     }
 

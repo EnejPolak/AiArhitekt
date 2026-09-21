@@ -199,68 +199,71 @@ export function isUsableProductImageUrl(url: string | null | undefined): url is 
 
 export function parseProductPageEnrichment(html: string, baseUrl: string): ProductPageEnrichment {
   const jsonLd = parseJsonLdProduct(html);
+  const ogImage = parseMetaContent(html, "og:image");
+  const twitterImage = parseMetaContent(html, "twitter:image");
+  const jsonLdImage = resolveAbsoluteHttpsUrl(jsonLd.image, baseUrl);
+  const fallbackImage = resolveAbsoluteHttpsUrl(ogImage ?? twitterImage, baseUrl);
+  const resolvedJsonLdImage = isUsableProductImageUrl(jsonLdImage) ? jsonLdImage : null;
+  const resolvedFallbackImage = isUsableProductImageUrl(fallbackImage) ? fallbackImage : null;
+  const resolvedImage = resolvedJsonLdImage ?? resolvedFallbackImage;
+  const resolvedImageSource: EnrichmentImageSource = resolvedJsonLdImage
+    ? "jsonld"
+    : ogImage && resolvedFallbackImage
+      ? "og"
+      : twitterImage && resolvedFallbackImage
+        ? "twitter"
+        : null;
+
   if (jsonLd.price != null || jsonLd.image) {
     return {
       price: jsonLd.price,
       currency: jsonLd.price != null ? "EUR" : null,
-      image: resolveAbsoluteHttpsUrl(jsonLd.image, baseUrl),
+      image: resolvedImage,
       priceSource: jsonLd.price != null ? "jsonld" : null,
-      imageSource: jsonLd.image ? "jsonld" : null,
+      imageSource: resolvedImageSource,
     };
   }
 
   const metaPrice = parseMetaProductPrice(html);
   if (metaPrice != null) {
-    const ogImage = parseMetaContent(html, "og:image");
-    const twitterImage = parseMetaContent(html, "twitter:image");
-    const image = resolveAbsoluteHttpsUrl(ogImage ?? twitterImage, baseUrl);
     return {
       price: metaPrice,
       currency: "EUR",
-      image: isUsableProductImageUrl(image) ? image : null,
+      image: resolvedImage,
       priceSource: "meta",
-      imageSource: ogImage ? "og" : twitterImage ? "twitter" : null,
+      imageSource: resolvedImageSource,
     };
   }
 
   const itempropPrice = parseItempropPrice(html);
   if (itempropPrice != null) {
-    const ogImage = parseMetaContent(html, "og:image");
-    const twitterImage = parseMetaContent(html, "twitter:image");
-    const image = resolveAbsoluteHttpsUrl(ogImage ?? twitterImage, baseUrl);
     return {
       price: itempropPrice,
       currency: "EUR",
-      image: isUsableProductImageUrl(image) ? image : null,
+      image: resolvedImage,
       priceSource: "itemprop",
-      imageSource: ogImage ? "og" : twitterImage ? "twitter" : null,
+      imageSource: resolvedImageSource,
     };
   }
 
   const dataPrice = parseDataPrice(html);
   if (dataPrice != null) {
-    const ogImage = parseMetaContent(html, "og:image");
-    const twitterImage = parseMetaContent(html, "twitter:image");
-    const image = resolveAbsoluteHttpsUrl(ogImage ?? twitterImage, baseUrl);
     return {
       price: dataPrice,
       currency: "EUR",
-      image: isUsableProductImageUrl(image) ? image : null,
+      image: resolvedImage,
       priceSource: "html",
-      imageSource: ogImage ? "og" : twitterImage ? "twitter" : null,
+      imageSource: resolvedImageSource,
     };
   }
 
   const visible = parseVisibleEurPrice(html);
-  const ogImage = parseMetaContent(html, "og:image");
-  const twitterImage = parseMetaContent(html, "twitter:image");
-  const image = resolveAbsoluteHttpsUrl(ogImage ?? twitterImage, baseUrl);
   return {
     price: visible?.value ?? null,
     currency: visible ? "EUR" : null,
-    image: isUsableProductImageUrl(image) ? image : null,
+    image: resolvedImage,
     priceSource: visible ? "html" : null,
-    imageSource: ogImage ? "og" : twitterImage ? "twitter" : null,
+    imageSource: resolvedImageSource,
   };
 }
 

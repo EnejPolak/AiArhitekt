@@ -4,11 +4,14 @@ import type { RankedProductCandidate } from "./style/types";
 import {
   MAX_RECOVERY_SEARCHES_PER_REQUIREMENT,
   completeRoomGate,
+  deprioritizeBlockedMerchantCandidates,
   evaluateCandidateRenderReady,
   markSlotUserRemoved,
   mergeRankedCandidatePool,
+  referenceFetchBlockedDomains,
   renderInventoryExcludesRejected,
   rememberRejectedCandidate,
+  requirementRetrySearchHints,
   resolveCompleteRoomSelections,
   resolveRequirementSlot,
   selectFirstRenderReadyCandidate,
@@ -517,5 +520,41 @@ describe("zero-candidate + true multi-candidate hardening", () => {
     expect(counters.places).toBe(0);
     expect(counters.fullProject).toBe(0);
     expect(counters.recover).toBe(1);
+  });
+
+  it("session merchant_blocked failures mark the domain reference_fetch_blocked and deprioritize it", () => {
+    const blockedUrlA = "https://www.blocked-shop.si/p/table-a";
+    const blockedUrlB = "https://www.blocked-shop.si/p/table-b";
+    const openUrl = "https://www.localhome.si/p/table-c";
+    const rejected = [
+      { productUrl: blockedUrlA, merchant: "blocked-shop.si", failureCode: "merchant_blocked" },
+      { productUrl: blockedUrlB, merchant: "blocked-shop.si", failureCode: "merchant_blocked" },
+      { productUrl: openUrl, merchant: "localhome.si", failureCode: "no_image" },
+    ];
+    expect(referenceFetchBlockedDomains(rejected)).toEqual(["blocked-shop.si"]);
+    const hints = requirementRetrySearchHints(rejected);
+    expect(hints.excludeProductUrls).toEqual([blockedUrlA, blockedUrlB, openUrl]);
+    expect(hints.referenceFetchBlockedDomains).toEqual(["blocked-shop.si"]);
+
+    const ordered = deprioritizeBlockedMerchantCandidates(
+      [
+        ranked(blockedUrlA, "Blocked A", 90, { retailerDomain: "blocked-shop.si" }),
+        ranked(openUrl, "Open C", 70, { retailerDomain: "localhome.si" }),
+      ],
+      hints.referenceFetchBlockedDomains
+    );
+    expect(ordered.map((item) => item.product.productUrl)).toEqual([openUrl, blockedUrlA]);
+  });
+
+  it("a single merchant_blocked failure does not session-block the domain", () => {
+    expect(
+      referenceFetchBlockedDomains([
+        {
+          productUrl: "https://www.blocked-shop.si/p/one",
+          merchant: "blocked-shop.si",
+          failureCode: "merchant_blocked",
+        },
+      ])
+    ).toEqual([]);
   });
 });

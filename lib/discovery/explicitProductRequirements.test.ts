@@ -63,6 +63,31 @@ describe("explicit product requests from notes", () => {
     expect(blobOf(rug!).toLowerCase()).toMatch(/neutral/);
   });
 
+  it("H. global room notes are not concatenated into a numbered rug item spec", () => {
+    const notes = [
+      "Keep my current chair. Keep my current desk. Keep my current bed. Keep my current wardrobe.",
+      "Need only these three products:",
+      "1. sofa",
+      "2. coffee table",
+      "3. rug Modern warm minimalist living room. Do not add extra loose decor.",
+    ].join(" ");
+    const { searched } = resolveShoppingRequirements({
+      analysisRequirements: emptyAnalysis,
+      preferences: { notes, flooring: "keep", selectedStyles: ["modern", "minimal"] },
+    });
+    const rug = searched.find((item) => /rug/i.test(blobOf(item)));
+    expect(rug).toBeTruthy();
+    expect(rug!.itemSpec.toLowerCase()).toBe("rug");
+    expect(rug!.itemSpec).not.toMatch(/living room/i);
+    expect(rug!.itemSpec).not.toMatch(/do not add extra/i);
+    expect(rug!.itemSpec).not.toMatch(/loose decor/i);
+    expect(searched.map((item) => item.itemSpec.toLowerCase()).sort()).toEqual([
+      "coffee table",
+      "rug",
+      "sofa",
+    ]);
+  });
+
   it("does not localize a user floor lamp into a ceiling lamp", () => {
     const { searched } = resolveShoppingRequirements({
       analysisRequirements: emptyAnalysis,

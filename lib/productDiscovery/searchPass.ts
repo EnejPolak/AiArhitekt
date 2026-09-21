@@ -231,6 +231,7 @@ export async function processPassCandidates(input: {
   sources: ProductDiscoverySource[];
   parsed: ProductDiscoveryModelOutput | null;
   acceptanceSource: "primary" | "targeted";
+  excludeProductUrls?: string[];
 }): Promise<PassProcessResult> {
   const base: PassProcessResult = {
     status: "not_found",
@@ -240,6 +241,7 @@ export async function processPassCandidates(input: {
       parsed: input.parsed,
       requestedItem: input.requestedItem,
       allowlistDomains: input.allowlistDomains,
+      excludeProductUrls: input.excludeProductUrls,
     }),
     rescueAttempted: false,
     rescueSelected: false,
@@ -357,6 +359,8 @@ export async function attemptTargetedResearch(input: {
     formattedLocation?: string | null;
     merchantDomains?: string[];
   } | null;
+  excludeProductUrls?: string[];
+  referenceFetchBlockedDomains?: string[];
 }): Promise<TargetedResearchResult> {
   const started = Date.now();
   const priorFailure = {
@@ -394,6 +398,8 @@ export async function attemptTargetedResearch(input: {
                   input.allowlistDomains
                 ),
                 priorFailure,
+                excludeProductUrls: input.excludeProductUrls,
+                referenceFetchBlockedDomains: input.referenceFetchBlockedDomains,
               }),
             },
           ],
@@ -437,6 +443,7 @@ export async function attemptTargetedResearch(input: {
       sources: targetedSources,
       parsed: response.output_parsed ?? null,
       acceptanceSource: "targeted",
+      excludeProductUrls: input.excludeProductUrls,
     });
 
     const passAcceptanceDiagnostics = pass.acceptance

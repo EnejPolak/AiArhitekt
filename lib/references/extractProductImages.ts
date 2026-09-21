@@ -1,6 +1,7 @@
 import {
   MAX_PRODUCT_PAGE_HTML_BYTES,
   MAX_PRODUCT_REFERENCE_CANDIDATES,
+  MAX_REFERENCE_FETCH_REDIRECTS,
   PRODUCT_PAGE_FETCH_TIMEOUT_MS,
 } from "./constants";
 import type { FetchLike } from "./fetchImage";
@@ -201,6 +202,89 @@ export function selectPrimaryProductImage(
   return candidates[0] ?? null;
 }
 
+export type ProductPageHtmlFailure = "merchant_blocked" | "fetch_failed";
+
+export type ProductPageHtmlResult =
+  | { ok: true; html: string; finalUrl: string }
+  | { ok: false; reason: ProductPageHtmlFailure; status?: number };
+
+function blockedStatus(status: number | undefined): boolean {
+  return status === 401 || status === 403 || status === 407 || status === 429 || status === 451;
+}
+
+export async function fetchProductPageHtmlResult(
+  pageUrl: string,
+  options: {
+    fetch?: FetchLike;
+    lookup?: AddressLookup;
+    timeoutMs?: number;
+    maxBytes?: number;
+  } = {}
+): Promise<ProductPageHtmlResult> {
+  const fetchFn = options.fetch ?? fetch;
+  const timeoutMs = options.timeoutMs ?? PRODUCT_PAGE_FETCH_TIMEOUT_MS;
+  const maxBytes = options.maxBytes ?? MAX_PRODUCT_PAGE_HTML_BYTES;
+
+  let current = pageUrl;
+  try {
+    for (let hop = 0; hop <= MAX_REFERENCE_FETCH_REDIRECTS; hop += 1) {
+      let safe: URL;
+      try {
+        safe = await assertPublicHttpUrl(current, options.lookup);
+      } catch {
+        return { ok: false, reason: "merchant_blocked" };
+      }
+
+      const response = await fetchFn(safe.toString(), {
+        method: "GET",
+        redirect: "manual",
+        signal: AbortSignal.timeout(timeoutMs),
+        headers: {
+          Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+          "User-Agent": "Mozilla/5.0 (compatible; AiArhitektProductReference/1.0)",
+        },
+      });
+
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get("location");
+        if (!location) return { ok: false, reason: "fetch_failed", status: response.status };
+        current = new URL(location, safe).toString();
+        continue;
+      }
+
+      if (blockedStatus(response.status)) {
+        return { ok: false, reason: "merchant_blocked", status: response.status };
+      }
+      if (!response.ok) {
+        return { ok: false, reason: "fetch_failed", status: response.status };
+      }
+
+      const contentType = (response.headers.get("content-type") ?? "").toLowerCase();
+      if (
+        contentType &&
+        !contentType.includes("html") &&
+        !contentType.includes("xml") &&
+        !contentType.includes("text/plain")
+      ) {
+        return { ok: false, reason: "fetch_failed", status: response.status };
+      }
+      const declared = Number(response.headers.get("content-length"));
+      if (Number.isFinite(declared) && declared > maxBytes) {
+        return { ok: false, reason: "fetch_failed", status: response.status };
+      }
+      const text = await response.text();
+      if (!text || text.length > maxBytes) {
+        return { ok: false, reason: "fetch_failed", status: response.status };
+      }
+      return { ok: true, html: text, finalUrl: safe.toString() };
+    }
+    return { ok: false, reason: "fetch_failed" };
+  } catch (error) {
+    if (error instanceof ReferenceError) throw error;
+    return { ok: false, reason: "fetch_failed" };
+  }
+}
+
 export async function fetchProductPageHtml(
   pageUrl: string,
   options: {
@@ -210,40 +294,8 @@ export async function fetchProductPageHtml(
     maxBytes?: number;
   } = {}
 ): Promise<string | null> {
-  const fetchFn = options.fetch ?? fetch;
-  const timeoutMs = options.timeoutMs ?? PRODUCT_PAGE_FETCH_TIMEOUT_MS;
-  const maxBytes = options.maxBytes ?? MAX_PRODUCT_PAGE_HTML_BYTES;
-  let safe: URL;
-  try {
-    safe = await assertPublicHttpUrl(pageUrl, options.lookup);
-  } catch {
-    return null;
-  }
-
-  try {
-    const response = await fetchFn(safe.toString(), {
-      method: "GET",
-      redirect: "manual",
-      signal: AbortSignal.timeout(timeoutMs),
-      headers: {
-        Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
-        "User-Agent": "Mozilla/5.0 (compatible; AiArhitektProductReference/1.0)",
-      },
-    });
-    if (!response.ok) return null;
-    const contentType = (response.headers.get("content-type") ?? "").toLowerCase();
-    if (contentType && !contentType.includes("html") && !contentType.includes("xml") && !contentType.includes("text/plain")) {
-      return null;
-    }
-    const declared = Number(response.headers.get("content-length"));
-    if (Number.isFinite(declared) && declared > maxBytes) return null;
-    const text = await response.text();
-    if (!text || text.length > maxBytes) return null;
-    return text;
-  } catch (error) {
-    if (error instanceof ReferenceError) throw error;
-    return null;
-  }
+  const result = await fetchProductPageHtmlResult(pageUrl, options);
+  return result.ok ? result.html : null;
 }
 
 export function assertCandidateImageUrlOrThrow(url: string): string {

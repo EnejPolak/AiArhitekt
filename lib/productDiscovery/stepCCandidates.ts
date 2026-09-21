@@ -118,10 +118,22 @@ export function buildStepCCandidateProducts(result: ProductDiscoveryResult): Pro
   return out;
 }
 
-export function attachStepCCandidatePool(result: ProductDiscoveryResult): ProductDiscoveryResult {
-  const candidates = buildStepCCandidateProducts(result);
-  if (candidates.length === 0) return result;
-  return { ...result, candidates };
+export function attachStepCCandidatePool(
+  result: ProductDiscoveryResult,
+  excludeProductUrls?: string[]
+): ProductDiscoveryResult {
+  const candidates = filterExcludedProducts(buildStepCCandidateProducts(result), excludeProductUrls);
+  if (candidates.length === 0) {
+    if (result.product && isExcludedProductUrl(result.product.productUrl, excludeProductUrls)) {
+      return { ...result, product: null, candidates: [] };
+    }
+    return result;
+  }
+  const product =
+    result.product && isExcludedProductUrl(result.product.productUrl, excludeProductUrls)
+      ? candidates[0] ?? null
+      : result.product;
+  return { ...result, product, candidates };
 }
 
 function specificationsToRecord(
@@ -162,10 +174,26 @@ function modelProductToProposal(
   };
 }
 
+export function isExcludedProductUrl(url: string, excluded: string[] | undefined): boolean {
+  if (!excluded?.length) return false;
+  const key = canonicalUrlKey(url);
+  if (!key) return false;
+  return excluded.some((item) => canonicalUrlKey(item) === key);
+}
+
+export function filterExcludedProducts<T extends { productUrl: string }>(
+  products: T[],
+  excluded: string[] | undefined
+): T[] {
+  if (!excluded?.length) return products;
+  return products.filter((product) => !isExcludedProductUrl(product.productUrl, excluded));
+}
+
 export function extractModelProposedCandidates(input: {
   parsed: ProductDiscoveryModelOutput | null | undefined;
   requestedItem: string;
   allowlistDomains: string[];
+  excludeProductUrls?: string[];
 }): ProductDiscoveryProduct[] {
   if (!input.parsed) return [];
   const raw = [input.parsed.product, ...(input.parsed.candidates ?? [])].filter(
@@ -175,6 +203,7 @@ export function extractModelProposedCandidates(input: {
   const seen = new Set<string>();
   for (const product of raw) {
     if (out.length >= STEP_C_MAX_CANDIDATES) break;
+    if (isExcludedProductUrl(product.productUrl, input.excludeProductUrls)) continue;
     const domain = normalizeDomainToRoot(product.retailerDomain || product.productUrl);
     if (!domain || !input.allowlistDomains.includes(domain)) continue;
     const key = canonicalUrlKey(product.productUrl);
@@ -187,11 +216,15 @@ export function extractModelProposedCandidates(input: {
 
 export function withModelCandidatePool(
   result: ProductDiscoveryResult,
-  proposed: ProductDiscoveryProduct[] | undefined
+  proposed: ProductDiscoveryProduct[] | undefined,
+  excludeProductUrls?: string[]
 ): ProductDiscoveryResult {
-  if (!proposed?.length) return attachStepCCandidatePool(result);
-  return attachStepCCandidatePool({
-    ...result,
-    candidates: [...proposed, ...(result.candidates ?? [])],
-  });
+  if (!proposed?.length) return attachStepCCandidatePool(result, excludeProductUrls);
+  return attachStepCCandidatePool(
+    {
+      ...result,
+      candidates: [...proposed, ...(result.candidates ?? [])],
+    },
+    excludeProductUrls
+  );
 }

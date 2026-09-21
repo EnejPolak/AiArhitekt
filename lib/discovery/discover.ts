@@ -44,10 +44,14 @@ import { ensureProductReferenceAssets } from "@/lib/references/ensure";
 import type { FetchLike } from "@/lib/references/fetchImage";
 import type { AddressLookup } from "@/lib/references/ssrf";
 import {
+  deprioritizeBlockedMerchantCandidates,
   evaluateCandidateRenderReadyWithFetch,
   isRejectedCandidateUrl,
   isRequiredUnresolvedReason,
   markSlotUserRemoved,
+  recoveryExcludeProductUrls,
+  referenceFetchBlockedDomains,
+  requirementRetrySearchHints,
   resolveCompleteRoomSelections,
   resolveRequirementSlot,
   selectionFromRenderReadyCandidate,
@@ -494,6 +498,8 @@ export async function discoverProjectProducts(
             allowlistDomains,
             deadlineAt,
             minRemainingBeforeRequestMs: DISCOVERY_OPENAI_MIN_REMAINING_MS,
+            excludeProductUrls: recoveryExcludeProductUrls(rejected),
+            referenceFetchBlockedDomains: referenceFetchBlockedDomains(rejected),
             marketContext: {
               countryCode: geo.countryCode,
               formattedLocation: geo.formattedAddress ?? locationInput,
@@ -511,7 +517,8 @@ export async function discoverProjectProducts(
         maxLevel: 1,
         stores: places.stores,
       });
-      return ranking.ranked
+      const blockedDomains = referenceFetchBlockedDomains(rejected);
+      const ranked = ranking.ranked
         .filter((candidate) => !isRejectedCandidateUrl(rejected, candidate.product.productUrl))
         .sort((left, right) => {
           const imageDelta =
@@ -519,6 +526,7 @@ export async function discoverProjectProducts(
           if (imageDelta !== 0) return imageDelta;
           return right.finalScore - left.finalScore;
         });
+      return deprioritizeBlockedMerchantCandidates(ranked, blockedDomains);
     },
   });
 
@@ -693,34 +701,56 @@ export async function retryUnresolvedRequirement(
 
   const requirement = searchableFromUnmatched(unmatchedItem);
   const productSearch = options.searchProducts ?? runOpenAIProductDiscovery;
-  const outcome = await productSearch({
-    items: [requirement.itemSpec],
-    allowlistDomains: loaded.discovery.allowlistDomains,
-  });
-  const row = outcome.ok
-    ? outcome.response.results.find((item) => item.item === requirement.itemSpec) ??
-      outcome.response.results[0]
-    : undefined;
-  const ranking = row
-    ? rankRequirementCandidates({
-        requirement,
-        serpResult: row,
-        query: requirement.itemSpec,
-        queryLevel: 0,
-        maxLevel: 1,
-        stores: [],
-      })
-    : { ranked: [], winner: null };
+  const allowlistDomains = loaded.discovery.allowlistDomains;
+  const rejected = unmatchedItem.rejectedCandidates ?? [];
+  const marketContext = {
+    formattedLocation: loaded.discovery.locationInput,
+    merchantDomains: allowlistDomains,
+  };
 
+  const searchRanked = async (nextRejected: typeof rejected) => {
+    const nextHints = requirementRetrySearchHints(nextRejected);
+    const query = requirement.itemSpec;
+    const outcome = await productSearch({
+      items: [query],
+      allowlistDomains,
+      excludeProductUrls: nextHints.excludeProductUrls,
+      referenceFetchBlockedDomains: nextHints.referenceFetchBlockedDomains,
+      marketContext,
+    });
+    const row = outcome.ok
+      ? outcome.response.results.find((item) => item.item === query) ??
+        outcome.response.results[0]
+      : undefined;
+    if (!row) return [];
+    const ranking = rankRequirementCandidates({
+      requirement,
+      serpResult: row,
+      query,
+      queryLevel: 0,
+      maxLevel: 1,
+      stores: [],
+    });
+    return deprioritizeBlockedMerchantCandidates(
+      ranking.ranked.filter(
+        (candidate) => !isRejectedCandidateUrl(nextRejected, candidate.product.productUrl)
+      ),
+      nextHints.referenceFetchBlockedDomains
+    );
+  };
+
+  const rankingCandidates = await searchRanked(rejected);
   const slot = await resolveRequirementSlot({
     requirement,
-    candidates: ranking.ranked,
-    rejected: unmatchedItem.rejectedCandidates ?? [],
+    candidates: rankingCandidates,
+    rejected,
+    recoverySearchesUsed: 0,
     evaluate: (candidate) =>
       evaluateCandidateRenderReadyWithFetch(candidate, {
         fetch: options.fetch,
         lookup: options.lookup,
       }),
+    recover: async ({ rejected: nextRejected }) => searchRanked(nextRejected),
   });
 
   if (slot.status === "ready" && slot.selected) {
@@ -759,7 +789,7 @@ export async function retryUnresolvedRequirement(
       ? {
           ...item,
           rejectedCandidates: slot.rejected,
-          recoverySearchesUsed: unmatchedItem.recoverySearchesUsed ?? 1,
+          recoverySearchesUsed: slot.recoverySearchesUsed,
         }
       : item
   );
