@@ -8,11 +8,21 @@ import { wizardPanelClass } from "../wizardUi";
 export interface Step9cShoppingListProps {
   shoppingState: ProjectProductShoppingState;
   onContinue: () => void;
+  onRetryRequirement?: (requirementKey: string) => void;
+  onChangeConstraints?: (requirementKey: string) => void;
+  onIncreaseBudget?: (requirementKey: string) => void;
+  onRemoveRequirement?: (requirementKey: string) => void;
+  retryBusyKey?: string | null;
 }
 
 export const Step9cShoppingList: React.FC<Step9cShoppingListProps> = ({
   shoppingState,
   onContinue,
+  onRetryRequirement,
+  onChangeConstraints,
+  onIncreaseBudget,
+  onRemoveRequirement,
+  retryBusyKey,
 }) => {
   return (
     <div className="flex justify-start mb-6">
@@ -20,7 +30,14 @@ export const Step9cShoppingList: React.FC<Step9cShoppingListProps> = ({
         <div className="text-[15px] text-[rgba(255,255,255,0.85)] leading-relaxed">
           Shopping list from your saved product search.
         </div>
-        <ProductShoppingSections state={shoppingState} />
+        <ProductShoppingSections
+          state={shoppingState}
+          onRetryRequirement={onRetryRequirement}
+          onChangeConstraints={onChangeConstraints}
+          onIncreaseBudget={onIncreaseBudget}
+          onRemoveRequirement={onRemoveRequirement}
+          retryBusyKey={retryBusyKey}
+        />
         <button
           type="button"
           onClick={onContinue}

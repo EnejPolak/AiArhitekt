@@ -30,6 +30,7 @@ export const roomRenderPreferencesSchema = z.object({
   flooring: renderFlooringPreferenceSchema.default("keep"),
   underfloorHeating: z.boolean().default(false),
   bedType: renderBedTypeSchema.default("none"),
+  keepExistingWalls: z.boolean().default(false),
   notes: trimmedNote.default(""),
 });
 

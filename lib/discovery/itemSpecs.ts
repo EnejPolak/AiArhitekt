@@ -293,12 +293,26 @@ export function explicitWallPaintNeeds(
   return needs;
 }
 
+const rejectedCandidateMemorySchema = z.object({
+  productUrl: z.string().min(1).max(2048),
+  merchant: z.string().min(1).max(253),
+  failureCode: z.string().min(1).max(80),
+});
+
 export const unmatchedRequirementSchema = z.object({
   requirementKey: z.string().min(1).max(160),
   requirementType: z.enum(["furniture", "material"]),
   itemSpec: z.string().min(1).max(120),
   displayLabel: z.string().min(1).max(120).optional(),
-  reason: z.enum(["not_searched", "no_valid_product", "search_interrupted"]),
+  reason: z.enum(["not_searched", "no_valid_product", "search_interrupted", "user_removed"]),
+  rejectedCandidates: z.array(rejectedCandidateMemorySchema).max(24).optional(),
+  recoverySearchesUsed: z.number().int().min(0).max(1).optional(),
 });
 
 export type UnmatchedRequirement = z.infer<typeof unmatchedRequirementSchema>;
+
+export function isRequiredUnresolvedReason(
+  reason: UnmatchedRequirement["reason"]
+): boolean {
+  return reason === "no_valid_product" || reason === "search_interrupted";
+}

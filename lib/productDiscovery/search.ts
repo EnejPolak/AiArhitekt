@@ -5,6 +5,7 @@ import type {
 } from "@/lib/serp/search";
 import { OPENAI_PRODUCT_SEARCH_CONCURRENCY, OPENAI_PRODUCT_SEARCH_TIMEOUT_MS } from "./constants";
 import { productDiscoveryResultToCanonicalItem } from "./adapter";
+import { attachStepCCandidatePool } from "./stepCCandidates";
 import { normalizeProductDiscoveryAllowlist } from "./domains";
 import { searchProductItem } from "./searchItem";
 import type { ProductDiscoveryResult } from "./types";
@@ -127,10 +128,12 @@ export async function runOpenAIProductDiscovery(
         queryFailures: [],
         dailyUsed: 0,
         dailyRemaining: 0,
-        results: productDiscoveryResults.map(productDiscoveryResultToCanonicalItem),
+        results: productDiscoveryResults.map((result) =>
+          productDiscoveryResultToCanonicalItem(attachStepCCandidatePool(result))
+        ),
         status: 200,
         stoppedReason: null,
-        productDiscoveryResults,
+        productDiscoveryResults: productDiscoveryResults.map(attachStepCCandidatePool),
       },
     };
   }
@@ -206,10 +209,12 @@ export async function runOpenAIProductDiscovery(
     queryFailures: [],
     dailyUsed: 0,
     dailyRemaining: 0,
-    results: productDiscoveryResults.map(productDiscoveryResultToCanonicalItem),
+    results: productDiscoveryResults.map((result) =>
+      productDiscoveryResultToCanonicalItem(attachStepCCandidatePool(result))
+    ),
     status: 200,
     stoppedReason: stoppedForDeadline ? "deadline" : null,
-    productDiscoveryResults,
+    productDiscoveryResults: productDiscoveryResults.map(attachStepCCandidatePool),
   };
 
   return { ok: true, response };

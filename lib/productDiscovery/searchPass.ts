@@ -26,6 +26,7 @@ import {
 import { attemptSourceBackedRescue } from "./rescue";
 import { productDiscoveryModelSchema, type ProductDiscoveryModelOutput } from "./schema";
 import type { ProductDiscoverySource, ProductDiscoveryProduct, ProductDiscoveryResult } from "./types";
+import { extractModelProposedCandidates } from "./stepCCandidates";
 import {
   TARGETED_RESEARCH_SYSTEM_PROMPT,
   buildTargetedResearchUserMessage,
@@ -141,6 +142,10 @@ export function sanitizeModelProductOutput(
       unmetRequirements: requirementLists.unmetRequirements,
       unknownRequirements: requirementLists.unknownRequirements,
       whyItMatches: product.whyItMatches.trim(),
+      sku: product.sku ?? null,
+      category: product.category ?? requestedItem,
+      rank: product.rank ?? undefined,
+      sourceUrls: product.sourceUrls ?? undefined,
       priceEvidence: groundedPrice.priceEvidence,
     },
   };
@@ -205,6 +210,7 @@ export type PassProcessResult = {
   status: "found" | "not_found";
   product: ProductDiscoveryProduct | null;
   sources: ProductDiscoverySource[];
+  proposedCandidates: ProductDiscoveryProduct[];
   rescueAttempted: boolean;
   rescueSelected: boolean;
   rescueSucceeded: boolean;
@@ -230,6 +236,11 @@ export async function processPassCandidates(input: {
     status: "not_found",
     product: null,
     sources: input.sources,
+    proposedCandidates: extractModelProposedCandidates({
+      parsed: input.parsed,
+      requestedItem: input.requestedItem,
+      allowlistDomains: input.allowlistDomains,
+    }),
     rescueAttempted: false,
     rescueSelected: false,
     rescueSucceeded: false,
@@ -444,6 +455,7 @@ export async function attemptTargetedResearch(input: {
       requestedItem: input.requestedItem,
       status: pass.status,
       product: pass.product,
+      candidates: pass.proposedCandidates,
       sources: mergedSources,
       diagnostics: {
         searchUsed: true,

@@ -22,6 +22,7 @@ import { normalizeSelectedStyles, styleRankingEnabled } from "./style/normalizeS
 import { resolveStyleQueryStopAction } from "./style/stopPolicy";
 import type { RankedProductCandidate, StyleFitResult } from "./style/types";
 import { isProductionDeployment } from "@/lib/env/deployment";
+import { mergeRankedCandidatePool, type RequirementCandidatePool } from "./candidatePool";
 
 export const MAX_DISCOVERY_QUERY_LEVELS = 3;
 
@@ -70,6 +71,7 @@ export type ResolveProductsOptions = {
 export type ResolveProductsResult = {
   selections: ResolvedDiscoverySelection[];
   unmatched: UnmatchedRequirement[];
+  candidatePools: RequirementCandidatePool[];
   serpUsage: SerpUsageSnapshot;
   interrupted: boolean;
   stopReason: "none" | "budget" | "deadline" | "provider_error";
@@ -280,6 +282,7 @@ export async function resolveProductsForRequirements(
   const remaining = [...searched];
   const levelByKey = new Map(searched.map((item) => [item.requirementKey, 0]));
   const pendingBest = new Map<string, PendingWinner>();
+  const candidatePoolByKey = new Map<string, RankedProductCandidate[]>();
   const selections: ResolvedDiscoverySelection[] = [];
   const selectedKeys = new Set<string>();
   const interruptedKeys = new Set<string>();
@@ -412,6 +415,12 @@ export async function resolveProductsForRequirements(
         maxLevel,
         stores,
       });
+      if (ranking.ranked.length > 0) {
+        candidatePoolByKey.set(
+          requirement.requirementKey,
+          mergeRankedCandidatePool(candidatePoolByKey.get(requirement.requirementKey) ?? [], ranking.ranked)
+        );
+      }
 
       if (ranking.winner) {
         trackCrossLevelBest(pendingBest, requirement, ranking.winner, query, level);
@@ -532,6 +541,10 @@ export async function resolveProductsForRequirements(
   return {
     selections,
     unmatched,
+    candidatePools: searched.map((requirement) => ({
+      requirement,
+      candidates: candidatePoolByKey.get(requirement.requirementKey) ?? [],
+    })),
     serpUsage: snapshotUsage(
       serpBudget,
       providerAttempts,

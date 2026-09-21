@@ -4,7 +4,8 @@ import { getProjectProductDiscovery, getProjectProductSelections } from "@/lib/d
 import { listProjectProductReferenceAssets } from "@/lib/references/queries";
 import type { ProductSelectionView } from "@/lib/discovery/types";
 import type { ProductReferenceAssetView } from "@/lib/references/types";
-import { isValidReferenceForSelection } from "./order";
+import { isReadyShoppableSelection } from "./inventory";
+import { snapshotString, verifiedProductAppearance } from "./productFacts";
 
 export type RenderReadyReferenceAsset = {
   id: string;
@@ -34,16 +35,6 @@ export type RenderReadySelectedProduct = {
   referenceAssets: RenderReadyReferenceAsset[];
 };
 
-function snapshotString(snapshot: unknown, keys: string[]): string | null {
-  if (!snapshot || typeof snapshot !== "object") return null;
-  const record = snapshot as Record<string, unknown>;
-  for (const key of keys) {
-    const value = record[key];
-    if (typeof value === "string" && value.trim()) return value.trim();
-  }
-  return null;
-}
-
 export function categoryFromSelection(selection: ProductSelectionView): string {
   return snapshotString(selection.requirementSnapshot, ["category", "surface"]) ?? selection.itemSpec;
 }
@@ -52,7 +43,8 @@ export function toRenderReadySelectedProduct(
   selection: ProductSelectionView,
   asset: ProductReferenceAssetView | undefined
 ): RenderReadySelectedProduct {
-  const grounded = isValidReferenceForSelection(selection, asset) && selection.referenceStatus !== "unavailable";
+  const grounded = isReadyShoppableSelection(selection, asset);
+  const appearance = verifiedProductAppearance(selection.requirementSnapshot);
   return {
     selectionId: selection.id,
     requirementId: selection.requirementKey,
@@ -63,22 +55,23 @@ export function toRenderReadySelectedProduct(
     productUrl: selection.productUrl,
     price: selection.price,
     currency: selection.currency,
-    dimensions: snapshotString(selection.requirementSnapshot, ["dimensions", "size"]),
-    material: snapshotString(selection.requirementSnapshot, ["material"]),
-    color: snapshotString(selection.requirementSnapshot, ["color"]),
+    dimensions: appearance.dimensions,
+    material: appearance.material,
+    color: appearance.color,
     grounding: grounded ? "reference-grounded" : "reference-unavailable",
-    referenceAssets: grounded
-      ? [
-          {
-            id: asset.id,
-            storagePath: asset.storagePath,
-            mimeType: asset.mimeType,
-            sourceImageUrl: asset.sourceImageUrl,
-            sourcePageUrl: asset.sourcePageUrl,
-            isPrimary: asset.isPrimary,
-          },
-        ]
-      : [],
+    referenceAssets:
+      grounded && asset
+        ? [
+            {
+              id: asset.id,
+              storagePath: asset.storagePath,
+              mimeType: asset.mimeType,
+              sourceImageUrl: asset.sourceImageUrl,
+              sourcePageUrl: asset.sourcePageUrl,
+              isPrimary: asset.isPrimary,
+            },
+          ]
+        : [],
   };
 }
 

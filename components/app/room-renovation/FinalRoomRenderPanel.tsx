@@ -6,63 +6,45 @@ import {
   loadRoomRenderState,
 } from "@/lib/render/actions";
 import { PRODUCT_FIDELITY_DISCLAIMER } from "@/lib/render/constants";
+import {
+  expectedRenderInventoryFromSnapshot,
+  type ExpectedRenderInventoryItem,
+} from "@/lib/render/inventory";
 import { groundedSelectionIdsFromSnapshot } from "@/lib/render/types";
 import type { RoomRenderPreferences } from "@/lib/render/preferences";
-import type { ProductSelectionView } from "@/lib/discovery/types";
+import type { ProductDiscoveryView, ProductSelectionView } from "@/lib/discovery/types";
 import type { UnmatchedRequirement } from "@/lib/discovery/itemSpecs";
-import {
-  formatVerifiedProductPrice,
-  toProjectProductShoppingState,
-} from "@/lib/discovery/shoppingState";
+import { isRequiredUnresolvedReason } from "@/lib/discovery/itemSpecs";
+import { formatVerifiedProductPrice, toProjectProductShoppingState } from "@/lib/discovery/shoppingState";
+import { ProductShoppingSections } from "./ProductShoppingSections";
 
 export interface FinalRoomRenderPanelProps {
   projectId: string;
   selections: ProductSelectionView[];
+  discovery?: ProductDiscoveryView | null;
   unmatchedRequirements?: UnmatchedRequirement[];
   preferences: RoomRenderPreferences;
   roomPhotoPreviewUrl: string | null;
-}
-
-function statusLabel(args: {
-  grounded: boolean;
-  referenceStatus?: ProductSelectionView["referenceStatus"];
-}): string {
-  if (args.grounded) return "Used as visual reference";
-  if (args.referenceStatus === "ready") return "Eligible for exact-product visualization";
-  if (args.referenceStatus === "unavailable") {
-    return "Found product — visualization reference unavailable";
-  }
-  return "Found product";
+  onRetryRequirement?: (requirementKey: string) => void;
+  onChangeConstraints?: (requirementKey: string) => void;
+  onIncreaseBudget?: (requirementKey: string) => void;
+  onRemoveRequirement?: (requirementKey: string) => void;
+  retryBusyKey?: string | null;
 }
 
 export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
   projectId,
   selections,
+  discovery = null,
   unmatchedRequirements = [],
   preferences: _preferences,
   roomPhotoPreviewUrl,
+  onRetryRequirement,
+  onChangeConstraints,
+  onIncreaseBudget,
+  onRemoveRequirement,
+  retryBusyKey,
 }) => {
-  const shopping = toProjectProductShoppingState(
-    {
-      id: "local",
-      projectId,
-      sourceAnalysisId: "",
-      sourceAnalysisUpdatedAt: "",
-      locationInput: "",
-      latitude: 0,
-      longitude: 0,
-      radiusKm: 0,
-      searchedItemCount: selections.length,
-      notSearchedCount: 0,
-      allowlistDomains: [],
-      unmatchedRequirements,
-      sourcePreferences: {},
-      sourcePreferencesHash: "",
-      createdAt: "",
-      updatedAt: "",
-    },
-    selections
-  );
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [missing, setMissing] = React.useState<Array<{ selectionId: string; productTitle: string }>>(
@@ -74,8 +56,35 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
   const [readinessMessage, setReadinessMessage] = React.useState<string | null>(null);
   const [hasCurrent, setHasCurrent] = React.useState(false);
   const [groundedIds, setGroundedIds] = React.useState<Set<string>>(new Set());
+  const [usedInventory, setUsedInventory] = React.useState<ExpectedRenderInventoryItem[]>([]);
   const inFlight = React.useRef(false);
-  const missingIds = new Set(missing.map((item) => item.selectionId));
+  const visualizationItems = React.useMemo(() => {
+    if (usedInventory.length > 0) {
+      const byId = new Map(selections.map((item) => [item.id, item]));
+      return usedInventory.map((item) => ({
+        inventory: item,
+        selection: byId.get(item.selectionId) ?? null,
+      }));
+    }
+    return selections
+      .filter((item) => groundedIds.has(item.id) && item.referenceStatus !== "unavailable")
+      .map((item) => ({
+        inventory: {
+          selectionId: item.id,
+          requirementId: item.requirementKey,
+          productName: item.productTitle,
+          merchantName: item.retailerName ?? item.retailerDomain,
+          productUrl: item.productUrl,
+          price: item.price,
+          currency: item.currency,
+          referenceAssetId: "",
+          referenceStatus: "ready" as const,
+          referenceImageIndex: 0,
+          category: item.itemSpec,
+        },
+        selection: item,
+      }));
+  }, [usedInventory, selections, groundedIds]);
 
   const refresh = React.useCallback(async () => {
     const result = await loadRoomRenderState({ projectId });
@@ -91,6 +100,7 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
     setReadinessMessage(result.readinessMessage);
     setHasCurrent(Boolean(result.currentRender));
     setGroundedIds(groundedSelectionIdsFromSnapshot(result.currentRender?.referenceSnapshot));
+    setUsedInventory(expectedRenderInventoryFromSnapshot(result.currentRender?.promptSnapshot));
   }, [projectId]);
 
   React.useEffect(() => {
@@ -118,6 +128,7 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
       setProcessing(result.render.status === "processing");
       setReadinessMessage(null);
       setGroundedIds(groundedSelectionIdsFromSnapshot(result.render.referenceSnapshot));
+      setUsedInventory(expectedRenderInventoryFromSnapshot(result.render.promptSnapshot));
       if (result.render.status === "processing") {
         await refresh();
       }
@@ -129,8 +140,13 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
     }
   };
 
+  const unresolved = unmatchedRequirements.filter((item) => isRequiredUnresolvedReason(item.reason));
+  const shoppingState = React.useMemo(
+    () => toProjectProductShoppingState(discovery, selections),
+    [discovery, selections]
+  );
   const buttonLabel = hasCurrent && !stale ? "Regenerate design" : "Generate design";
-  const canGenerate = selections.length > 0;
+  const canGenerate = selections.length > 0 && unresolved.length === 0;
 
   return (
     <div className="space-y-5">
@@ -185,6 +201,17 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
 
       {error ? <p className="text-[13px] text-[rgba(255,140,140,0.9)]">{error}</p> : null}
 
+      {unresolved.length > 0 ? (
+        <ProductShoppingSections
+          state={shoppingState}
+          onRetryRequirement={onRetryRequirement}
+          onChangeConstraints={onChangeConstraints}
+          onIncreaseBudget={onIncreaseBudget}
+          onRemoveRequirement={onRemoveRequirement}
+          retryBusyKey={retryBusyKey}
+        />
+      ) : null}
+
       <button
         type="button"
         disabled={busy || !canGenerate}
@@ -195,63 +222,53 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
       </button>
 
       <div className="space-y-3">
-        <div className="text-[13px] text-[rgba(255,255,255,0.55)]">Used in this design</div>
-        {shopping.foundSelections.length === 0 && shopping.missingRequirements.length === 0 ? (
+        <div className="text-[13px] text-[rgba(255,255,255,0.55)]">
+          Products used in this visualization
+        </div>
+        {visualizationItems.length === 0 ? (
           <p className="text-[13px] text-[rgba(255,255,255,0.45)]">
-            Find products first. The visualization uses the same persisted selections as the shopping list.
+            Only ready merchant products with a cached reference image appear here. If a product
+            was not found or has no usable image, that space stays empty.
           </p>
         ) : (
-          <>
-            {shopping.foundSelections.map((item) => {
-              const grounded = groundedIds.has(item.id) && !missingIds.has(item.id);
-              return (
-                <div
-                  key={item.id}
-                  className="flex gap-3 rounded-[12px] border border-[rgba(255,255,255,0.08)] p-3"
-                >
-                  {item.productImageUrl ? (
-                    <img
-                      src={item.productImageUrl}
-                      alt=""
-                      className="w-16 h-16 object-cover rounded-md bg-[rgba(255,255,255,0.04)]"
-                    />
-                  ) : (
-                    <div className="w-16 h-16 rounded-md bg-[rgba(255,255,255,0.04)]" />
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[14px] text-white break-words">{item.productTitle}</div>
-                    <div className="text-[12px] text-[rgba(255,255,255,0.55)] break-words">
-                      {formatVerifiedProductPrice(item.price, item.currency)} ·{" "}
-                      {item.retailerName ?? item.retailerDomain}
-                    </div>
-                    <div className="text-[12px] text-[rgba(255,255,255,0.45)]">
-                      {statusLabel({
-                        grounded,
-                        referenceStatus: item.referenceStatus,
-                      })}
-                    </div>
+          visualizationItems.map(({ inventory, selection }) => {
+            const imageUrl = selection?.productImageUrl ?? null;
+            const price = selection?.price ?? inventory.price;
+            const currency = selection?.currency ?? inventory.currency;
+            return (
+              <div
+                key={inventory.selectionId}
+                className="flex gap-3 rounded-[12px] border border-[rgba(255,255,255,0.08)] p-3"
+              >
+                {imageUrl ? (
+                  <img
+                    src={imageUrl}
+                    alt=""
+                    className="w-16 h-16 object-cover rounded-md bg-[rgba(255,255,255,0.04)]"
+                  />
+                ) : (
+                  <div className="w-16 h-16 rounded-md bg-[rgba(255,255,255,0.04)]" />
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="text-[14px] text-white break-words">{inventory.productName}</div>
+                  <div className="text-[12px] text-[rgba(255,255,255,0.55)] break-words">
+                    {formatVerifiedProductPrice(price, currency)} · {inventory.merchantName}
+                  </div>
+                  <div className="text-[12px] text-[rgba(0,230,204,0.75)]">Visual reference</div>
+                  {inventory.productUrl ? (
                     <a
-                      href={item.productUrl}
+                      href={inventory.productUrl}
                       target="_blank"
                       rel="noreferrer"
                       className="text-[12px] text-[rgba(0,230,204,0.85)]"
                     >
-                      Open product
+                      Poglej izdelek
                     </a>
-                  </div>
+                  ) : null}
                 </div>
-              );
-            })}
-            {shopping.missingRequirements.map((item) => (
-              <div
-                key={item.requirementKey}
-                className="rounded-[12px] border border-[rgba(255,255,255,0.08)] p-3"
-              >
-                <div className="text-[14px] text-white break-words">{item.label}</div>
-                <div className="text-[12px] text-[rgba(255,255,255,0.45)]">Not found</div>
               </div>
-            ))}
-          </>
+            );
+          })
         )}
       </div>
     </div>

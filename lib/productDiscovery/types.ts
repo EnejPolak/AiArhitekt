@@ -17,6 +17,10 @@ export type ProductDiscoveryProduct = {
   unmetRequirements: string[];
   unknownRequirements: string[];
   whyItMatches: string;
+  sku?: string | null;
+  category?: string | null;
+  rank?: number;
+  sourceUrls?: string[];
   priceEvidence?: PriceEvidence;
 };
 
@@ -232,6 +236,8 @@ export type ProductDiscoveryResult = {
   requestedItem: string;
   status: ProductDiscoveryStatus;
   product: ProductDiscoveryProduct | null;
+  /** Bounded alternate products from the same discovery work. Not the selected winner. */
+  candidates?: ProductDiscoveryProduct[];
   sources: ProductDiscoverySource[];
   diagnostics?: ProductDiscoveryDiagnostics;
 };

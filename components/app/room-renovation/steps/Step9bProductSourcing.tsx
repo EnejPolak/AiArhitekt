@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import type { ProductSelectionView } from "@/lib/discovery/types";
+import type { ProductDiscoveryView, ProductSelectionView } from "@/lib/discovery/types";
 import type { UnmatchedRequirement } from "@/lib/discovery/itemSpecs";
 import type { RoomRenderPreferences } from "@/lib/render/preferences";
 import { FinalRoomRenderPanel } from "../FinalRoomRenderPanel";
@@ -10,19 +10,31 @@ import { wizardPanelClass } from "../wizardUi";
 export interface Step9bProductSourcingProps {
   projectId: string;
   selections: ProductSelectionView[];
+  discovery?: ProductDiscoveryView | null;
   unmatchedRequirements?: UnmatchedRequirement[];
   preferences: RoomRenderPreferences;
   roomPhotoPreviewUrl: string | null;
   onContinue: () => void;
+  onRetryRequirement?: (requirementKey: string) => void;
+  onChangeConstraints?: (requirementKey: string) => void;
+  onIncreaseBudget?: (requirementKey: string) => void;
+  onRemoveRequirement?: (requirementKey: string) => void;
+  retryBusyKey?: string | null;
 }
 
 export const Step9bProductSourcing: React.FC<Step9bProductSourcingProps> = ({
   projectId,
   selections,
+  discovery = null,
   unmatchedRequirements = [],
   preferences,
   roomPhotoPreviewUrl,
   onContinue,
+  onRetryRequirement,
+  onChangeConstraints,
+  onIncreaseBudget,
+  onRemoveRequirement,
+  retryBusyKey,
 }) => {
   return (
     <div className="flex justify-start mb-6">
@@ -33,9 +45,15 @@ export const Step9bProductSourcing: React.FC<Step9bProductSourcingProps> = ({
         <FinalRoomRenderPanel
           projectId={projectId}
           selections={selections}
+          discovery={discovery}
           unmatchedRequirements={unmatchedRequirements}
           preferences={preferences}
           roomPhotoPreviewUrl={roomPhotoPreviewUrl}
+          onRetryRequirement={onRetryRequirement}
+          onChangeConstraints={onChangeConstraints}
+          onIncreaseBudget={onIncreaseBudget}
+          onRemoveRequirement={onRemoveRequirement}
+          retryBusyKey={retryBusyKey}
         />
         <button
           type="button"

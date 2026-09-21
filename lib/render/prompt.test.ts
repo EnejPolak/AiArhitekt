@@ -73,6 +73,7 @@ describe("buildRoomRenderPrompt", () => {
         flooring: "keep",
         underfloorHeating: false,
         bedType: "none",
+        keepExistingWalls: false,
         notes: "keep the window light",
       },
       references: [
@@ -93,18 +94,46 @@ describe("buildRoomRenderPrompt", () => {
       role: "product_reference",
       requirementKey: "furniture:sofa:0",
     });
+    expect(snapshot.prompt).toContain("ROOM AUTHORITY");
+    expect(snapshot.prompt).toContain("PRODUCT AUTHORITIES");
+    expect(snapshot.prompt).toContain("PHYSICAL OBJECT INVENTORY");
+    expect(snapshot.prompt).toContain("EXISTING ROOM OBJECTS");
+    expect(snapshot.prompt).toContain("ALLOWED CHANGES");
+    expect(snapshot.prompt).toContain("FORBIDDEN CHANGES");
+    expect(snapshot.prompt).toContain("EXCLUDED PRODUCTS");
     expect(snapshot.prompt).toContain("IMAGE A (Image 1) is the customer's real empty or unfinished room");
     expect(snapshot.prompt).toContain("IMAGE B (Image 2) is the exact selected furniture reference");
     expect(snapshot.prompt).toContain("Modern beige sofa");
     expect(snapshot.prompt).toContain("Preserve this room's architecture, perspective and camera position");
     expect(snapshot.prompt).toContain("Do not invent extra major furniture beyond the supplied references.");
     expect(snapshot.prompt).toContain("NOT_FOUND");
+    expect(snapshot.prompt).toContain("Leave that area empty");
     expect(snapshot.prompt).toContain("Do not generate shopping text, prices, URLs");
     expect(snapshot.prompt).toContain("Do not claim pixel-identical photographic identity");
-    expect(snapshot.prompt).toContain("concept-only decor");
+    expect(snapshot.prompt).not.toContain("concept-only");
     expect(snapshot.prompt).toContain("window and radiator");
     expect(snapshot.prompt).toContain("existing sofa");
     expect(snapshot.prompt).toContain("furniture:rug:3");
+    expect(snapshot.prompt).toContain("If an area of the room would otherwise remain empty, leave it empty.");
+    expect(snapshot.renderIntent).toBe("complete_interior");
+    expect(snapshot.expectedRenderInventory).toHaveLength(1);
+    expect(snapshot.expectedRenderInventory[0]).toMatchObject({
+      selectionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
+      productName: "Modern beige sofa",
+      referenceStatus: "ready",
+      merchantName: "Local",
+    });
+    expect(snapshot.prompt).toContain("Render mode: COMPLETE_INTERIOR.");
+    expect(snapshot.prompt).toContain(
+      "Surface completion is intentional and allowed: wall finishes, flooring, ceiling finish"
+    );
+    expect(snapshot.prompt).toContain("The supplied product reference image is authoritative");
+    expect(snapshot.prompt).toContain(
+      "Do not change a grounded product's doors, drawers, shelves, openings, handles/pulls"
+    );
+    expect(snapshot.prompt).toContain(
+      "If the reference shows a sliding panel, do not convert it into a drawer, hinged door, or open shelf."
+    );
     expect(snapshot.prompt).not.toContain("https://www.localhome.si");
     expect(snapshot.prompt).not.toContain("OPENAI");
     expect(snapshot.prompt).not.toContain("signed");
@@ -145,6 +174,7 @@ describe("buildRoomRenderPrompt", () => {
         flooring: "keep",
         underfloorHeating: false,
         bedType: "none",
+        keepExistingWalls: false,
         notes: "",
       },
       references: [
@@ -161,7 +191,140 @@ describe("buildRoomRenderPrompt", () => {
 
     expect(snapshot.prompt).toContain("no usable reference image");
     expect(snapshot.prompt).toContain("furniture:floor-lamp:2");
+    expect(snapshot.prompt).toContain("Leave that area empty");
+    expect(snapshot.prompt).toContain("EXCLUDED PRODUCTS");
+    expect(snapshot.prompt).not.toContain("CONCEPT-ONLY");
+    expect(snapshot.prompt).not.toContain("concept-only");
     expect(snapshot.prompt).not.toMatch(/exact selected[\s\S]*Unimaged lamp/);
-    expect(snapshot.prompt).toContain("Do not present invented or generated decor as a purchasable selected merchant product");
+    expect(snapshot.expectedRenderInventory.map((item) => item.productName)).toEqual(["Modern beige sofa"]);
+  });
+
+  it("forbids door/drawer/shelf mutation and includes verified product facts only", () => {
+    const snapshot = buildRoomRenderPrompt({
+      observation: validRoomAnalysisResult.analysis,
+      designRequirements: validRoomAnalysisResult.designRequirements,
+      unmatchedRequirements: [],
+      preferences: {
+        selectedStyles: [],
+        budgetLevel: null,
+        wallMainColor: "warm greige",
+        wallAccentColor: "",
+        flooring: "keep",
+        underfloorHeating: false,
+        bedType: "none",
+        keepExistingWalls: false,
+        notes: "",
+      },
+      references: [
+        ref(2, {
+          id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3",
+          requirementType: "furniture",
+          requirementKey: "furniture:coffee-table:1",
+          itemSpec: "coffee table",
+          productTitle: "Klubska miza RY",
+          requirementSnapshot: {
+            category: "coffee table",
+            quantity: 1,
+            placementNotes: "in front of the sofa",
+            constraints: [],
+            material: "white lacquer",
+            color: "white",
+            dimensions: "110x60 cm",
+          },
+        }),
+      ],
+    });
+
+    expect(snapshot.prompt).toContain("Klubska miza RY");
+    expect(snapshot.prompt).toContain("Category: coffee table.");
+    expect(snapshot.prompt).toContain("Reference image index: 2.");
+    expect(snapshot.prompt).toContain("Known material: white lacquer.");
+    expect(snapshot.prompt).toContain("Known color: white.");
+    expect(snapshot.prompt).toContain("Known dimensions: 110x60 cm.");
+    expect(snapshot.prompt).toContain("Do not redesign product internals.");
+    expect(snapshot.prompt).toContain(
+      "If the reference shows a sliding panel, do not convert it into a drawer, hinged door, or open shelf."
+    );
+    expect(snapshot.prompt).not.toContain("Known material: oak");
+    expect(snapshot.prompt).not.toContain("sliding door");
+  });
+
+  it("uses FURNISH_ONLY to preserve unfinished surfaces", () => {
+    const snapshot = buildRoomRenderPrompt({
+      observation: {
+        ...validRoomAnalysisResult.analysis,
+        visualCondition: {
+          ...validRoomAnalysisResult.analysis.visualCondition,
+          overall: "unfinished raw plaster and concrete slab",
+        },
+      },
+      designRequirements: validRoomAnalysisResult.designRequirements,
+      unmatchedRequirements: [],
+      preferences: {
+        selectedStyles: ["warm-minimal"],
+        budgetLevel: "balanced",
+        wallMainColor: "",
+        wallAccentColor: "",
+        flooring: "keep",
+        underfloorHeating: false,
+        bedType: "none",
+        keepExistingWalls: true,
+        notes: "",
+      },
+      references: [
+        ref(2, {
+          id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
+          requirementType: "furniture",
+          requirementKey: "furniture:sofa:0",
+          itemSpec: "sofa",
+          productTitle: "Modern beige sofa",
+          requirementSnapshot: validRoomAnalysisResult.designRequirements.furnitureNeeds[0],
+        }),
+      ],
+    });
+
+    expect(snapshot.renderIntent).toBe("furnish_only");
+    expect(snapshot.prompt).toContain("Render mode: FURNISH_ONLY.");
+    expect(snapshot.prompt).toContain("raw/unfinished state");
+    expect(snapshot.prompt).toContain("Do not paint, plaster, refinish, or complete unfinished walls, floors, or ceilings.");
+    expect(snapshot.prompt).toContain("Do not invent a completed white interior over an unfinished room.");
+    expect(snapshot.prompt).toContain("unfinished raw plaster and concrete slab");
+    expect(snapshot.prompt).not.toContain("Surface completion is intentional and allowed");
+    expect(snapshot.prompt).not.toContain("Render mode: COMPLETE_INTERIOR.");
+  });
+
+  it("keeps COMPLETE_INTERIOR finish permission explicit", () => {
+    const snapshot = buildRoomRenderPrompt({
+      observation: validRoomAnalysisResult.analysis,
+      designRequirements: validRoomAnalysisResult.designRequirements,
+      unmatchedRequirements: [],
+      preferences: {
+        selectedStyles: [],
+        budgetLevel: null,
+        wallMainColor: "warm greige",
+        wallAccentColor: "olive green",
+        flooring: "hardwood",
+        underfloorHeating: false,
+        bedType: "none",
+        keepExistingWalls: false,
+        notes: "",
+      },
+      references: [
+        ref(2, {
+          id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
+          requirementType: "furniture",
+          requirementKey: "furniture:sofa:0",
+          itemSpec: "sofa",
+          productTitle: "Modern beige sofa",
+          requirementSnapshot: validRoomAnalysisResult.designRequirements.furnitureNeeds[0],
+        }),
+      ],
+    });
+
+    expect(snapshot.renderIntent).toBe("complete_interior");
+    expect(snapshot.prompt).toContain("Render mode: COMPLETE_INTERIOR.");
+    expect(snapshot.prompt).toContain("wall finishes, flooring, ceiling finish, lighting treatment");
+    expect(snapshot.prompt).not.toContain("Do not paint, plaster, refinish, or complete unfinished walls");
+    expect(snapshot.prompt).not.toContain("Render mode: FURNISH_ONLY.");
   });
 });

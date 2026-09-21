@@ -9,6 +9,7 @@ export type RenderErrorCode =
   | "no_confirmed_products"
   | "reference_missing"
   | "reference_grounding_unavailable"
+  | "incomplete_room"
   | "too_many_references"
   | "render_disabled"
   | "provider_unconfigured"
@@ -62,6 +63,8 @@ export function renderErrorMessage(code: RenderErrorCode): string {
       return "A selected product is not render-ready. Unconfirm it or choose another product.";
     case "reference_grounding_unavailable":
       return "None of the selected products have a usable product image for visualization.";
+    case "incomplete_room":
+      return "We couldn't yet find a verified product for every required item. Resolve or remove the remaining items before generating a design.";
     case "too_many_references":
       return "Too many confirmed product references for one generation.";
     case "render_disabled":

@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/database.types";
 import { getProjectRoomAnalysis } from "@/lib/analysis/queries";
 import { isCurrentRoomAnalysis } from "@/lib/analysis/stale";
+import { completeRoomGate, type CompleteRoomGate } from "@/lib/discovery/completeRoom";
 import { getProjectProductDiscovery, getProjectProductSelections } from "@/lib/discovery/queries";
 import { isCurrentProductDiscovery } from "@/lib/discovery/stale";
 import { PROJECT_ASSETS_BUCKET } from "@/lib/references/constants";
@@ -65,6 +66,7 @@ export type PreparedRenderSource = {
   confirmed: Awaited<ReturnType<typeof getProjectProductSelections>>;
   ordered: OrderedRenderReference[];
   missing: Array<{ selectionId: string; productTitle: string }>;
+  completeRoom: CompleteRoomGate;
   fingerprint: string;
   preferences: RoomRenderPreferences;
 };
@@ -133,6 +135,12 @@ export async function prepareRenderSource(
     references: orderedResult.ordered,
   });
 
+  const completeRoom = completeRoomGate({
+    searchedItemCount: discovery.searchedItemCount,
+    unmatched: discovery.unmatchedRequirements,
+    readyRequirementKeys: orderedResult.ordered.map((item) => item.selection.requirementKey),
+  });
+
   return {
     photo,
     analysis,
@@ -141,6 +149,7 @@ export async function prepareRenderSource(
     confirmed: selections.filter((item) => item.isConfirmed),
     ordered: orderedResult.ordered,
     missing,
+    completeRoom,
     fingerprint,
     preferences,
   };
@@ -165,6 +174,17 @@ export async function generateRoomRender(
     probe.missing.length > 0
       ? await prepareRenderSource(input.userClient, input.projectId, input.preferences)
       : probe;
+  if (!source.completeRoom.allowed) {
+    throw new RenderError("incomplete_room", renderErrorMessage("incomplete_room"), {
+      missingReferences:
+        source.completeRoom.unresolvedLabels.length > 0
+          ? source.completeRoom.unresolvedLabels.map((label) => ({
+              selectionId: "",
+              productTitle: label,
+            }))
+          : source.missing,
+    });
+  }
   if (source.ordered.length === 0) {
     throw new RenderError(
       "reference_grounding_unavailable",

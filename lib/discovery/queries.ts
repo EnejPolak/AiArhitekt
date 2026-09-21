@@ -237,6 +237,48 @@ export async function setSelectionConfirmed(
   return mapped;
 }
 
+export async function updateDiscoveryUnmatchedRequirements(
+  persistClient: Client,
+  discoveryId: string,
+  unmatched: UnmatchedRequirement[]
+): Promise<void> {
+  const { error } = await persistClient
+    .from("project_product_discoveries")
+    .update({ unmatched_requirements: unmatched as unknown as Json })
+    .eq("id", discoveryId);
+  if (error) throw mapDiscoveryDbError(error);
+}
+
+export async function insertReadyProductSelection(
+  persistClient: Client,
+  input: {
+    projectId: string;
+    discoveryId: string;
+    selection: PersistDiscoveryInput["selections"][number];
+  }
+): Promise<void> {
+  const { error } = await persistClient.from("project_product_selections").insert({
+    project_id: input.projectId,
+    discovery_id: input.discoveryId,
+    requirement_type: input.selection.requirementType,
+    requirement_key: input.selection.requirementKey,
+    requirement_snapshot: input.selection.requirementSnapshot as unknown as Json,
+    item_spec: input.selection.itemSpec,
+    product_title: input.selection.product.productTitle,
+    product_url: input.selection.product.productUrl,
+    product_image_url: input.selection.product.productImageUrl,
+    price: input.selection.product.price,
+    currency: input.selection.product.currency,
+    retailer_domain: input.selection.product.retailerDomain,
+    retailer_name: input.selection.product.retailerName,
+    has_reference_image: input.selection.product.hasReferenceImage,
+    image_evidence: (input.selection.product.imageEvidence ?? []) as unknown as Json,
+    is_confirmed: true,
+    reference_status: "pending",
+  });
+  if (error) throw mapDiscoveryDbError(error);
+}
+
 export async function getOwnedSelection(
   client: Client,
   selectionId: string

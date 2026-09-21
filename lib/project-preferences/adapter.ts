@@ -58,6 +58,7 @@ export function projectRoomPreferencesToRenderPreferences(
     flooring: source.flooring,
     underfloorHeating: source.underfloorHeating,
     bedType: source.bedType,
+    keepExistingWalls: source.keepExistingWalls,
     notes: source.notes,
   });
 }

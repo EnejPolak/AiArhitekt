@@ -8,7 +8,7 @@ import { MVP_PROJECT_TYPE } from "@/lib/projects/types";
 import { projectIdInputSchema } from "@/lib/projects/schema";
 import { createPersistClient } from "@/lib/supabase/persist";
 import { ensureProductReferenceAssets } from "@/lib/references/ensure";
-import { discoverProjectProducts, loadCurrentProductDiscovery } from "./discover";
+import { discoverProjectProducts, loadCurrentProductDiscovery, removeRequirementFromDesign, retryUnresolvedRequirement } from "./discover";
 import { DiscoveryError, discoveryErrorMessage, logDiscoveryError } from "./errors";
 import { captureSafeException } from "@/lib/observability/report";
 import { getOwnedSelection, setSelectionConfirmed } from "./queries";
@@ -50,6 +50,11 @@ const discoverInputSchema = z.object({
   radiusKm: z.number().int().min(1).max(MAX_DISCOVERY_RADIUS_KM).optional(),
   refresh: z.boolean().optional(),
   attemptId: z.string().uuid().optional(),
+});
+
+const requirementKeyInputSchema = z.object({
+  projectId: projectIdInputSchema.shape.projectId,
+  requirementKey: z.string().min(1).max(160),
 });
 
 const confirmInputSchema = z.object({
@@ -214,6 +219,63 @@ export async function setProductConfirmed(input: {
     }
 
     return { ok: true, selection };
+  } catch (error) {
+    return fromCaught(error);
+  }
+}
+
+export async function retryUnresolvedRequirementAction(input: {
+  projectId: string;
+  requirementKey: string;
+}): Promise<DiscoveryActionResult> {
+  const parsed = requirementKeyInputSchema.safeParse(input);
+  if (!parsed.success) return fail("invalid_input");
+
+  try {
+    const { supabase, project } = await requireOwnedRoomProject(parsed.data.projectId);
+    const persistClient = createPersistClient();
+    const result = await retryUnresolvedRequirement(
+      supabase,
+      parsed.data.projectId,
+      parsed.data.requirementKey,
+      {
+        ownerUserId: project.user_id,
+        persistClient,
+      }
+    );
+    return {
+      ok: true,
+      discovery: result.discovery,
+      selections: result.selections,
+      reused: false,
+    };
+  } catch (error) {
+    return fromCaught(error);
+  }
+}
+
+export async function removeRequirementFromDesignAction(input: {
+  projectId: string;
+  requirementKey: string;
+}): Promise<DiscoveryActionResult> {
+  const parsed = requirementKeyInputSchema.safeParse(input);
+  if (!parsed.success) return fail("invalid_input");
+
+  try {
+    const { supabase } = await requireOwnedRoomProject(parsed.data.projectId);
+    const persistClient = createPersistClient();
+    const result = await removeRequirementFromDesign(
+      supabase,
+      parsed.data.projectId,
+      parsed.data.requirementKey,
+      { persistClient }
+    );
+    return {
+      ok: true,
+      discovery: result.discovery,
+      selections: result.selections,
+      reused: true,
+    };
   } catch (error) {
     return fromCaught(error);
   }

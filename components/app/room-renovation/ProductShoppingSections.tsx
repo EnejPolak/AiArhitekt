@@ -9,9 +9,19 @@ import {
 export function ProductShoppingSections({
   state,
   emptyMessage = "No verified products were found for these requirements.",
+  onRetryRequirement,
+  onChangeConstraints,
+  onIncreaseBudget,
+  onRemoveRequirement,
+  retryBusyKey,
 }: {
   state: ProjectProductShoppingState;
   emptyMessage?: string;
+  onRetryRequirement?: (requirementKey: string) => void;
+  onChangeConstraints?: (requirementKey: string) => void;
+  onIncreaseBudget?: (requirementKey: string) => void;
+  onRemoveRequirement?: (requirementKey: string) => void;
+  retryBusyKey?: string | null;
 }) {
   if (!state.hasDiscovery) {
     return (
@@ -67,11 +77,15 @@ export function ProductShoppingSections({
                         rel="noopener noreferrer"
                         className="text-[12px] text-[#3B82F6] hover:underline"
                       >
-                        View product →
+                        Poglej izdelek
                       </a>
                     ) : null}
                   </div>
-                  {selection.referenceStatus === "unavailable" ? (
+                  {selection.referenceStatus === "ready" ? (
+                    <div className="text-[11px] text-[rgba(0,230,204,0.75)] mt-1">
+                      Visual reference · used in visualization
+                    </div>
+                  ) : selection.referenceStatus === "unavailable" ? (
                     <div className="text-[11px] text-[rgba(255,255,255,0.40)] mt-1">
                       Found product · visualization reference unavailable
                     </div>
@@ -96,9 +110,52 @@ export function ProductShoppingSections({
           <h4 className="text-[13px] font-medium text-[rgba(255,255,255,0.80)] mb-2">
             Unresolved requirements
           </h4>
-          <ul className="space-y-1 text-[13px] text-[rgba(255,255,255,0.55)]">
+          <ul className="space-y-3 text-[13px] text-[rgba(255,255,255,0.55)]">
             {state.missingRequirements.map((item) => (
-              <li key={item.requirementKey}>No verified product for: {item.label}</li>
+              <li key={item.requirementKey} className="space-y-2">
+                <div>We couldn&apos;t yet find a verified product for: {item.label}</div>
+                {onRetryRequirement || onChangeConstraints || onIncreaseBudget || onRemoveRequirement ? (
+                  <div className="flex flex-wrap gap-2">
+                    {onRetryRequirement ? (
+                      <button
+                        type="button"
+                        disabled={retryBusyKey === item.requirementKey}
+                        onClick={() => onRetryRequirement(item.requirementKey)}
+                        className="text-[12px] text-[#3B82F6] hover:underline disabled:opacity-40"
+                      >
+                        {retryBusyKey === item.requirementKey ? "Retrying…" : "Retry this item"}
+                      </button>
+                    ) : null}
+                    {onChangeConstraints ? (
+                      <button
+                        type="button"
+                        onClick={() => onChangeConstraints(item.requirementKey)}
+                        className="text-[12px] text-[#3B82F6] hover:underline"
+                      >
+                        Change constraints
+                      </button>
+                    ) : null}
+                    {onIncreaseBudget ? (
+                      <button
+                        type="button"
+                        onClick={() => onIncreaseBudget(item.requirementKey)}
+                        className="text-[12px] text-[#3B82F6] hover:underline"
+                      >
+                        Increase budget
+                      </button>
+                    ) : null}
+                    {onRemoveRequirement ? (
+                      <button
+                        type="button"
+                        onClick={() => onRemoveRequirement(item.requirementKey)}
+                        className="text-[12px] text-[rgba(255,255,255,0.70)] hover:underline"
+                      >
+                        Remove item from design
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+              </li>
             ))}
           </ul>
         </div>

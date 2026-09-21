@@ -65,6 +65,7 @@ describe("buildRenderSourceFingerprint", () => {
       flooring: "keep" as const,
       underfloorHeating: false,
       bedType: "none" as const,
+      keepExistingWalls: false,
       notes: "",
     },
   };
@@ -91,7 +92,13 @@ describe("buildRenderSourceFingerprint", () => {
       preferences: { ...base.preferences, wallMainColor: "white" },
       references: [a],
     });
+    const fourth = buildRenderSourceFingerprint({
+      ...base,
+      preferences: { ...base.preferences, keepExistingWalls: true },
+      references: [a],
+    });
     expect(first).not.toBe(second);
     expect(first).not.toBe(third);
+    expect(first).not.toBe(fourth);
   });
 });

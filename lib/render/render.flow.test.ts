@@ -78,6 +78,7 @@ const PREFS = {
   flooring: "keep" as const,
   underfloorHeating: false,
   bedType: "none" as const,
+  keepExistingWalls: false,
   notes: "",
 };
 
@@ -348,7 +349,7 @@ describe("product-conditioned room render (local, mocked OpenAI)", () => {
     expect(edit).toHaveBeenCalledTimes(1);
   });
 
-  it("returns reference_grounding_unavailable without calling the provider when no product image can be stored", async () => {
+  it("returns incomplete_room without calling the provider when no product image can be stored", async () => {
     vi.stubEnv("OPENAI_IMAGE_RENDER_ENABLED", "true");
     const seeded = await seedProject(userA.client, userA.user.id);
     const persist = persistClient();
@@ -409,7 +410,7 @@ describe("product-conditioned room render (local, mocked OpenAI)", () => {
         lookup: async () => ({ address: "203.0.113.10", family: 4 }),
         fetch: async () => new Response("nope", { status: 404 }),
       })
-    ).rejects.toMatchObject({ code: "reference_grounding_unavailable" });
+    ).rejects.toMatchObject({ code: "incomplete_room" });
     expect(edit).not.toHaveBeenCalled();
   });
 
@@ -635,6 +636,12 @@ describe("product-conditioned room render (local, mocked OpenAI)", () => {
     const snapshot = JSON.stringify(generated.render.promptSnapshot);
     const refs = JSON.stringify(generated.render.referenceSnapshot);
     expect(snapshot).toContain("IMAGE A (Image 1)");
+    expect(snapshot).toContain("PHYSICAL OBJECT INVENTORY");
+    expect(snapshot).toContain("expectedRenderInventory");
+    expect(snapshot).toContain("Render mode: COMPLETE_INTERIOR.");
+    expect((generated.render.promptSnapshot as { renderIntent?: string }).renderIntent).toBe(
+      "complete_interior"
+    );
     expect(refs).toContain("furniture:sofa:0");
     expect(Array.isArray(generated.render.referenceSnapshot)).toBe(true);
     const manifest = generated.render.referenceSnapshot as Array<{
@@ -653,7 +660,7 @@ describe("product-conditioned room render (local, mocked OpenAI)", () => {
     expect(generated.render.outputHash).toBe(createHash("sha256").update(PNG_OUT).digest("hex"));
   });
 
-  it("generates with available product images when one reference fetch fails", async () => {
+  it("blocks an incomplete room when one required reference fetch fails", async () => {
     vi.stubEnv("OPENAI_IMAGE_RENDER_ENABLED", "true");
     const seeded = await seedProject(userA.client, userA.user.id);
     const persist = persistClient();
@@ -735,26 +742,19 @@ describe("product-conditioned room render (local, mocked OpenAI)", () => {
           },
         }),
     });
-    const edit = vi.fn<RoomImageEditFn>(async (input) => {
-      expect(input.images).toHaveLength(2);
-      expect(input.prompt).toContain("no usable reference image");
-      expect(input.prompt).toContain("furniture:floor-lamp:2");
-      expect(input.prompt).toContain("NOT_FOUND");
-      expect(input.prompt).not.toMatch(/exact selected[\s\S]*Black floor lamp/);
-      return { bytes: PNG_OUT, mime: "image/png" };
-    });
-    const generated = await generateRoomRender({
-      userClient: userA.client,
-      persistClient: persist,
-      ownerUserId: userA.user.id,
-      projectId: seeded.projectId,
-      preferences: PREFS,
-      editImage: edit,
-      lookup: async () => ({ address: "203.0.113.10", family: 4 }),
-      fetch: async () => new Response("nope", { status: 404 }),
-    });
-    expect(generated.providerCalls).toBe(1);
-    const manifest = generated.render.referenceSnapshot as Array<{ selectionId: string }>;
-    expect(manifest.map((item) => item.selectionId)).toEqual([sofa!.id]);
+    const edit = vi.fn<RoomImageEditFn>(async () => ({ bytes: PNG_OUT, mime: "image/png" }));
+    await expect(
+      generateRoomRender({
+        userClient: userA.client,
+        persistClient: persist,
+        ownerUserId: userA.user.id,
+        projectId: seeded.projectId,
+        preferences: PREFS,
+        editImage: edit,
+        lookup: async () => ({ address: "203.0.113.10", family: 4 }),
+        fetch: async () => new Response("nope", { status: 404 }),
+      })
+    ).rejects.toMatchObject({ code: "incomplete_room" });
+    expect(edit).not.toHaveBeenCalled();
   });
 });

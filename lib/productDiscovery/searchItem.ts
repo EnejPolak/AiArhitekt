@@ -50,6 +50,7 @@ import {
   type InitialFailureReason,
 } from "./rescue";
 import { productDiscoveryModelSchema, type ProductDiscoveryModelOutput } from "./schema";
+import { extractModelProposedCandidates, withModelCandidatePool } from "./stepCCandidates";
 import {
   addOpenAiUsage,
   emptyOpenAiUsage,
@@ -358,6 +359,7 @@ async function finalizeWithSerpFallbackIfNeeded(
     requestedItem: string;
     allowlistDomains: string[];
     primarySources: ProductDiscoverySource[];
+    proposedCandidates?: ProductDiscoveryProduct[];
     marketContext?: {
       countryCode?: string | null;
       formattedLocation?: string | null;
@@ -365,6 +367,7 @@ async function finalizeWithSerpFallbackIfNeeded(
     } | null;
   }
 ): Promise<ProductDiscoveryResult> {
+  result = withModelCandidatePool(result, ctx.proposedCandidates);
   if (!isProductDiscoverySerpFallbackEnabled()) {
     return attachTrackedUsage(
       {
@@ -427,6 +430,7 @@ async function finalizeWithTargetedResearchIfNeeded(
     requestedItem: string;
     allowlistDomains: string[];
     primarySources: ProductDiscoverySource[];
+    proposedCandidates?: ProductDiscoveryProduct[];
     priceVerificationAttempted?: boolean;
     marketContext?: {
       countryCode?: string | null;
@@ -803,6 +807,10 @@ function sanitizePrimaryProductOutput(
       unmetRequirements: requirementLists.unmetRequirements,
       unknownRequirements: requirementLists.unknownRequirements,
       whyItMatches: product.whyItMatches.trim(),
+      sku: product.sku ?? null,
+      category: product.category ?? requestedItem,
+      rank: product.rank ?? undefined,
+      sourceUrls: product.sourceUrls ?? undefined,
       priceEvidence: groundedPrice.priceEvidence,
     },
   };
@@ -818,6 +826,7 @@ export async function searchProductItem(
     allowlistDomains
   );
   const started = Date.now();
+  let proposedCandidates: ProductDiscoveryProduct[] = [];
 
   if (!requestedItem) {
     return attachModelRoutingDiagnostics({
@@ -901,6 +910,13 @@ export async function searchProductItem(
     const parsed = response.output_parsed;
     const primaryElapsedMs = Date.now() - started;
     const searchUsed = responseUsedWebSearch(response);
+    if (searchUsed) {
+      proposedCandidates = extractModelProposedCandidates({
+        parsed,
+        requestedItem,
+        allowlistDomains,
+      });
+    }
 
     if (!searchUsed) {
       logProductDiscovery({
@@ -927,7 +943,7 @@ export async function searchProductItem(
             ...primarySearchDiagFields,
           },
         },
-        { client, requestedItem, allowlistDomains, primarySources: sources, marketContext }
+        { client, requestedItem, allowlistDomains, primarySources: sources, marketContext, proposedCandidates }
       );
     }
 
@@ -947,7 +963,7 @@ export async function searchProductItem(
             ...primarySearchDiagFields,
           },
         },
-        { client, requestedItem, allowlistDomains, primarySources: sources, marketContext }
+        { client, requestedItem, allowlistDomains, primarySources: sources, marketContext, proposedCandidates }
       );
     }
 
@@ -1022,7 +1038,7 @@ export async function searchProductItem(
               ...evidenceDiagnosticsForProduct(finalized.product, sources),
             }),
           },
-          { client, requestedItem, allowlistDomains, primarySources: sources, marketContext }
+          { client, requestedItem, allowlistDomains, primarySources: sources, marketContext, proposedCandidates }
         );
       }
 
@@ -1103,7 +1119,7 @@ export async function searchProductItem(
                 ...primarySearchDiagFields,
               },
             },
-            { client, requestedItem, allowlistDomains, primarySources: sources, marketContext }
+            { client, requestedItem, allowlistDomains, primarySources: sources, marketContext, proposedCandidates }
           );
         }
 
@@ -1122,7 +1138,7 @@ export async function searchProductItem(
             priceVerificationDiagnostics,
             primarySearchDiagFields,
           }),
-          { client, requestedItem, allowlistDomains, primarySources: sources, priceVerificationAttempted, marketContext }
+          { client, requestedItem, allowlistDomains, primarySources: sources, priceVerificationAttempted, marketContext, proposedCandidates }
         );
       }
 
@@ -1150,7 +1166,7 @@ export async function searchProductItem(
             ...primarySearchDiagFields,
           },
         },
-        { client, requestedItem, allowlistDomains, primarySources: sources, priceVerificationAttempted, marketContext }
+        { client, requestedItem, allowlistDomains, primarySources: sources, priceVerificationAttempted, marketContext, proposedCandidates }
       );
     }
 
@@ -1180,7 +1196,7 @@ export async function searchProductItem(
             ...primarySearchDiagFields,
           },
         },
-        { client, requestedItem, allowlistDomains, primarySources: sources, marketContext }
+        { client, requestedItem, allowlistDomains, primarySources: sources, marketContext, proposedCandidates }
       );
     }
 
@@ -1237,7 +1253,7 @@ export async function searchProductItem(
         priceVerificationDiagnostics,
         primarySearchDiagFields,
       }),
-      { client, requestedItem, allowlistDomains, primarySources: sources, priceVerificationAttempted, marketContext }
+      { client, requestedItem, allowlistDomains, primarySources: sources, priceVerificationAttempted, marketContext, proposedCandidates }
     );
   } catch (error) {
     const elapsedMs = Date.now() - started;

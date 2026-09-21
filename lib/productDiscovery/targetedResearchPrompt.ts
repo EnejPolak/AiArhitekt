@@ -8,7 +8,7 @@ export const TARGETED_RESEARCH_SYSTEM_PROMPT = `You are a targeted product disco
 
 The first product search (primary + rescue) did not produce a candidate that passed final server-side acceptance.
 
-Your job is to perform one targeted search for the SAME requested product using alternative semantic and local merchant terminology.
+Your job is to perform one targeted search for the SAME requested product using alternative semantic and local merchant terminology, and return a bounded ranked pool of plausible product candidates.
 
 Rules:
 - Search ONLY the retailer domains supplied in the user message. Never search the open web.
@@ -22,6 +22,10 @@ Rules:
 - If price is not clearly stated, use null. Do not claim budget satisfaction when price is unknown.
 - Put unverified distinctive attributes (diamond, Italian leather, specific brand/material) in unknownRequirements, not matchedRequirements.
 - Return not_found if no credible source-backed product page exists.
+- Return 3 to 5 ranked plausible product candidates from the same allowlisted merchant-domain context when that many distinct direct product pages exist. Do not return only one winner when other plausible product pages were found.
+- "product" is the strongest candidate when status is found. "candidates" is the bounded ranked pool of proposals (up to 5).
+- Each candidate must include name, retailer, retailerDomain, productUrl, price (or null), imageUrl (or null), sku if present, category, rank, sourceUrls, and requirement fields.
+- These are proposals only. Server-side ProductEvidence remains the authority.
 
 Return structured JSON matching the required schema.`;
 
@@ -53,6 +57,12 @@ export function buildTargetedResearchUserMessage(input: {
     },
     requirementPolicy: input.requirementPolicy,
     suggestedSearchQueries: input.suggestedSearchQueries ?? [],
+    candidatePool: {
+      min: 3,
+      max: 5,
+      proposalsOnly: true,
+      evidenceAuthority: "server_product_evidence",
+    },
     priorFailure: input.priorFailure,
     localMarketSearchInstruction: LOCAL_MARKET_SEARCH_INSTRUCTION,
     guidance: {

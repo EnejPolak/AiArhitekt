@@ -4,13 +4,11 @@ import type { ProductDiscoveryView, ProductSelectionView } from "./types";
 
 /**
  * Shopping-list / final-report inclusion:
- * - Found products = every persisted `project_product_selections` row.
- *   Discovery stores one chosen product per searched requirement. That row is
- *   the shopping-list item. `isConfirmed` is the existing "Use in design"
- *   render flag and is NOT a second shopping-list confirmation system.
- * - Missing requirements = unmatched rows with `no_valid_product` or
- *   `search_interrupted`.
- * - `not_searched` stays a separate limit note, not a fabricated product.
+ * - Found products = persisted READY selections. Unavailable FOUND-but-unrenderable
+ *   rows are not shopping-list items.
+ * - Missing requirements = unmatched `no_valid_product` / `search_interrupted`,
+ *   plus unavailable selections that never became RENDER_READY.
+ * - `not_searched` stays a separate limit note. `user_removed` is excluded.
  */
 export const SHOPPING_MISSING_REASONS = new Set<UnmatchedRequirement["reason"]>([
   "no_valid_product",
@@ -57,17 +55,30 @@ export function toProjectProductShoppingState(
   discovery: ProductDiscoveryView | null,
   selections: ProductSelectionView[]
 ): ProjectProductShoppingState {
-  const foundSelections = discovery ? selections : [];
+  const foundSelections = discovery
+    ? selections.filter((item) => item.referenceStatus !== "unavailable")
+    : [];
   const unmatched = discovery?.unmatchedRequirements ?? [];
-  const missingRequirements = unmatched
-    .filter((item) => SHOPPING_MISSING_REASONS.has(item.reason))
-    .map((item) => ({
-      requirementKey: item.requirementKey,
-      requirementType: item.requirementType,
-      itemSpec: item.itemSpec,
-      label: unmatchedRequirementDisplayLabel(item),
-      reason: item.reason,
-    }));
+  const missingRequirements = [
+    ...unmatched
+      .filter((item) => SHOPPING_MISSING_REASONS.has(item.reason))
+      .map((item) => ({
+        requirementKey: item.requirementKey,
+        requirementType: item.requirementType,
+        itemSpec: item.itemSpec,
+        label: unmatchedRequirementDisplayLabel(item),
+        reason: item.reason,
+      })),
+    ...selections
+      .filter((item) => item.referenceStatus === "unavailable")
+      .map((item) => ({
+        requirementKey: item.requirementKey,
+        requirementType: item.requirementType,
+        itemSpec: item.itemSpec,
+        label: item.productTitle,
+        reason: "no_valid_product" as const,
+      })),
+  ];
   const notSearchedCount = unmatched.filter((item) => item.reason === "not_searched").length;
 
   let knownProductTotal = 0;

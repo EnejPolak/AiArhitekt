@@ -232,7 +232,7 @@ function serpOutcome(
           picked: {
             title: pick === "null-price" ? "Sofa without price" : semanticSerpTitle(item),
             url: `https://www.localhome.si/p/${index + 1}`,
-            image: pick === "null-price" ? null : `https://cdn.localhome.si/${index + 1}.jpg`,
+            image: `https://cdn.localhome.si/${index + 1}.jpg`,
             price: pick === "null-price" ? null : 249 + index,
             currency: pick === "null-price" ? null : "EUR",
             score: 40,
@@ -310,7 +310,7 @@ describe("product discovery pipeline (local, mocked providers)", () => {
     expect(geocodeFn).toHaveBeenCalledTimes(1);
     expect(placesFn).toHaveBeenCalledTimes(1);
     expect(serpFn.mock.calls.length).toBeGreaterThanOrEqual(1);
-    expect(serpFn.mock.calls.length).toBeLessThanOrEqual(3);
+    expect(serpFn.mock.calls.length).toBeLessThanOrEqual(4);
     expect(analyzeRoomImageMock).not.toHaveBeenCalled();
     expect(first.selections).toHaveLength(1);
     expect(first.selections[0]?.productUrl).toBe("https://www.localhome.si/p/1");
@@ -343,7 +343,7 @@ describe("product discovery pipeline (local, mocked providers)", () => {
     expect(serpFn.mock.calls.length).toBe(serpCallsAfterFirst);
   });
 
-  it("persists null price/currency/image and does not fabricate a row for picked:null", async () => {
+  it("persists null price/currency without requiring image-less FOUND products", async () => {
     await expireLocalProductDiscoveryCooldown(seeded.projectId);
     const geocodeFn = vi.fn(async () => geocodeOk());
     const placesFn = vi.fn(async () => placesResult());
@@ -363,8 +363,7 @@ describe("product discovery pipeline (local, mocked providers)", () => {
 
     expect(result.selections[0]?.price).toBeNull();
     expect(result.selections[0]?.currency).toBeNull();
-    expect(result.selections[0]?.productImageUrl).toBeNull();
-    expect(result.selections[0]?.hasReferenceImage).toBe(false);
+    expect(result.selections[0]?.productImageUrl).toBe("https://cdn.localhome.si/1.jpg");
     expect(JSON.stringify(result.selections)).not.toMatch(/"link"\s*:/);
 
     await expireLocalProductDiscoveryCooldown(seeded.projectId);

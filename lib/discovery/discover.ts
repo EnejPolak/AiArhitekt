@@ -24,6 +24,7 @@ import { claimProductDiscoverySlot } from "./claim";
 import {
   DISCOVERY_DEADLINE_MS,
   DISCOVERY_OPENAI_MIN_REMAINING_MS,
+  DISCOVERY_SERP_MIN_REMAINING_MS,
   DISCOVERY_SERP_TIMEOUT_MS,
   MAX_LOCATION_INPUT_LENGTH,
   MIN_LOCATION_INPUT_LENGTH,
@@ -43,10 +44,22 @@ import { ensureProductReferenceAssets } from "@/lib/references/ensure";
 import type { FetchLike } from "@/lib/references/fetchImage";
 import type { AddressLookup } from "@/lib/references/ssrf";
 import {
+  evaluateCandidateRenderReadyWithFetch,
+  isRejectedCandidateUrl,
+  isRequiredUnresolvedReason,
+  markSlotUserRemoved,
+  resolveCompleteRoomSelections,
+  resolveRequirementSlot,
+  selectionFromRenderReadyCandidate,
+} from "./completeRoom";
+import { rankRequirementCandidates } from "./style/rankCandidates";
+import {
   deleteProjectProductDiscovery,
   getProjectProductDiscovery,
   getProjectProductSelections,
+  insertReadyProductSelection,
   persistProductDiscoveryResult,
+  updateDiscoveryUnmatchedRequirements,
 } from "./queries";
 import type { ShoppingPreferenceInput } from "./preferences";
 import { shoppingPreferenceFingerprint } from "./preferenceHash";
@@ -455,8 +468,62 @@ export async function discoverProjectProducts(
     throw typedError;
   }
 
-  unmatched.push(...resolved.unmatched);
-  let selections = resolved.selections;
+  const resolvedSlots = await resolveCompleteRoomSelections({
+    searched: searchedForSerp,
+    pools: resolved.candidatePools,
+    searchUnmatched: resolved.unmatched,
+    evaluate: (candidate) =>
+      evaluateCandidateRenderReadyWithFetch(candidate, {
+        fetch: options.fetch,
+        lookup: options.lookup,
+      }),
+    recover: async ({ requirement, rejected }) => {
+      const query = requirement.queryPlan[0] || requirement.itemSpec;
+      const outcome = useLegacySerp
+        ? await serpSearch({
+            items: [query],
+            allowlistDomains,
+            domainCategoryMap: places.domainCategoryMapStores,
+            retryOnTimeout: false,
+            providerTimeoutMs: DISCOVERY_SERP_TIMEOUT_MS,
+            deadlineAt,
+            minRemainingBeforeRequestMs: DISCOVERY_SERP_MIN_REMAINING_MS,
+          })
+        : await productSearch({
+            items: [query],
+            allowlistDomains,
+            deadlineAt,
+            minRemainingBeforeRequestMs: DISCOVERY_OPENAI_MIN_REMAINING_MS,
+            marketContext: {
+              countryCode: geo.countryCode,
+              formattedLocation: geo.formattedAddress ?? locationInput,
+              merchantDomains: allowlistDomains,
+            },
+          });
+      if (!outcome.ok) return [];
+      const row = outcome.response.results.find((item) => item.item === query) ?? outcome.response.results[0];
+      if (!row) return [];
+      const ranking = rankRequirementCandidates({
+        requirement,
+        serpResult: row,
+        query,
+        queryLevel: 0,
+        maxLevel: 1,
+        stores: places.stores,
+      });
+      return ranking.ranked
+        .filter((candidate) => !isRejectedCandidateUrl(rejected, candidate.product.productUrl))
+        .sort((left, right) => {
+          const imageDelta =
+            Number(right.product.hasReferenceImage) - Number(left.product.hasReferenceImage);
+          if (imageDelta !== 0) return imageDelta;
+          return right.finalScore - left.finalScore;
+        });
+    },
+  });
+
+  unmatched.push(...resolvedSlots.unmatched);
+  let selections = resolvedSlots.selections;
 
   const enrichmentStarted = Date.now();
   const enrichedWinners = await enrichDiscoveryWinners(selections, {
@@ -539,4 +606,171 @@ export async function discoverProjectProducts(
   });
 
   return { discovery: persisted.discovery, selections: selectionsOut, reused: false };
+}
+
+function searchableFromUnmatched(
+  item: UnmatchedRequirement
+): import("./itemSpecs").SearchableRequirement {
+  if (item.requirementType === "material") {
+    return {
+      requirementType: "material",
+      requirementKey: item.requirementKey,
+      itemSpec: item.itemSpec,
+      queryPlan: [item.itemSpec],
+      displayLabel: item.displayLabel,
+      snapshot: {
+        surface: "unknown",
+        category: item.itemSpec,
+        finishDirection: null,
+        constraints: [],
+      },
+    };
+  }
+  return {
+    requirementType: "furniture",
+    requirementKey: item.requirementKey,
+    itemSpec: item.itemSpec,
+    queryPlan: [item.itemSpec],
+    displayLabel: item.displayLabel,
+    snapshot: {
+      category: item.itemSpec,
+      quantity: 1,
+      placementNotes: null,
+      constraints: [],
+    },
+  };
+}
+
+export async function removeRequirementFromDesign(
+  client: Client,
+  projectId: string,
+  requirementKey: string,
+  options: { persistClient: Client }
+): Promise<{ discovery: ProductDiscoveryView; selections: ProductSelectionView[] }> {
+  const loaded = await loadCurrentProductDiscovery(client, projectId);
+  if (!loaded) {
+    throw new DiscoveryError("missing_analysis", discoveryErrorMessage("missing_analysis"));
+  }
+  const unmatched = loaded.discovery.unmatchedRequirements.map((item) =>
+    item.requirementKey === requirementKey && isRequiredUnresolvedReason(item.reason)
+      ? markSlotUserRemoved(item)
+      : item
+  );
+  await updateDiscoveryUnmatchedRequirements(
+    options.persistClient,
+    loaded.discovery.id,
+    unmatched
+  );
+  const discovery = await getProjectProductDiscovery(client, projectId);
+  if (!discovery) {
+    throw new DiscoveryError("failed", discoveryErrorMessage("failed"));
+  }
+  return { discovery, selections: loaded.selections };
+}
+
+export async function retryUnresolvedRequirement(
+  client: Client,
+  projectId: string,
+  requirementKey: string,
+  options: {
+    ownerUserId: string;
+    persistClient: Client;
+    searchProducts?: typeof runOpenAIProductDiscovery;
+    fetch?: FetchLike;
+    lookup?: AddressLookup;
+  }
+): Promise<{ discovery: ProductDiscoveryView; selections: ProductSelectionView[] }> {
+  const loaded = await loadCurrentProductDiscovery(client, projectId);
+  if (!loaded) {
+    throw new DiscoveryError("missing_analysis", discoveryErrorMessage("missing_analysis"));
+  }
+  const unmatchedItem = loaded.discovery.unmatchedRequirements.find(
+    (item) => item.requirementKey === requirementKey && isRequiredUnresolvedReason(item.reason)
+  );
+  if (!unmatchedItem) {
+    return loaded;
+  }
+
+  const requirement = searchableFromUnmatched(unmatchedItem);
+  const productSearch = options.searchProducts ?? runOpenAIProductDiscovery;
+  const outcome = await productSearch({
+    items: [requirement.itemSpec],
+    allowlistDomains: loaded.discovery.allowlistDomains,
+  });
+  const row = outcome.ok
+    ? outcome.response.results.find((item) => item.item === requirement.itemSpec) ??
+      outcome.response.results[0]
+    : undefined;
+  const ranking = row
+    ? rankRequirementCandidates({
+        requirement,
+        serpResult: row,
+        query: requirement.itemSpec,
+        queryLevel: 0,
+        maxLevel: 1,
+        stores: [],
+      })
+    : { ranked: [], winner: null };
+
+  const slot = await resolveRequirementSlot({
+    requirement,
+    candidates: ranking.ranked,
+    rejected: unmatchedItem.rejectedCandidates ?? [],
+    evaluate: (candidate) =>
+      evaluateCandidateRenderReadyWithFetch(candidate, {
+        fetch: options.fetch,
+        lookup: options.lookup,
+      }),
+  });
+
+  if (slot.status === "ready" && slot.selected) {
+    const ready = selectionFromRenderReadyCandidate(requirement, slot.selected);
+    await insertReadyProductSelection(options.persistClient, {
+      projectId,
+      discoveryId: loaded.discovery.id,
+      selection: ready,
+    });
+    const remaining = loaded.discovery.unmatchedRequirements.filter(
+      (item) => item.requirementKey !== requirementKey
+    );
+    await updateDiscoveryUnmatchedRequirements(options.persistClient, loaded.discovery.id, remaining);
+    const selections = await getProjectProductSelections(client, loaded.discovery.id);
+    const created = selections.find((item) => item.requirementKey === requirementKey);
+    if (created) {
+      await ensureProductReferenceAssets({
+        persistClient: options.persistClient,
+        ownerUserId: options.ownerUserId,
+        projectId,
+        selections: [created],
+        fetch: options.fetch,
+        lookup: options.lookup,
+      });
+    }
+    const refreshed = await getProjectProductSelections(client, loaded.discovery.id);
+    const discovery = await getProjectProductDiscovery(client, projectId);
+    if (!discovery) {
+      throw new DiscoveryError("failed", discoveryErrorMessage("failed"));
+    }
+    return { discovery, selections: refreshed };
+  }
+
+  const nextUnmatched = loaded.discovery.unmatchedRequirements.map((item) =>
+    item.requirementKey === requirementKey
+      ? {
+          ...item,
+          rejectedCandidates: slot.rejected,
+          recoverySearchesUsed: unmatchedItem.recoverySearchesUsed ?? 1,
+        }
+      : item
+  );
+  await updateDiscoveryUnmatchedRequirements(
+    options.persistClient,
+    loaded.discovery.id,
+    nextUnmatched
+  );
+  const discovery = await getProjectProductDiscovery(client, projectId);
+  if (!discovery) {
+    throw new DiscoveryError("failed", discoveryErrorMessage("failed"));
+  }
+  return { discovery, selections: loaded.selections };
 }

@@ -106,6 +106,7 @@ const READINESS_CODES = new Set([
   "stale_source",
   "no_confirmed_products",
   "reference_grounding_unavailable",
+  "incomplete_room",
   "too_many_references",
 ]);
 
@@ -131,6 +132,27 @@ export async function loadRoomRenderState(input: {
 
     try {
       const source = await prepareRenderSource(supabase, parsed.data.projectId, preferences);
+      if (!source.completeRoom.allowed) {
+        return {
+          ok: true,
+          fingerprint: source.fingerprint,
+          currentRender: null,
+          latestSucceeded,
+          processing,
+          stale: Boolean(latestSucceeded),
+          previewUrl: await signedPreview(supabase, latestSucceeded),
+          renders: markCurrent(renders, source.fingerprint),
+          missingReferences:
+            source.completeRoom.unresolvedLabels.length > 0
+              ? source.completeRoom.unresolvedLabels.map((label) => ({
+                  selectionId: "",
+                  productTitle: label,
+                }))
+              : source.missing,
+          readinessCode: "incomplete_room",
+          readinessMessage: renderErrorMessage("incomplete_room"),
+        };
+      }
       const marked = markCurrent(renders, source.fingerprint);
       const current = marked.find((row) => row.isCurrent) ?? null;
       return {

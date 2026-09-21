@@ -84,6 +84,7 @@ describe("project room preference adapter", () => {
     expect(render.notes).toBe("keep the window nook");
     expect(render.budgetLevel).toBe("premium");
     expect(render.flooring).toBe("marble");
+    expect(render.keepExistingWalls).toBe(false);
   });
 
   it("treats Metallic Black whitespace as the same shopping identity", () => {

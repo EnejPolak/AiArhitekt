@@ -24,6 +24,10 @@ import type { ProductDiscoveryView, ProductSelectionView } from "@/lib/discovery
 import { DEFAULT_DISCOVERY_RADIUS_KM } from "@/lib/discovery/constants";
 import { toProjectProductShoppingState } from "@/lib/discovery/shoppingState";
 import {
+  removeRequirementFromDesignAction,
+  retryUnresolvedRequirementAction,
+} from "@/lib/discovery/actions";
+import {
   parseProjectLocation,
   projectLocationLabel,
   type ProjectLocation,
@@ -191,6 +195,7 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
   const [persistedSelections, setPersistedSelections] = React.useState<ProductSelectionView[]>(
     productDiscovery?.selections ?? []
   );
+  const [retryBusyKey, setRetryBusyKey] = React.useState<string | null>(null);
   const [hasPersistedPhoto, setHasPersistedPhoto] = React.useState(
     Boolean(roomPhoto?.previewUrl || roomPhoto?.filename)
   );
@@ -388,6 +393,40 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
   const productShoppingState = React.useMemo(
     () => toProjectProductShoppingState(persistedDiscovery, persistedSelections),
     [persistedDiscovery, persistedSelections]
+  );
+  const goToStepKey = React.useCallback(
+    (key: "design-preferences" | "budget-signal") => {
+      const index = stepIndexFromKey("room-renovation", key);
+      setCurrentStep(index);
+      onStepChange?.(stepKeyFromIndex("room-renovation", index));
+    },
+    [onStepChange]
+  );
+  const handleRetryRequirement = React.useCallback(
+    async (requirementKey: string) => {
+      if (retryBusyKey) return;
+      setRetryBusyKey(requirementKey);
+      try {
+        const result = await retryUnresolvedRequirementAction({ projectId, requirementKey });
+        if (result.ok) {
+          setPersistedDiscovery(result.discovery);
+          setPersistedSelections(result.selections);
+        }
+      } finally {
+        setRetryBusyKey(null);
+      }
+    },
+    [projectId, retryBusyKey]
+  );
+  const handleRemoveRequirement = React.useCallback(
+    async (requirementKey: string) => {
+      const result = await removeRequirementFromDesignAction({ projectId, requirementKey });
+      if (result.ok) {
+        setPersistedDiscovery(result.discovery);
+        setPersistedSelections(result.selections);
+      }
+    },
+    [projectId]
   );
   const persistedProjectLocation = parseProjectLocation(roomPrefs);
   const searchLocation = persistedProjectLocation
@@ -829,6 +868,7 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
           <Step9bProductSourcing
             projectId={projectId}
             selections={persistedSelections}
+            discovery={persistedDiscovery}
             unmatchedRequirements={persistedDiscovery?.unmatchedRequirements ?? []}
             preferences={{
               selectedStyles: data.selectedStyles,
@@ -838,9 +878,15 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
               flooring: data.preferences?.flooring ?? "keep",
               underfloorHeating: data.preferences?.underfloorHeating ?? false,
               bedType: data.preferences?.bedType ?? "none",
+              keepExistingWalls: data.preferences?.keepExistingWalls ?? false,
               notes: data.preferences?.notes ?? "",
             }}
             roomPhotoPreviewUrl={roomPhoto?.previewUrl ?? null}
+            onRetryRequirement={(requirementKey) => void handleRetryRequirement(requirementKey)}
+            onChangeConstraints={() => goToStepKey("design-preferences")}
+            onIncreaseBudget={() => goToStepKey("budget-signal")}
+            onRemoveRequirement={(requirementKey) => void handleRemoveRequirement(requirementKey)}
+            retryBusyKey={retryBusyKey}
             onContinue={() => {
               nextStep();
             }}
@@ -850,6 +896,11 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
         return (
           <Step9cShoppingList
             shoppingState={productShoppingState}
+            onRetryRequirement={(requirementKey) => void handleRetryRequirement(requirementKey)}
+            onChangeConstraints={() => goToStepKey("design-preferences")}
+            onIncreaseBudget={() => goToStepKey("budget-signal")}
+            onRemoveRequirement={(requirementKey) => void handleRemoveRequirement(requirementKey)}
+            retryBusyKey={retryBusyKey}
             onContinue={() => {
               addAIMessage(
                 productShoppingState.foundSelections.length > 0

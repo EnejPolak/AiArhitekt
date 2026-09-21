@@ -141,8 +141,21 @@ describe("toProjectProductShoppingState", () => {
     expect(state.knownProductTotal).toBeNull();
   });
 
-  it("includes found products regardless of isConfirmed and preserves the design flag", () => {
-    const confirmed = productA;
+    it("does not treat unavailable FOUND products as shopping-list selections", () => {
+      const unavailable = selection({
+        id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        itemSpec: "sofa",
+        productTitle: "Unrenderable sofa",
+        referenceStatus: "unavailable",
+        isConfirmed: true,
+      });
+      const state = toProjectProductShoppingState(discovery(), [productA, unavailable]);
+      expect(state.foundSelections.map((item) => item.productTitle)).toEqual(["Product A"]);
+      expect(state.missingRequirements.some((item) => item.label === "Unrenderable sofa")).toBe(true);
+    });
+
+    it("includes found products regardless of isConfirmed and preserves the design flag", () => {
+      const confirmed = productA;
     const notConfirmed = selection({
       id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
       itemSpec: "wool rug",

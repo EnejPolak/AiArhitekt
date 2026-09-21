@@ -77,12 +77,20 @@ export function orderRenderReferences(
   }> = [];
 
   selections.forEach((selection, originalIndex) => {
-    if (selection.referenceStatus === "unavailable") {
+    const asset = assetsBySelectionId.get(selection.id);
+    if (selection.referenceStatus === "unavailable" || selection.referenceStatus === "pending") {
       missing.push(selection);
       return;
     }
-    const asset = assetsBySelectionId.get(selection.id);
+    if (selection.referenceStatus != null && selection.referenceStatus !== "ready") {
+      missing.push(selection);
+      return;
+    }
     if (!isValidReferenceForSelection(selection, asset)) {
+      missing.push(selection);
+      return;
+    }
+    if (asset.sizeBytes <= 0) {
       missing.push(selection);
       return;
     }

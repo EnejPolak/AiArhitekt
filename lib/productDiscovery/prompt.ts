@@ -13,7 +13,7 @@ export const PRODUCT_DISCOVERY_SYSTEM_PROMPT_CONTROL = `You are a product discov
 
 You are not a general shopping advisor.
 
-Your job is to find one strongest currently purchasable product matching the requested specifications.
+Your job is to propose a bounded ranked pool of currently purchasable products matching the requested specifications, then identify the strongest candidate if any exist.
 
 Requirement types:
 - Hard requirements: explicit maximum price, exact/precise dimensions when user says exactly/precisely/must be, required product category, explicit compatibility, required technical standard, mandatory brand/model.
@@ -53,6 +53,14 @@ Best-effort example:
 - Verified evidence: black pendant lamp, roughly 40 cm, EUR 119.99, material not stated.
 - Correct response: status "found", matchedRequirements for black/pendant/approx size/verified price if shown, unknownRequirements includes "metal", not not_found.
 
+Candidate pool (mandatory):
+- Return 3 to 5 ranked plausible product candidates from the same allowlisted merchant-domain context when that many distinct direct product pages exist.
+- Do NOT return only one winner when other plausible allowlisted product pages were found.
+- "product" is the strongest candidate when status is found. "candidates" is the bounded ranked pool of proposals (up to 5).
+- Each candidate must include: name, retailer, retailerDomain, productUrl, price (or null), imageUrl (or null), sku if present, category, rank, sourceUrls, and requirement fields.
+- These are proposals only. Server-side ProductEvidence remains the authority. Never fabricate URLs, prices, images, or SKUs.
+- If fewer than 3 distinct product pages exist, return every credible product page you found, including zero.
+
 Return structured JSON matching the required schema.`;
 
 /**
@@ -63,7 +71,7 @@ export const PRODUCT_DISCOVERY_SYSTEM_PROMPT = `You are a product discovery engi
 
 You are not a general shopping advisor.
 
-Your job is to find one strongest currently purchasable product matching the requested specifications.
+Your job is to propose a bounded ranked pool of currently purchasable products matching the requested specifications, then identify the strongest candidate if any exist.
 
 Requirement types:
 - Hard requirements: explicit maximum price, exact/precise dimensions when user says exactly/precisely/must be, required product category, explicit compatibility, required technical standard, mandatory brand/model.
@@ -130,6 +138,14 @@ Best-effort example:
 - Verified evidence: black pendant lamp, roughly 40 cm, EUR 119.99, material not stated.
 - Correct response: status "found", matchedRequirements for black/pendant/approx size/verified price if shown, unknownRequirements includes "metal", not not_found.
 
+Candidate pool (mandatory):
+- Return 3 to 5 ranked plausible product candidates from the same allowlisted merchant-domain context when that many distinct direct product pages exist.
+- Do NOT return only one winner when other plausible allowlisted product pages were found.
+- "product" is the strongest candidate when status is found. "candidates" is the bounded ranked pool of proposals (up to 5).
+- Each candidate must include: name, retailer, retailerDomain, productUrl, price (or null), imageUrl (or null), sku if present, category, rank, sourceUrls, and requirement fields.
+- These are proposals only. Server-side ProductEvidence remains the authority. Never fabricate URLs, prices, images, or SKUs.
+- If fewer than 3 distinct product pages exist, return every credible product page you found, including zero.
+
 Return structured JSON matching the required schema.`;
 
 /**
@@ -156,7 +172,7 @@ export function buildProductDiscoveryUserMessage(input: {
     input.allowedDomains
   );
   return JSON.stringify({
-    task: "find_one_best_product",
+    task: "find_ranked_product_candidates",
     requestedItem: input.requestedItem,
     allowedDomains: input.allowedDomains,
     marketContext: {
@@ -166,6 +182,12 @@ export function buildProductDiscoveryUserMessage(input: {
     },
     requirementPolicy: input.requirementPolicy,
     suggestedSearchQueries: input.suggestedSearchQueries ?? [],
+    candidatePool: {
+      min: 3,
+      max: 5,
+      proposalsOnly: true,
+      evidenceAuthority: "server_product_evidence",
+    },
     localMarketSearchInstruction: LOCAL_MARKET_SEARCH_INSTRUCTION,
     searchGuidance: {
       searchBroadValidateStrict: true,

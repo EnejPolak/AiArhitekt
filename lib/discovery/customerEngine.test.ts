@@ -141,7 +141,7 @@ describe("customer discovery engine", () => {
                   picked: {
                     title: "Desk",
                     url: "https://www.localhome.si/p/desk",
-                    image: null,
+                    image: "https://cdn.localhome.si/desk.jpg",
                     price: 199,
                     currency: "EUR",
                     score: 80,
@@ -201,7 +201,8 @@ describe("customer discovery engine", () => {
       }
     );
 
-    expect(runOpenAIProductDiscoveryMock).toHaveBeenCalledTimes(1);
+    expect(runOpenAIProductDiscoveryMock).toHaveBeenCalledTimes(2);
+    expect(runOpenAIProductDiscoveryMock.mock.calls[1]?.[0]?.items).toHaveLength(1);
     expect(runCanonicalSerpSearchMock).not.toHaveBeenCalled();
     expect(result.selections).toHaveLength(1);
     expect(result.discovery.unmatchedRequirements.some((item) => item.reason === "no_valid_product")).toBe(
@@ -291,9 +292,12 @@ describe("customer discovery engine", () => {
         }) as never,
     });
 
-    expect(runOpenAIProductDiscoveryMock).toHaveBeenCalledTimes(1);
+    expect(runOpenAIProductDiscoveryMock).toHaveBeenCalledTimes(4);
     const stepC = runOpenAIProductDiscoveryMock.mock.calls[0]?.[0];
     expect(stepC?.items).toHaveLength(3);
+    expect(
+      runOpenAIProductDiscoveryMock.mock.calls.slice(1).every((call) => call[0]?.items.length === 1)
+    ).toBe(true);
     expect(stepC?.items.join(" ")).toMatch(/floor lamp/i);
     expect(stepC?.items.join(" ")).toMatch(/vase/i);
     expect(stepC?.items.join(" ")).toMatch(/rug/i);

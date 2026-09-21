@@ -123,6 +123,8 @@ describe("resolveProductsWithOpenAI", () => {
     expect(result.unmatched[0]?.reason).toBe("no_valid_product");
     expect(result.interrupted).toBe(false);
     expect(searchOpenAI).toHaveBeenCalledTimes(1);
+    expect(result.candidatePools[0]?.candidates.length).toBeGreaterThan(0);
+    expect(result.candidatePools[1]?.candidates).toEqual([]);
   });
 
   it("forwards project market context to the OpenAI search input", async () => {
