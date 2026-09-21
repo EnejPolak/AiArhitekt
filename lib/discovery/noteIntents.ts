@@ -36,6 +36,26 @@ const POSITIVE_INTENT_PATTERNS: IntentPattern[] = [
     patterns: [/\boffice\s+chair\b/i, /\bpisarni[sš]ki\s+stol\b/i],
   },
   {
+    concept: "reading_chair",
+    category: "reading chair",
+    patterns: [/\breading\s+chair\b/i, /\baccent\s+chair\b/i, /\bnaslanja[cč]\b/i],
+  },
+  {
+    concept: "rug",
+    category: "rug",
+    patterns: [/\brug\b/i, /\bcarpet\b/i, /\bpreproga\b/i],
+  },
+  {
+    concept: "dining_table",
+    category: "dining table",
+    patterns: [/\bdining\s+table\b/i, /\bjedilna\s+miza\b/i],
+  },
+  {
+    concept: "dining_chair",
+    category: "dining chair",
+    patterns: [/\bdining\s+chairs?\b/i, /\bjediln\w*\s+stol/i],
+  },
+  {
     concept: "desk",
     category: "computer desk",
     patterns: [
@@ -117,7 +137,19 @@ const KEEP_SUPPRESSION_PATTERNS: Array<{ concept: ProductConcept; patterns: RegE
   },
   {
     concept: "sofa",
-    patterns: [/\bkeep\s+(?:my\s+)?(?:current\s+)?sofa\b/i, /\bobdrži\s+.*\bkav[cč]\b/i],
+    patterns: [
+      /\bkeep\s+(?:my\s+)?(?:current\s+)?sofa\b/i,
+      /\bkeep\s+(?:my\s+)?(?:current\s+)?couch\b/i,
+      /\bobdrži\s+.*\bkav[cč]\b/i,
+    ],
+  },
+  {
+    concept: "rug",
+    patterns: [/\bkeep\s+(?:my\s+)?(?:current\s+)?(?:rug|carpet)\b/i],
+  },
+  {
+    concept: "reading_chair",
+    patterns: [/\bkeep\s+(?:my\s+)?(?:current\s+)?reading\s+chair\b/i],
   },
   {
     concept: "bed",
@@ -126,6 +158,12 @@ const KEEP_SUPPRESSION_PATTERNS: Array<{ concept: ProductConcept; patterns: RegE
 ];
 
 const CHAIR_FAMILY: ProductConcept[] = ["gaming_chair", "office_chair", "chair"];
+const READING_CHAIR_FAMILY: ProductConcept[] = ["reading_chair", "chair"];
+const NEGATIVE_SUPPRESSION_PATTERNS: Array<{ concept: ProductConcept; patterns: RegExp[] }> = [
+  { concept: "rug", patterns: [/\bno\s+rug\b/i, /\bno\s+carpet\b/i, /\bdon'?t\s+want\s+a\s+rug\b/i, /\bbrez\s+preproge\b/i] },
+  { concept: "sofa", patterns: [/\bno\s+sofa\b/i, /\bno\s+couch\b/i] },
+  { concept: "reading_chair", patterns: [/\bno\s+reading\s+chair\b/i] },
+];
 
 const STOPWORDS = new Set([
   "the",
@@ -153,11 +191,28 @@ const STOPWORDS = new Set([
 
 export function conceptFamily(concept: ProductConcept): ProductConcept[] {
   if (CHAIR_FAMILY.includes(concept)) return CHAIR_FAMILY;
+  if (READING_CHAIR_FAMILY.includes(concept)) return READING_CHAIR_FAMILY;
   if (concept === "desk") return ["desk"];
   if (["marble", "laminate", "hardwood", "tiles", "flooring"].includes(concept)) {
     return ["marble", "laminate", "hardwood", "tiles", "flooring"];
   }
   return [concept];
+}
+
+export function extractNegativeSuppressions(notes: string): NoteKeepSuppression[] {
+  const trimmed = notes.normalize("NFC").replace(/\s+/g, " ").trim();
+  if (!trimmed) return [];
+  const out: NoteKeepSuppression[] = [];
+  for (const rule of NEGATIVE_SUPPRESSION_PATTERNS) {
+    for (const pattern of rule.patterns) {
+      const match = trimmed.match(pattern);
+      if (match) {
+        out.push({ concept: rule.concept, matchedPhrase: match[0] });
+        break;
+      }
+    }
+  }
+  return out;
 }
 
 export function extractKeepSuppressions(notes: string): NoteKeepSuppression[] {
@@ -232,6 +287,7 @@ function matchesKnownPattern(text: string): IntentPattern | null {
 function isExplicitProductRequest(text: string, fromList: boolean): boolean {
   const clause = normalizeClause(text);
   if (!clause || isKeepLike(clause) || isMoodOnly(clause)) return false;
+  if (/\bno\s+(?:rug|carpet|sofa|couch|plants?|artwork|reading\s+chair)\b/i.test(clause)) return false;
   if (hasCommerceConstraint(clause) || hasDimensionConstraint(clause)) return true;
   if (fromList && hasLikelyProductNoun(clause)) return true;
   if (matchesKnownPattern(clause)) return true;
@@ -416,6 +472,9 @@ function extractViaKnownPatterns(notes: string, suppressions: Set<ProductConcept
   } else if (found.has("office_chair")) {
     found.delete("chair");
   }
+  if (found.has("reading_chair")) {
+    found.delete("chair");
+  }
 
   return [...found.values()];
 }
@@ -424,7 +483,10 @@ export function extractShoppingIntentsFromNotes(notes: string): NoteShoppingInte
   const trimmed = notes.normalize("NFC").replace(/\s+/g, " ").trim();
   if (!trimmed) return [];
 
-  const suppressions = new Set(extractKeepSuppressions(trimmed).map((item) => item.concept));
+  const suppressions = new Set([
+    ...extractKeepSuppressions(trimmed).map((item) => item.concept),
+    ...extractNegativeSuppressions(trimmed).map((item) => item.concept),
+  ]);
   const listed = splitNumberedOrListedItems(trimmed);
   const collected: NoteShoppingIntent[] = [];
 
@@ -462,6 +524,9 @@ export function extractShoppingIntentsFromNotes(notes: string): NoteShoppingInte
     return deduped.filter((item) => item.concept !== "office_chair" && item.concept !== "chair");
   }
   if (deduped.some((item) => item.concept === "office_chair")) {
+    return deduped.filter((item) => item.concept !== "chair");
+  }
+  if (deduped.some((item) => item.concept === "reading_chair")) {
     return deduped.filter((item) => item.concept !== "chair");
   }
   return deduped;

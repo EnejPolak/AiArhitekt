@@ -89,7 +89,7 @@ function analysisPayload(projectId: string, uploadId: string, path: string) {
     project_id: projectId,
     source_upload_id: uploadId,
     source_storage_path: path,
-    schema_version: 1,
+    schema_version: 2,
     provider: "openai",
     model: "gpt-4o",
     analysis: validRoomAnalysisResult.analysis,

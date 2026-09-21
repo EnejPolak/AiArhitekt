@@ -149,6 +149,7 @@ export async function discoverProjectProductsAction(input: {
         ownerUserId: project.user_id,
         persistClient,
         preferences,
+        planOverrides: stored?.furnishingPlan ?? null,
         attemptId,
         fetch: globalThis.fetch,
         projectLocation,

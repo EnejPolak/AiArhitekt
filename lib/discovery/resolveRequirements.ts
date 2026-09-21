@@ -1,16 +1,18 @@
 import {
-  furnitureNeedSchema,
   materialNeedSchema,
   type DesignRequirements,
+  type RoomAnalysisObservation,
 } from "@/lib/analysis/schema";
 import { MAX_PRODUCT_DISCOVERY_ITEMS } from "./constants";
 import { explicitFlooringNeed, isFloorMaterialNeed } from "./floorMaterial";
 import {
-  conceptFamily,
-  extractKeepSuppressions,
-  extractShoppingIntentsFromNotes,
-  type NoteShoppingIntent,
-} from "./noteIntents";
+  plannedItemToFurnitureNeed,
+  normalizeFurnishingPlan,
+  parseFurnishingPlanOverrides,
+  type FurnishingPlanOverrides,
+  type NormalizedFurnishingPlan,
+} from "./furnishingPlan";
+import { conceptFamily, extractKeepSuppressions, extractNegativeSuppressions } from "./noteIntents";
 import { parsePaintPreference, paintHueLabel } from "./paintParser";
 import type { ShoppingPreferenceInput } from "./preferences";
 import type { ProductConcept } from "./locales/types";
@@ -18,11 +20,9 @@ import { canonicalEnglishQueryPlan } from "./locales/queryPlan";
 import {
   clampItemSpec,
   furnitureItemSpec,
-  furnitureRequirementKey,
   isWallPaintMaterial,
   materialItemSpec,
   materialRequirementKey,
-  slugRequirementPart,
   type DiscoveryRequirementType,
   type FurnitureNeed,
   type MaterialNeed,
@@ -43,14 +43,15 @@ export type ResolvedShoppingDraft = {
 function furnitureDraft(
   need: FurnitureNeed,
   key: string,
-  provenance: RequirementProvenance
+  provenance: RequirementProvenance,
+  displayLabel = need.category
 ): ResolvedShoppingDraft {
   return {
     requirementType: "furniture",
     requirementKey: key,
     itemSpec: furnitureItemSpec(need),
     snapshot: need,
-    displayLabel: need.category,
+    displayLabel,
     provenance,
   };
 }
@@ -146,49 +147,8 @@ function structuredFlooring(preferences: ShoppingPreferenceInput): ResolvedShopp
   ];
 }
 
-function noteIntentDraft(intent: NoteShoppingIntent, index: number): ResolvedShoppingDraft {
-  const need: FurnitureNeed = {
-    category: intent.category,
-    quantity: 1,
-    placementNotes: null,
-    constraints: intent.constraints.slice(0, 8),
-  };
-  return {
-    requirementType: "furniture",
-    requirementKey: `furniture:${slugRequirementPart(intent.concept)}:note:${index}`,
-    itemSpec: furnitureItemSpec(need),
-    snapshot: need,
-    displayLabel: intent.category,
-    provenance: {
-      source: "user_notes",
-      concept: intent.concept,
-      matchedPhrase: intent.matchedPhrase,
-    },
-  };
-}
-
-function analysisFurnitureDrafts(
-  requirements: DesignRequirements,
-  suppressedConcepts: Set<ProductConcept>,
-  userConcepts: Set<ProductConcept>
-): ResolvedShoppingDraft[] {
-  return requirements.furnitureNeeds
-    .map((raw, index) => {
-      const snapshot = furnitureNeedSchema.parse(raw);
-      const key = furnitureRequirementKey(snapshot, index);
-      const concept = inferFurnitureConcept(snapshot);
-      if (suppressedConcepts.has(concept)) return null;
-      if ([...userConcepts].some((userConcept) => conceptFamily(userConcept).includes(concept))) {
-        return null;
-      }
-      return furnitureDraft(snapshot, key, { source: "analysis", concept });
-    })
-    .filter((item): item is ResolvedShoppingDraft => item !== null);
-}
-
 function analysisMaterialDrafts(
   requirements: DesignRequirements,
-  preferences: ShoppingPreferenceInput,
   suppressedConcepts: Set<ProductConcept>,
   userConcepts: Set<ProductConcept>,
   hasStructuredFlooring: boolean,
@@ -210,20 +170,6 @@ function analysisMaterialDrafts(
       }, materialItemSpec(snapshot));
     })
     .filter((item): item is ResolvedShoppingDraft => item !== null);
-}
-
-function inferFurnitureConcept(need: FurnitureNeed): ProductConcept {
-  const blob = `${need.category} ${need.constraints.join(" ")}`.toLowerCase();
-  if (/gaming\s+chair|gaming\s+stol|igri[cč]arski|igralni\s+stol/.test(blob)) return "gaming_chair";
-  if (/office\s+chair|pisarnisk/.test(blob)) return "office_chair";
-  if (/\bdesk\b|workstation|pisalna miza|racunalniska miza/.test(blob)) return "desk";
-  if (/\bsofa\b|couch|kavc|sedezna/.test(blob)) return "sofa";
-  if (/coffee table|klubsk/.test(blob)) return "coffee_table";
-  if (/\bbed\b|postelj/.test(blob)) return "bed";
-  if (/wardrobe|omara|garderob/.test(blob)) return "wardrobe";
-  if (/\blamp\b|lighting|svetil|\blight fixture|\blight fitting/.test(blob)) return "lighting";
-  if (/\bchair\b|\bstol\b/.test(blob)) return "chair";
-  return "other";
 }
 
 function inferMaterialConcept(need: MaterialNeed): ProductConcept {
@@ -263,10 +209,14 @@ export function buildSearchableRequirements(
 
 export function resolveShoppingRequirements(input: {
   analysisRequirements: DesignRequirements;
+  observation?: RoomAnalysisObservation | null;
   preferences?: ShoppingPreferenceInput | null;
+  planOverrides?: FurnishingPlanOverrides | null;
+  analysisId?: string | null;
 }): {
   searched: SearchableRequirement[];
   notSearched: SearchableRequirement[];
+  plan: NormalizedFurnishingPlan;
 } {
   const preferences = input.preferences ?? {};
   const structuredPaints = structuredWallPaints(preferences);
@@ -274,8 +224,11 @@ export function resolveShoppingRequirements(input: {
   const suppressAnalysisFlooring = flooringPreference !== undefined && flooringPreference !== null;
   const flooringDrafts =
     flooringPreference && flooringPreference !== "keep" ? structuredFlooring(preferences) : [];
-  const noteIntents = extractShoppingIntentsFromNotes(preferences.notes ?? "");
-  const keepSuppressions = extractKeepSuppressions(preferences.notes ?? "");
+  const notes = preferences.notes ?? "";
+  const keepSuppressions = [
+    ...extractKeepSuppressions(notes),
+    ...extractNegativeSuppressions(notes),
+  ];
   const suppressedConcepts = new Set<ProductConcept>();
   for (const item of keepSuppressions) {
     for (const concept of conceptFamily(item.concept)) {
@@ -283,20 +236,39 @@ export function resolveShoppingRequirements(input: {
     }
   }
 
+  const planOverrides =
+    input.planOverrides ?? parseFurnishingPlanOverrides(null);
+  const plan = normalizeFurnishingPlan({
+    analysisRequirements: input.analysisRequirements,
+    observation: input.observation,
+    preferences,
+    planOverrides,
+    analysisId: input.analysisId,
+  });
+
+  const furnitureDrafts = plan.required.map((item) =>
+    furnitureDraft(
+      plannedItemToFurnitureNeed(item),
+      item.requirementKey,
+      {
+        source: item.source,
+        concept: item.concept,
+      },
+      item.displayLabel
+    )
+  );
+
   const userConcepts = new Set<ProductConcept>([
     ...structuredPaints.map((item) => item.provenance.concept),
     ...flooringDrafts.map((item) => item.provenance.concept),
-    ...noteIntents.map((item) => item.concept),
   ]);
 
   const ordered: ResolvedShoppingDraft[] = [
     ...flooringDrafts,
     ...structuredPaints,
-    ...noteIntents.map(noteIntentDraft),
-    ...analysisFurnitureDrafts(input.analysisRequirements, suppressedConcepts, userConcepts),
+    ...furnitureDrafts,
     ...analysisMaterialDrafts(
       input.analysisRequirements,
-      preferences,
       suppressedConcepts,
       userConcepts,
       suppressAnalysisFlooring,
@@ -308,13 +280,16 @@ export function resolveShoppingRequirements(input: {
   return {
     searched: mapped.slice(0, MAX_PRODUCT_DISCOVERY_ITEMS),
     notSearched: mapped.slice(MAX_PRODUCT_DISCOVERY_ITEMS),
+    plan,
   };
 }
 
 /** Dev-only helper: inspect resolved requirements without provider calls. */
 export function debugResolvedShoppingRequirements(input: {
   analysisRequirements: DesignRequirements;
+  observation?: RoomAnalysisObservation | null;
   preferences?: ShoppingPreferenceInput | null;
+  planOverrides?: FurnishingPlanOverrides | null;
 }): Array<{
   displayLabel: string;
   concept: ProductConcept;

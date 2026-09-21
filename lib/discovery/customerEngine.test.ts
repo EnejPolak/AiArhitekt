@@ -49,7 +49,7 @@ function analysis() {
     project_id: projectId,
     source_upload_id: randomUUID(),
     source_storage_path: "room.jpg",
-    schema_version: 1,
+    schema_version: 2,
     provider: "openai",
     model: "test",
     analysis: { roomType: "living-room" },

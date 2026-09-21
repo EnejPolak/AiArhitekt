@@ -91,7 +91,7 @@ async function seedProject(client: Client, userId: string) {
       project_id: projectId,
       source_upload_id: meta.data.id,
       source_storage_path: meta.data.storage_path,
-      schema_version: 1,
+      schema_version: 2,
       provider: "openai",
       model: "gpt-4o",
       analysis: validRoomAnalysisResult.analysis,

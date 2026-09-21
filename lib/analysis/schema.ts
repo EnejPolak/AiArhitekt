@@ -66,11 +66,15 @@ export const roomAnalysisObservationSchema = z.object({
   uncertainties: noteList,
 });
 
+export const furniturePlanRoleSchema = z.enum(["required_for_render", "suggested_only"]);
+
 export const furnitureNeedSchema = z.object({
   category: note,
   quantity: z.number().int().positive().max(20).nullable(),
   placementNotes: z.string().trim().max(400).nullable(),
   constraints: noteList.max(8),
+  rationale: z.string().trim().max(400).nullable().optional(),
+  role: furniturePlanRoleSchema.optional(),
 });
 
 export const materialNeedSchema = z.object({
@@ -95,6 +99,7 @@ export const roomAnalysisProviderResultSchema = z.object({
 
 export type ObservedRoomType = z.infer<typeof observedRoomTypeSchema>;
 export type RoomAnalysisObservation = z.infer<typeof roomAnalysisObservationSchema>;
+export type FurniturePlanRole = z.infer<typeof furniturePlanRoleSchema>;
 export type DesignRequirements = z.infer<typeof designRequirementsSchema>;
 export type RoomAnalysisProviderResult = z.infer<typeof roomAnalysisProviderResultSchema>;
 

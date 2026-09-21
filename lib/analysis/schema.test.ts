@@ -71,6 +71,25 @@ describe("room analysis schema", () => {
     );
   });
 
+  it("accepts furniture needs without role and treats the field as optional", () => {
+    const parsed = parseRoomAnalysisResult({
+      ...validRoomAnalysisResult,
+      designRequirements: {
+        ...validRoomAnalysisResult.designRequirements,
+        furnitureNeeds: [
+          {
+            category: "sofa",
+            quantity: 1,
+            placementNotes: "back wall",
+            constraints: ["must not block the door"],
+          },
+        ],
+      },
+    });
+    expect(parsed.designRequirements.furnitureNeeds[0]?.category).toBe("sofa");
+    expect(parsed.designRequirements.furnitureNeeds[0]?.role).toBeUndefined();
+  });
+
   it("does not require invented exact room measurements", () => {
     expect(Object.keys(roomAnalysisObservationSchema.shape)).not.toContain("areaM2");
     expect(Object.keys(roomAnalysisObservationSchema.shape)).not.toContain("widthMeters");

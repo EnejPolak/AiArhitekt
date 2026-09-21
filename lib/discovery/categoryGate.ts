@@ -249,6 +249,22 @@ function furnitureMatches(
       return /wardrobe|storage|garderob|omara/.test(haystack);
     case "lighting":
       return /lamp|\blight|svetil|\bluc\b/.test(haystack);
+    case "reading_chair":
+      return /reading\s+chair|naslanjac|\bchair\b|\bstol\b/.test(haystack) && !/\bsofa\b|\bdesk\b/.test(haystack);
+    case "dining_chair":
+      return /dining\s+chair|jediln/.test(haystack) || (/\bchair\b|\bstol\b/.test(haystack) && /dining|jediln/.test(haystack));
+    case "dining_table":
+      return /dining\s+table|jediln\w*\s+miz/.test(haystack);
+    case "bedside":
+      return /bedside|nightstand|nocn/.test(haystack);
+    case "storage":
+      return /storage|predalnik|sideboard|komod/.test(haystack);
+    case "tv_console":
+      return /tv\s+(?:unit|console|stand|cabinet)|media\s+unit/.test(haystack);
+    case "rug":
+      return /\brug\b|\bcarpet\b|preproga/.test(haystack);
+    case "window_treatment":
+      return /curtain|drape|zaves|window\s+treatment/.test(haystack);
     default:
       return true;
   }

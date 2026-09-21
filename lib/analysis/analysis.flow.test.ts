@@ -122,7 +122,7 @@ describe("room analysis source + mocked provider (local)", () => {
     expect(first.reused).toBe(false);
     expect(first.analysis.source_upload_id).toBe(seeded.uploadId);
     expect(first.analysis.source_storage_path).toBe(seeded.path);
-    expect(first.analysis.schema_version).toBe(1);
+    expect(first.analysis.schema_version).toBe(2);
     expect(first.analysis.provider).toBe("openai");
     expect(first.analysis.model).toBe("gpt-4o");
     expect(analyzeImage).toHaveBeenCalledTimes(1);

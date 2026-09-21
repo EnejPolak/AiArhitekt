@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { validRoomAnalysisResult } from "./fixtures";
+import { ROOM_ANALYSIS_SCHEMA_VERSION } from "./constants";
 import type { ProjectRoomAnalysisRow } from "./queries";
 import { isCurrentRoomAnalysis, isStaleRoomAnalysis } from "./stale";
 
@@ -9,7 +10,7 @@ const analysis: ProjectRoomAnalysisRow = {
   source_upload_id: "33333333-3333-4333-8333-333333333333",
   source_storage_path:
     "projects/22222222-2222-4222-8222-222222222222/uploads/33333333-3333-4333-8333-333333333333.jpg",
-  schema_version: 1,
+  schema_version: ROOM_ANALYSIS_SCHEMA_VERSION,
   provider: "openai",
   model: "gpt-4o",
   analysis: validRoomAnalysisResult.analysis,
@@ -54,5 +55,14 @@ describe("stale room analysis", () => {
   it("is stale when there is no current photo", () => {
     expect(isStaleRoomAnalysis(analysis, null)).toBe(true);
     expect(isCurrentRoomAnalysis(analysis, null)).toBe(false);
+  });
+
+  it("does not treat a previous analysis schema version as current", () => {
+    const photo = {
+      id: analysis.source_upload_id,
+      storage_path: analysis.source_storage_path,
+    };
+    expect(isCurrentRoomAnalysis({ ...analysis, schema_version: 1 }, photo)).toBe(false);
+    expect(isCurrentRoomAnalysis(analysis, photo)).toBe(true);
   });
 });

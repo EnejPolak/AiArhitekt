@@ -32,4 +32,12 @@ export const EMPTY_PROJECT_ROOM_PREFERENCES = {
   longitude: null,
   radiusKm: null,
   countryCode: null,
+  furnishingPlan: {
+    schemaVersion: 1,
+    sourceAnalysisId: null,
+    removedRequirementKeys: [],
+    acceptedSuggestionKeys: [],
+    addedRequirements: [],
+    editedRequirements: {},
+  },
 } as const satisfies Omit<ProjectRoomPreferences, "projectId" | "createdAt" | "updatedAt">;

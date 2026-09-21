@@ -41,6 +41,8 @@ export const validRoomAnalysisResult: RoomAnalysisProviderResult = {
         quantity: 1,
         placementNotes: "back wall",
         constraints: ["must not block the door"],
+        rationale: "Primary seating; the existing sofa is marked for replacement.",
+        role: "required_for_render",
       },
     ],
     materialNeeds: [

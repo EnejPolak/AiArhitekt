@@ -25,17 +25,26 @@ const FURNITURE_STYLE_CONCEPTS = new Set<ProductConcept>([
   "desk",
   "gaming_chair",
   "office_chair",
+  "reading_chair",
+  "dining_chair",
   "chair",
   "sofa",
   "coffee_table",
+  "dining_table",
   "bed",
+  "bedside",
   "wardrobe",
+  "storage",
+  "tv_console",
+  "rug",
   "lighting",
 ]);
 
 const MASCULINE_STYLE_CONCEPTS = new Set<ProductConcept>([
   "gaming_chair",
   "office_chair",
+  "reading_chair",
+  "dining_chair",
   "chair",
 ]);
 

@@ -16,6 +16,7 @@ export type ShoppingPreferenceInput = {
   bedType?: string | null;
   keepExistingWalls?: boolean | null;
   notes?: string | null;
+  furnishingPlanIdentity?: string | null;
 };
 
 export type ShoppingPreferenceSnapshot = {
@@ -28,6 +29,7 @@ export type ShoppingPreferenceSnapshot = {
   bedType: "none" | "king" | "queen" | "bunk" | "single";
   keepExistingWalls: boolean;
   noteShoppingIntents: string[];
+  furnishingPlanIdentity?: string;
 };
 
 function normalizeText(value: string | null | undefined): string {
@@ -63,6 +65,7 @@ export function canonicalShoppingPreferences(
 
   const flooringParsed = renderFlooringPreferenceSchema.safeParse(input?.flooring ?? "keep");
   const bedParsed = renderBedTypeSchema.safeParse(input?.bedType ?? "none");
+  const furnishingPlanIdentity = (input?.furnishingPlanIdentity ?? "").trim();
 
   return {
     schemaVersion: DISCOVERY_PREFERENCE_SCHEMA_VERSION,
@@ -74,6 +77,7 @@ export function canonicalShoppingPreferences(
     bedType: bedParsed.success ? bedParsed.data : "none",
     keepExistingWalls: Boolean(input?.keepExistingWalls),
     noteShoppingIntents: canonicalNoteShoppingIntents(input?.notes ?? ""),
+    ...(furnishingPlanIdentity ? { furnishingPlanIdentity } : {}),
   };
 }
 
@@ -111,6 +115,9 @@ function normalizeStoredSnapshot(stored: unknown): ShoppingPreferenceSnapshot {
       noteShoppingIntents: Array.isArray(record.noteShoppingIntents)
         ? [...record.noteShoppingIntents].sort((a, b) => a.localeCompare(b))
         : canonicalNoteShoppingIntents(record.notes ?? ""),
+      ...((record.furnishingPlanIdentity ?? "").trim()
+        ? { furnishingPlanIdentity: record.furnishingPlanIdentity!.trim() }
+        : {}),
     };
   }
 
@@ -148,6 +155,9 @@ export function shoppingPreferenceInputFromSnapshot(
     underfloorHeating: snapshot.underfloorHeating,
     bedType: snapshot.bedType,
     keepExistingWalls: snapshot.keepExistingWalls,
+    ...(snapshot.furnishingPlanIdentity
+      ? { furnishingPlanIdentity: snapshot.furnishingPlanIdentity }
+      : {}),
   };
 }
 
@@ -169,6 +179,9 @@ function furnitureIdentityFromSnapshot(snapshot: ShoppingPreferenceSnapshot) {
     underfloorHeating: snapshot.underfloorHeating,
     bedType: snapshot.bedType,
     noteShoppingIntents: snapshot.noteShoppingIntents,
+    ...(snapshot.furnishingPlanIdentity
+      ? { furnishingPlanIdentity: snapshot.furnishingPlanIdentity }
+      : {}),
   };
 }
 

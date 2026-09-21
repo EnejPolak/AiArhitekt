@@ -36,6 +36,22 @@ export function slFurnitureQueries(concept: ProductConcept, ctx: FurnitureQueryC
     }
     case "chair":
       return ["stol"];
+    case "reading_chair":
+      return ["reading chair", "naslanjač"];
+    case "dining_chair":
+      return ["dining chair", "jedilni stol"];
+    case "dining_table":
+      return ["dining table", "jedilna miza"];
+    case "bedside":
+      return ["bedside table", "nočna omarica"];
+    case "storage":
+      return ["storage", "predalnik"];
+    case "tv_console":
+      return ["TV console", "TV omarica"];
+    case "rug":
+      return ["rug", "preproga"];
+    case "window_treatment":
+      return ["curtains", "zavese"];
     default:
       return [];
   }

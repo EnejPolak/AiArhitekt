@@ -26,6 +26,10 @@ import {
   networkCustomerMessage,
 } from "@/lib/ui/customerCopy";
 import { wizardPanelClass } from "../wizardUi";
+import { FurnishingPlanReview } from "../FurnishingPlanReview";
+import type { RoomAnalysisView } from "@/lib/analysis/types";
+import type { FurnishingPlanOverrides } from "@/lib/discovery/furnishingPlan";
+import { EMPTY_FURNISHING_PLAN_OVERRIDES } from "@/lib/discovery/furnishingPlan";
 
 export interface Step9aStoreDiscoveryProps {
   projectId: string;
@@ -34,6 +38,9 @@ export interface Step9aStoreDiscoveryProps {
   initialDiscovery: ProductDiscoveryView | null;
   initialSelections: ProductSelectionView[];
   shoppingPreferences?: ShoppingPreferenceInput;
+  analysis?: RoomAnalysisView | null;
+  furnishingPlan?: FurnishingPlanOverrides;
+  onFurnishingPlanChange?: (next: FurnishingPlanOverrides) => void;
   onComplete: (state: {
     discovery: ProductDiscoveryView;
     selections: ProductSelectionView[];
@@ -73,6 +80,9 @@ export const Step9aStoreDiscovery: React.FC<Step9aStoreDiscoveryProps> = ({
   initialDiscovery,
   initialSelections,
   shoppingPreferences,
+  analysis,
+  furnishingPlan,
+  onFurnishingPlanChange,
   onComplete,
   onDiscoveryUpdated,
 }) => {
@@ -271,9 +281,17 @@ export const Step9aStoreDiscovery: React.FC<Step9aStoreDiscoveryProps> = ({
     <div className="flex justify-start mb-6">
       <div className={`${wizardPanelClass} space-y-5`}>
         <div className="text-[15px] text-[rgba(255,255,255,0.85)] leading-relaxed">
-          I will search nearby stores for real furniture and materials from the room analysis.
-          This does not generate a render.
+          I will search nearby stores for the approved furnishing plan. This does not generate a
+          render.
         </div>
+
+        <FurnishingPlanReview
+          analysis={analysis ?? null}
+          shoppingPreferences={effectiveShoppingPreferences}
+          planOverrides={furnishingPlan ?? EMPTY_FURNISHING_PLAN_OVERRIDES}
+          onPlanChange={(next) => onFurnishingPlanChange?.(next)}
+          disabled={busy}
+        />
 
         {isStale ? (
           <p className="text-[14px] text-[rgba(255,255,255,0.80)]" role="status">

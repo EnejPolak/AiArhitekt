@@ -955,6 +955,11 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
             initialDiscovery={persistedDiscovery}
             initialSelections={persistedSelections}
             shoppingPreferences={shoppingPreferences}
+            analysis={currentAnalysis}
+            furnishingPlan={roomPrefs?.furnishingPlan}
+            onFurnishingPlanChange={(next) => {
+              void persistRoomPreferences({ furnishingPlan: next });
+            }}
             onDiscoveryUpdated={({ discovery, selections }) => {
               setPersistedDiscovery(discovery);
               setPersistedSelections(selections);

@@ -55,7 +55,7 @@ const analysis: ProjectRoomAnalysisRow = {
   project_id: PROJECT_ID,
   source_upload_id: "33333333-3333-4333-8333-333333333333",
   source_storage_path: "projects/x/uploads/y.jpg",
-  schema_version: 1,
+  schema_version: 2,
   provider: "openai",
   model: "gpt-4o",
   analysis: validRoomAnalysisResult.analysis,

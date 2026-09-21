@@ -78,6 +78,7 @@ export type DiscoverProjectProductsOptions = {
   ownerUserId: string;
   persistClient: Client;
   preferences?: ShoppingPreferenceInput | null;
+  planOverrides?: import("./furnishingPlan").FurnishingPlanOverrides | null;
   attemptId?: string;
   projectLocation?: ProjectLocation | null;
   persistResolvedLocation?: (location: ProjectLocation) => Promise<void>;
@@ -284,7 +285,10 @@ export async function discoverProjectProducts(
 
   const { searched, notSearched } = resolveShoppingRequirements({
     analysisRequirements: analysis.design_requirements,
+    observation: analysis.analysis,
     preferences: options.preferences,
+    planOverrides: options.planOverrides,
+    analysisId: analysis.id,
   });
   const unmatched: UnmatchedRequirement[] = notSearched.map((item) =>
     unmatchedRequirementSchema.parse({
