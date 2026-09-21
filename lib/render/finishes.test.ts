@@ -9,7 +9,7 @@ import {
 import { referencePriority, type OrderedRenderReference } from "./order";
 import { buildRoomRenderPrompt } from "./prompt";
 import type { RoomRenderPreferences } from "./preferences";
-import { buildRenderHonestyReport } from "./report";
+import { buildRenderHonestyReport, referenceQualityDiagnostic } from "./report";
 import { toExpectedRenderInventory } from "./inventory";
 
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
@@ -270,6 +270,15 @@ describe("architectural finishes", () => {
       "Oak plank floor",
       "Velpa sofa",
     ]);
+    expect(honesty.exactVisualizedItems.find((item) => item.productName === "Velpa sofa")).toMatchObject({
+      referenceStatus: "ready",
+      referenceQuality: "low",
+      referenceWidth: 128,
+      referenceHeight: 128,
+    });
+    expect(referenceQualityDiagnostic(honesty.exactVisualizedItems[0]!)).toEqual(
+      expect.arrayContaining(["READY", expect.stringMatching(/Reference quality: (HIGH|MEDIUM|LOW)/)])
+    );
     expect(built.architecturalFinishes).toEqual(honesty.finishDecisions);
     expect(built.renderReport.conceptOnlyFinishChoices).toEqual(honesty.conceptOnlyFinishChoices);
   });

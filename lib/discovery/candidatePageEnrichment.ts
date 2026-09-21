@@ -6,14 +6,21 @@ import {
   fetchProductPageHtmlResult,
 } from "@/lib/references/extractProductImages";
 import { fetchValidatedProductImage, type FetchLike } from "@/lib/references/fetchImage";
-import { MAX_PRODUCT_REFERENCE_CANDIDATES } from "@/lib/references/constants";
+import { MAX_PRODUCT_REFERENCE_EVALUATE } from "@/lib/references/constants";
 import {
   associateProductImage,
-  evidenceCandidateUrls,
   extractedSourceToEvidenceSource,
   mergeImageEvidence,
   type ProductImageEvidence,
 } from "@/lib/references/imageEvidence";
+import {
+  candidateCouldBeatCurrent,
+  isHigherQualityReference,
+  isPageSourcedEvidenceSource,
+  parseDeclaredSizeFromUrl,
+  rankExactProductEvidence,
+  referenceQualityFromDimensions,
+} from "@/lib/references/referenceQuality";
 import { ReferenceError } from "@/lib/references/errors";
 import type { AddressLookup } from "@/lib/references/ssrf";
 
@@ -95,6 +102,9 @@ export async function enrichRankedCandidateFromProductPage(
     if (evidence) associated.push(evidence);
   }
 
+  const declaredSizeByUrl = new Map(
+    extracted.map((item) => [item.url, { width: item.declaredWidth, height: item.declaredHeight }])
+  );
   product.imageEvidence = mergeImageEvidence(product.imageEvidence, associated);
   const jsonLdName = parseJsonLdProductName(page.html);
   if (jsonLdName && (!product.productTitle || product.productTitle.length < 3)) {
@@ -111,7 +121,7 @@ export async function enrichRankedCandidateFromProductPage(
     };
   }
 
-  const primary = associated[0];
+  const primary = rankExactProductEvidence(associated, declaredSizeByUrl)[0];
   if (!primary) {
     return {
       attempted: true,
@@ -137,16 +147,39 @@ export async function downloadCandidateReferenceImage(
   options: { fetch?: FetchLike; lookup?: AddressLookup } = {}
 ): Promise<{ ready: boolean; failureCode?: string; cachedBytesValid?: boolean }> {
   const product = productFields(candidate);
-  const urls = [
-    usableProductImageUrl(product.productImageUrl),
-    ...evidenceCandidateUrls(product.imageEvidence),
-  ].filter((url, index, all): url is string => Boolean(url) && all.indexOf(url) === index);
+  const existing = usableProductImageUrl(product.productImageUrl)
+    ? associateProductImage({
+        url: product.productImageUrl as string,
+        source: "existing_product_image_url",
+        productUrl: product.productUrl,
+        merchantDomain: product.retailerDomain,
+        sourcePageUrl: product.productUrl,
+      })
+    : null;
+  const evidence = mergeImageEvidence(product.imageEvidence, [existing]);
+  const ranked = rankExactProductEvidence(evidence);
+  const pageSourced = ranked.filter((item) => isPageSourcedEvidenceSource(item.source));
+  const urls = (pageSourced.length > 0 ? pageSourced : ranked)
+    .map((item) => item.url)
+    .filter((url, index, all) => all.indexOf(url) === index);
 
   if (urls.length === 0) return { ready: false, failureCode: "no_image" };
-  if (!options.fetch) return { ready: true, cachedBytesValid: true };
+  if (!options.fetch) {
+    product.productImageUrl = urls[0] ?? product.productImageUrl;
+    product.hasReferenceImage = true;
+    return { ready: true, cachedBytesValid: true };
+  }
 
   let lastFailure: string = "fetch_failed";
-  for (const imageUrl of urls.slice(0, MAX_PRODUCT_REFERENCE_CANDIDATES)) {
+  let best: {
+    url: string;
+    width: number | null;
+    height: number | null;
+    sizeBytes: number;
+  } | null = null;
+  for (const imageUrl of urls.slice(0, MAX_PRODUCT_REFERENCE_EVALUATE)) {
+    const declared = parseDeclaredSizeFromUrl(imageUrl);
+    if (best && !candidateCouldBeatCurrent(declared, best)) continue;
     try {
       const image = await fetchValidatedProductImage(imageUrl, {
         fetch: options.fetch,
@@ -156,9 +189,16 @@ export async function downloadCandidateReferenceImage(
         lastFailure = "invalid_image";
         continue;
       }
-      product.productImageUrl = imageUrl;
-      product.hasReferenceImage = true;
-      return { ready: true, cachedBytesValid: true };
+      const candidateImage = {
+        url: imageUrl,
+        width: image.dimensions?.width ?? null,
+        height: image.dimensions?.height ?? null,
+        sizeBytes: image.sizeBytes,
+      };
+      if (!best || isHigherQualityReference(candidateImage, best)) {
+        best = candidateImage;
+      }
+      if (referenceQualityFromDimensions(best.width, best.height) === "high") break;
     } catch (error) {
       if (error instanceof ReferenceError) {
         if (error.code === "invalid_image") {
@@ -173,5 +213,8 @@ export async function downloadCandidateReferenceImage(
       lastFailure = "fetch_failed";
     }
   }
-  return { ready: false, failureCode: lastFailure };
+  if (!best) return { ready: false, failureCode: lastFailure };
+  product.productImageUrl = best.url;
+  product.hasReferenceImage = true;
+  return { ready: true, cachedBytesValid: true };
 }

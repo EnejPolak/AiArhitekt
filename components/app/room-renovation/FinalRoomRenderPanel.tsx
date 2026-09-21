@@ -10,7 +10,7 @@ import {
   expectedRenderInventoryFromSnapshot,
   type ExpectedRenderInventoryItem,
 } from "@/lib/render/inventory";
-import { renderHonestyReportFromSnapshot, type RenderHonestyReport } from "@/lib/render/report";
+import { renderHonestyReportFromSnapshot, referenceQualityDiagnostic, type RenderHonestyReport } from "@/lib/render/report";
 import { groundedSelectionIdsFromSnapshot } from "@/lib/render/types";
 import type { RoomRenderPreferences } from "@/lib/render/preferences";
 import {
@@ -95,6 +95,12 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
           referenceStatus: "ready" as const,
           referenceImageIndex: 0,
           category: item.itemSpec,
+          referenceQuality: null,
+          referenceWidth: null,
+          referenceHeight: null,
+          referenceSizeBytes: null,
+          referenceSource: item.productImageUrl,
+          exactProductAssociation: true,
         },
         selection: item,
       }));
@@ -414,15 +420,25 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
                 No exact merchant products were visualized.
               </p>
             ) : (
-              honestyReport.exactVisualizedItems.map((item) => (
-                <p key={`${item.kind}-${item.selectionId}`} className="text-[13px] text-white">
-                  {item.productName}
-                  <span className="text-[rgba(255,255,255,0.55)]">
-                    {" "}
-                    · {item.kind === "exact_finish" ? "exact finish" : "shoppable product"}
-                  </span>
-                </p>
-              ))
+              honestyReport.exactVisualizedItems.map((item) => {
+                const diagnostics = referenceQualityDiagnostic(item);
+                return (
+                  <div key={`${item.kind}-${item.selectionId}`} className="space-y-0.5">
+                    <p className="text-[13px] text-white">
+                      {item.productName}
+                      <span className="text-[rgba(255,255,255,0.55)]">
+                        {" "}
+                        · {item.kind === "exact_finish" ? "exact finish" : "shoppable product"}
+                      </span>
+                    </p>
+                    {diagnostics.map((line) => (
+                      <p key={line} className="text-[13px] text-[rgba(255,255,255,0.7)]">
+                        {line}
+                      </p>
+                    ))}
+                  </div>
+                );
+              })
             )}
           </ReportBlock>
 

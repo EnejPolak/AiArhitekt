@@ -35,6 +35,8 @@ describe("extractProductImageCandidates", () => {
     expect(candidates[0]).toEqual({
       url: "https://shop.example/images/chair.jpg",
       source: "og",
+      declaredWidth: null,
+      declaredHeight: null,
     });
   });
 
@@ -78,6 +80,8 @@ describe("extractProductImageCandidates", () => {
     expect(candidates[0]).toEqual({
       url: "https://cdn.retailer.example/product.jpeg",
       source: "schema",
+      declaredWidth: 415,
+      declaredHeight: 415,
     });
   });
 
@@ -93,10 +97,31 @@ describe("extractProductImageCandidates", () => {
       </html>
     `;
     const candidates = extractProductImageCandidates(html, "https://shop.example/p/floor");
-    expect(candidates.map((item) => item.url)).toEqual([
-      "https://cdn.example/floor-1024.jpg",
-      "https://cdn.example/floor-800.jpg",
-    ]);
-    expect(candidates[0]?.source).toBe("gallery");
+    expect(candidates.map((item) => item.url)).toEqual(["https://cdn.example/floor-1024.jpg"]);
+    expect(candidates[0]).toMatchObject({
+      source: "gallery",
+      declaredWidth: 1024,
+    });
+  });
+
+  it("collects JSON-LD thumbnail and a higher-res gallery srcset variant", () => {
+    const html = `
+      <html>
+        <head>
+          <script type="application/ld+json">
+            {"@type":"Product","name":"Sofa","image":"https://cdn.example/cache/265x265/sofa.jpg"}
+          </script>
+        </head>
+        <body>
+          <img src="https://cdn.example/cache/265x265/sofa.jpg" width="265" height="265"
+            srcset="https://cdn.example/cache/265x265/sofa.jpg 265w, https://cdn.example/cache/1200x1200/sofa.jpg 1200w" />
+          <img class="related-product-card" src="https://cdn.example/related-product/other.jpg" width="400" height="400" />
+        </body>
+      </html>
+    `;
+    const candidates = extractProductImageCandidates(html, "https://shop.example/p/sofa");
+    expect(candidates.some((item) => item.url.includes("1200x1200"))).toBe(true);
+    expect(candidates.some((item) => item.url.includes("related-product"))).toBe(false);
+    expect(candidates.length).toBeGreaterThanOrEqual(1);
   });
 });

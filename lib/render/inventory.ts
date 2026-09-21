@@ -3,6 +3,10 @@ import type { ProductReferenceAssetView } from "@/lib/references/types";
 import type { Json } from "@/lib/database.types";
 import { orderRenderReferences, isValidReferenceForSelection, type OrderedRenderReference } from "./order";
 import { snapshotString } from "./productFacts";
+import {
+  referenceQualityFromDimensions,
+  type ReferenceQualityClass,
+} from "@/lib/references/referenceQuality";
 
 export type ExpectedRenderInventoryItem = {
   selectionId: string;
@@ -16,6 +20,12 @@ export type ExpectedRenderInventoryItem = {
   referenceStatus: "ready";
   referenceImageIndex: number;
   category: string;
+  referenceQuality: ReferenceQualityClass | null;
+  referenceWidth: number | null;
+  referenceHeight: number | null;
+  referenceSizeBytes: number | null;
+  referenceSource: string | null;
+  exactProductAssociation: boolean;
 };
 
 export function isReadyShoppableSelection(
@@ -48,6 +58,12 @@ export function toExpectedRenderInventory(
     referenceStatus: "ready",
     referenceImageIndex: item.imageIndex,
     category: snapshotString(item.selection.requirementSnapshot, ["category", "surface"]) ?? item.selection.itemSpec,
+    referenceQuality: referenceQualityFromDimensions(item.asset.width, item.asset.height),
+    referenceWidth: item.asset.width,
+    referenceHeight: item.asset.height,
+    referenceSizeBytes: item.asset.sizeBytes,
+    referenceSource: item.asset.sourceImageUrl,
+    exactProductAssociation: true,
   }));
 }
 
@@ -115,6 +131,22 @@ export function expectedRenderInventoryFromSnapshot(
       referenceStatus: "ready",
       referenceImageIndex: record.referenceImageIndex,
       category: record.category,
+      referenceQuality:
+        record.referenceQuality === "high" ||
+        record.referenceQuality === "medium" ||
+        record.referenceQuality === "low"
+          ? record.referenceQuality
+          : typeof record.referenceWidth === "number" || typeof record.referenceHeight === "number"
+            ? referenceQualityFromDimensions(
+                typeof record.referenceWidth === "number" ? record.referenceWidth : null,
+                typeof record.referenceHeight === "number" ? record.referenceHeight : null
+              )
+            : null,
+      referenceWidth: typeof record.referenceWidth === "number" ? record.referenceWidth : null,
+      referenceHeight: typeof record.referenceHeight === "number" ? record.referenceHeight : null,
+      referenceSizeBytes: typeof record.referenceSizeBytes === "number" ? record.referenceSizeBytes : null,
+      referenceSource: typeof record.referenceSource === "string" ? record.referenceSource : null,
+      exactProductAssociation: record.exactProductAssociation !== false,
     });
   }
   return items;

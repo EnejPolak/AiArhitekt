@@ -6,6 +6,10 @@ import {
   resolvedFinishLabel,
 } from "./finishes";
 import type { Json } from "@/lib/database.types";
+import {
+  formatReferenceQualityLabel,
+  type ReferenceQualityClass,
+} from "@/lib/references/referenceQuality";
 
 export type FinishIntentSummary = {
   surface: "wall_finish" | "floor_finish";
@@ -24,6 +28,12 @@ export type ExactVisualizedItem = {
   productUrl: string;
   referenceAssetId: string;
   referenceStatus: "ready";
+  referenceQuality: ReferenceQualityClass | null;
+  referenceWidth: number | null;
+  referenceHeight: number | null;
+  referenceSizeBytes: number | null;
+  referenceSource: string | null;
+  exactProductAssociation: boolean;
 };
 
 export type ConceptOnlyFinishChoice = {
@@ -77,6 +87,12 @@ function groundingAsInventory(
     referenceStatus: "ready",
     referenceImageIndex: grounding.referenceImageIndex,
     category: fromInventory?.category ?? category,
+    referenceQuality: fromInventory?.referenceQuality ?? null,
+    referenceWidth: fromInventory?.referenceWidth ?? null,
+    referenceHeight: fromInventory?.referenceHeight ?? null,
+    referenceSizeBytes: fromInventory?.referenceSizeBytes ?? null,
+    referenceSource: fromInventory?.referenceSource ?? null,
+    exactProductAssociation: fromInventory?.exactProductAssociation !== false,
   };
 }
 
@@ -94,7 +110,27 @@ function visualizedFromInventory(
     productUrl: item.productUrl,
     referenceAssetId: item.referenceAssetId,
     referenceStatus: "ready",
+    referenceQuality: item.referenceQuality,
+    referenceWidth: item.referenceWidth,
+    referenceHeight: item.referenceHeight,
+    referenceSizeBytes: item.referenceSizeBytes,
+    referenceSource: item.referenceSource,
+    exactProductAssociation: item.exactProductAssociation !== false,
   };
+}
+
+export function referenceQualityDiagnostic(item: Pick<
+  ExactVisualizedItem,
+  "referenceQuality" | "referenceWidth" | "referenceHeight" | "referenceStatus"
+>): string[] {
+  const lines = [item.referenceStatus === "ready" ? "READY" : item.referenceStatus];
+  if (item.referenceQuality) {
+    lines.push(`Reference quality: ${formatReferenceQualityLabel(item.referenceQuality)}`);
+  }
+  if (item.referenceWidth && item.referenceHeight) {
+    lines.push(`${item.referenceWidth} × ${item.referenceHeight}`);
+  }
+  return lines;
 }
 
 export function buildRenderHonestyReport(input: {

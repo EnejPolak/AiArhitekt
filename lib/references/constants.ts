@@ -16,7 +16,16 @@ export const PRODUCT_PAGE_FETCH_TIMEOUT_MS = 8_000;
 export const MAX_PRODUCT_PAGE_HTML_BYTES = 2_097_152;
 export const MIN_PRODUCT_REFERENCE_EDGE = 64;
 export const MIN_PRODUCT_REFERENCE_BYTES = 256;
+/** Max associated image URLs fetched while choosing a primary reference. */
 export const MAX_PRODUCT_REFERENCE_CANDIDATES = 3;
+/** Max product-page image URLs extracted before association/ranking. */
+export const MAX_PRODUCT_IMAGE_EXTRACT = 24;
+/** Max associated URLs to byte-fetch when picking the best exact-product image. */
+export const MAX_PRODUCT_REFERENCE_EVALUATE = 6;
+/** Longest edge for internal reference-quality class HIGH. */
+export const REFERENCE_QUALITY_HIGH_EDGE = 800;
+/** Longest edge for internal reference-quality class MEDIUM. */
+export const REFERENCE_QUALITY_MEDIUM_EDGE = 400;
 
 export const PRODUCT_REFERENCE_MIME_TYPES = [
   "image/jpeg",

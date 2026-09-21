@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, Json } from "@/lib/database.types";
 import type { ProductSelectionView } from "@/lib/discovery/types";
 import { acquireProductReferenceAsset, isReusableReferenceAsset } from "./acquire";
-import { MAX_PRODUCT_REFERENCE_CANDIDATES } from "./constants";
+import { MAX_PRODUCT_REFERENCE_EVALUATE } from "./constants";
 import {
   extractProductImageCandidates,
   fetchProductPageHtml,
@@ -17,6 +17,15 @@ import {
   type ProductReferenceFailureCode,
 } from "./imageEvidence";
 import { getProductReferenceAssetBySelection } from "./queries";
+import {
+  candidateCouldBeatCurrent,
+  isHigherQualityReference,
+  isPageSourcedEvidenceSource,
+  parseDeclaredSizeFromUrl,
+  rankExactProductEvidence,
+  referenceQualityFromDimensions,
+  type DeclaredImageSize,
+} from "./referenceQuality";
 import { runBoundedImageRescue, type ImageRescueSearch } from "./rescueImage";
 import type { AddressLookup } from "./ssrf";
 import type { ProductReferenceAssetView } from "./types";
@@ -32,6 +41,11 @@ export type EnsureReferenceAssetsInput = {
   fetch?: FetchLike;
   lookup?: AddressLookup;
   rescueSearch?: ImageRescueSearch;
+  /**
+   * Re-read the merchant page and replace a READY cache when a higher-quality
+   * exact-product image is found. Default false so render refresh stays cache-first.
+   */
+  replaceIfHigherQuality?: boolean;
 };
 
 export type EnsureReferenceAssetsResult = {
@@ -76,6 +90,22 @@ function failureFromAcquire(error: unknown): ProductReferenceFailureCode {
   return "fetch_failed";
 }
 
+function declaredForEvidence(
+  item: ProductImageEvidence,
+  declaredSizeByUrl: Map<string, DeclaredImageSize>
+): DeclaredImageSize {
+  return declaredSizeByUrl.get(item.url) ?? parseDeclaredSizeFromUrl(item.url);
+}
+
+function evaluationList(
+  evidence: ProductImageEvidence[],
+  declaredSizeByUrl: Map<string, DeclaredImageSize>
+): ProductImageEvidence[] {
+  const ranked = rankExactProductEvidence(evidence, declaredSizeByUrl);
+  const pageSourced = ranked.filter((item) => isPageSourcedEvidenceSource(item.source));
+  return (pageSourced.length > 0 ? pageSourced : ranked).slice(0, MAX_PRODUCT_REFERENCE_EVALUATE);
+}
+
 export async function ensureProductReferenceAssets(
   input: EnsureReferenceAssetsInput
 ): Promise<EnsureReferenceAssetsResult> {
@@ -84,17 +114,25 @@ export async function ensureProductReferenceAssets(
   let reusedCount = 0;
   let fetchedCount = 0;
   let rescueAttemptedCount = 0;
+  const replaceIfHigherQuality = input.replaceIfHigherQuality === true;
 
   for (const selection of input.selections) {
     const existing = await getProductReferenceAssetBySelection(input.persistClient, selection.id);
-    if (isReusableReferenceAsset(existing, input.projectId, selection.id)) {
-      assetsBySelectionId.set(selection.id, existing);
+    const reusableExisting = isReusableReferenceAsset(existing, input.projectId, selection.id)
+      ? existing
+      : null;
+    if (reusableExisting && !replaceIfHigherQuality) {
+      assetsBySelectionId.set(selection.id, reusableExisting);
       reusedCount += 1;
       await markSelectionReference(input.persistClient, selection, { status: "ready" });
       continue;
     }
 
-    if (selection.referenceStatus === "unavailable" && selection.referenceRescueAttempted) {
+    if (
+      !replaceIfHigherQuality &&
+      selection.referenceStatus === "unavailable" &&
+      selection.referenceRescueAttempted
+    ) {
       failedSelectionIds.push(selection.id);
       continue;
     }
@@ -109,24 +147,43 @@ export async function ensureProductReferenceAssets(
         sourcePageUrl: selection.productUrl,
         fetch: input.fetch,
         lookup: input.lookup,
-        cacheFirst: true,
+        cacheFirst: false,
       });
 
-    const acquireFirst = async (evidence: ProductImageEvidence[]) => {
-      const urls = evidenceCandidateUrls(evidence).slice(0, MAX_PRODUCT_REFERENCE_CANDIDATES);
+    const acquireBest = async (
+      evidence: ProductImageEvidence[],
+      declaredSizeByUrl: Map<string, DeclaredImageSize>,
+      current: ProductReferenceAssetView | null
+    ) => {
+      const urls = evaluationList(evidence, declaredSizeByUrl);
+      let best = current;
       let lastError: unknown = null;
-      for (const url of urls) {
+      for (const item of urls) {
+        const declared = declaredForEvidence(item, declaredSizeByUrl);
+        if (best && !candidateCouldBeatCurrent(declared, best)) continue;
         try {
-          const saved = await tryAcquire(url);
+          const saved = await tryAcquire(item.url);
           fetchedCount += 1;
-          return { saved, lastError: null as unknown };
+          if (!best || isHigherQualityReference(saved, best)) {
+            best = saved;
+          } else if (best.sourceImageUrl !== saved.sourceImageUrl) {
+            best = await tryAcquire(best.sourceImageUrl);
+            fetchedCount += 1;
+          }
+          if (best && referenceQualityFromDimensions(best.width, best.height) === "high") break;
         } catch (error) {
           lastError = error;
         }
       }
-      return { saved: null as ProductReferenceAssetView | null, lastError };
+      const upgraded = Boolean(best && (!current || isHigherQualityReference(best, current)));
+      return {
+        saved: upgraded ? best : null,
+        lastError,
+        best,
+      };
     };
 
+    const declaredSizeByUrl = new Map<string, DeclaredImageSize>();
     let evidence = mergeImageEvidence(selection.imageEvidence, [
       selection.productImageUrl
         ? associateProductImage({
@@ -139,36 +196,47 @@ export async function ensureProductReferenceAssets(
         : null,
     ]);
 
-    let result = await acquireFirst(evidence);
     let htmlBlocked = false;
     let htmlAttempted = false;
-
-    if (!result.saved) {
-      htmlAttempted = true;
-      const html = await fetchProductPageHtml(selection.productUrl, {
-        fetch: input.fetch,
-        lookup: input.lookup,
+    htmlAttempted = true;
+    const html = await fetchProductPageHtml(selection.productUrl, {
+      fetch: input.fetch,
+      lookup: input.lookup,
+    });
+    if (!html) {
+      htmlBlocked = true;
+    } else {
+      const extracted = extractProductImageCandidates(html, selection.productUrl);
+      const associated = extracted.map((item) => {
+        declaredSizeByUrl.set(item.url, {
+          width: item.declaredWidth,
+          height: item.declaredHeight,
+        });
+        return associateProductImage({
+          url: item.url,
+          source: extractedSourceToEvidenceSource(item.source),
+          productUrl: selection.productUrl,
+          merchantDomain: selection.retailerDomain,
+          sourcePageUrl: selection.productUrl,
+        });
       });
-      if (!html) {
-        htmlBlocked = true;
-      } else {
-        const extracted = extractProductImageCandidates(html, selection.productUrl).map((item) =>
-          associateProductImage({
-            url: item.url,
-            source: extractedSourceToEvidenceSource(item.source),
-            productUrl: selection.productUrl,
-            merchantDomain: selection.retailerDomain,
-            sourcePageUrl: selection.productUrl,
-          })
-        );
-        evidence = mergeImageEvidence(evidence, extracted);
-        result = await acquireFirst(evidence);
-      }
+      evidence = mergeImageEvidence(evidence, associated);
+    }
+
+    let result = await acquireBest(evidence, declaredSizeByUrl, reusableExisting);
+    if (result.saved) {
+      assetsBySelectionId.set(selection.id, result.saved);
+      await markSelectionReference(input.persistClient, selection, {
+        status: "ready",
+        imageEvidence: evidence,
+        productImageUrl: result.saved.sourceImageUrl,
+      });
+      continue;
     }
 
     let rescueAttempted = Boolean(selection.referenceRescueAttempted);
     let associationRejected = 0;
-    if (!result.saved) {
+    if (!reusableExisting) {
       const rescued = await runBoundedImageRescue(
         {
           productTitle: selection.productTitle,
@@ -202,7 +270,7 @@ export async function ensureProductReferenceAssets(
         rescuedEvidence.push(associated);
       }
       evidence = mergeImageEvidence(evidence, rescuedEvidence);
-      result = await acquireFirst(evidence);
+      result = await acquireBest(evidence, declaredSizeByUrl, null);
     }
 
     if (result.saved) {
@@ -212,6 +280,17 @@ export async function ensureProductReferenceAssets(
         rescueAttempted,
         imageEvidence: evidence,
         productImageUrl: result.saved.sourceImageUrl,
+      });
+      continue;
+    }
+
+    if (reusableExisting) {
+      assetsBySelectionId.set(selection.id, reusableExisting);
+      reusedCount += 1;
+      await markSelectionReference(input.persistClient, selection, {
+        status: "ready",
+        imageEvidence: evidence,
+        productImageUrl: reusableExisting.sourceImageUrl,
       });
       continue;
     }

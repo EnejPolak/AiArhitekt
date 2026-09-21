@@ -1,11 +1,12 @@
 import {
+  MAX_PRODUCT_IMAGE_EXTRACT,
   MAX_PRODUCT_PAGE_HTML_BYTES,
-  MAX_PRODUCT_REFERENCE_CANDIDATES,
   MAX_REFERENCE_FETCH_REDIRECTS,
   PRODUCT_PAGE_FETCH_TIMEOUT_MS,
 } from "./constants";
 import type { FetchLike } from "./fetchImage";
 import { ReferenceError, referenceErrorMessage } from "./errors";
+import { parseDeclaredSizeFromUrl, type DeclaredImageSize } from "./referenceQuality";
 import { assertPublicHttpUrl, type AddressLookup } from "./ssrf";
 
 export type ProductImageSource = "jsonld" | "schema" | "og" | "twitter" | "gallery";
@@ -13,6 +14,8 @@ export type ProductImageSource = "jsonld" | "schema" | "og" | "twitter" | "galle
 export type ExtractedProductImage = {
   url: string;
   source: ProductImageSource;
+  declaredWidth: number | null;
+  declaredHeight: number | null;
 };
 
 const REJECT_IMAGE_URL =
@@ -20,6 +23,8 @@ const REJECT_IMAGE_URL =
 const REJECT_IMAGE_EXT = /\.(?:svg|ico|gif)(?:$|[?#])/i;
 /** Unresolved HTML/JS template leftovers, not fetchable image resources. */
 const REJECT_UNRESOLVED_TEMPLATE = /[(){}]|\$\{|\{\{|<%/;
+const REJECT_GALLERY_CHROME =
+  /(?:\b|_)(?:related[-_]?product|recommend(?:ed|ation)?|upsell|cross[-_]?sell|breadcrumb|minicart|newsletter|nav(?:igation)?)(?:\b|_)/i;
 
 function resolveAbsoluteHttpUrl(raw: string | null | undefined, baseUrl: string): string | null {
   if (!raw?.trim()) return null;
@@ -63,11 +68,39 @@ function htmlAttr(tag: string, names: string[]): string | null {
   return null;
 }
 
-function parseSrcsetValue(raw: string): string[] {
-  return raw
-    .split(",")
-    .map((part) => part.trim().split(/\s+/)[0])
-    .filter((item): item is string => Boolean(item));
+type SrcsetCandidate = { url: string; width: number | null };
+
+function parseSrcsetValue(raw: string): SrcsetCandidate[] {
+  const items: SrcsetCandidate[] = [];
+  for (const part of raw.split(",")) {
+    const bits = part.trim().split(/\s+/).filter(Boolean);
+    const url = bits[0];
+    if (!url) continue;
+    const descriptor = bits[1] ?? "";
+    const width =
+      descriptor.endsWith("w") && Number.isFinite(Number(descriptor.slice(0, -1)))
+        ? Number(descriptor.slice(0, -1))
+        : null;
+    items.push({ url, width: width != null && width >= 32 ? width : null });
+  }
+  return items;
+}
+
+function bestSrcsetCandidate(items: SrcsetCandidate[]): SrcsetCandidate | null {
+  if (items.length === 0) return null;
+  return items.reduce((best, item) => {
+    const bestWidth = best.width ?? 0;
+    const itemWidth = item.width ?? 0;
+    if (itemWidth > bestWidth) return item;
+    return best;
+  });
+}
+
+function betterDeclared(next: DeclaredImageSize, current: DeclaredImageSize): boolean {
+  const nextEdge = Math.max(next.width ?? 0, next.height ?? 0);
+  const currentEdge = Math.max(current.width ?? 0, current.height ?? 0);
+  if (nextEdge !== currentEdge) return nextEdge > currentEdge;
+  return (next.width ?? 0) * (next.height ?? 0) > (current.width ?? 0) * (current.height ?? 0);
 }
 
 function parseJsonLdBlocks(html: string): unknown[] {
@@ -138,31 +171,70 @@ function parseMetaContent(html: string, attr: "property" | "name", key: string):
   return values;
 }
 
-function parseItempropImages(html: string): string[] {
-  const values: string[] = [];
+type TaggedImage = { raw: string; width: number | null; height: number | null };
+
+function tagPixelSize(tag: string): { width: number | null; height: number | null } {
+  const width = Number(tag.match(/(?:^|[\s"'<])width=["']?(\d+)/i)?.[1] ?? "");
+  const height = Number(tag.match(/(?:^|[\s"'<])height=["']?(\d+)/i)?.[1] ?? "");
+  return {
+    width: Number.isFinite(width) && width >= 32 ? width : null,
+    height: Number.isFinite(height) && height >= 32 ? height : null,
+  };
+}
+
+function parseItempropImages(html: string): TaggedImage[] {
+  const values: TaggedImage[] = [];
   const tags = html.match(/<(?:meta|img|link)\b[^>]*itemprop=["']image["'][^>]*>/gi) ?? [];
   for (const tag of tags) {
     const content = htmlAttr(tag, ["content", "src", "href"]);
-    if (content) values.push(content);
+    if (!content) continue;
+    const size = tagPixelSize(tag);
+    values.push({ raw: content, width: size.width, height: size.height });
   }
   return values;
 }
 
-function parseGalleryImages(html: string): string[] {
-  const values: string[] = [];
+function parseGalleryImages(html: string): TaggedImage[] {
+  const values: TaggedImage[] = [];
   const tags = html.match(/<(?:img|source)\b[^>]*>/gi) ?? [];
   for (const tag of tags) {
-    const width = Number(tag.match(/(?:^|[\s"'<])width=["']?(\d+)/i)?.[1] ?? "");
-    const height = Number(tag.match(/(?:^|[\s"'<])height=["']?(\d+)/i)?.[1] ?? "");
-    if ((Number.isFinite(width) && width > 0 && width < 64) || (Number.isFinite(height) && height > 0 && height < 64)) {
+    if (REJECT_GALLERY_CHROME.test(tag)) continue;
+    const rawWidth = Number(tag.match(/(?:^|[\s"'<])width=["']?(\d+)/i)?.[1] ?? "");
+    const rawHeight = Number(tag.match(/(?:^|[\s"'<])height=["']?(\d+)/i)?.[1] ?? "");
+    if (
+      (Number.isFinite(rawWidth) && rawWidth > 0 && rawWidth < 64) ||
+      (Number.isFinite(rawHeight) && rawHeight > 0 && rawHeight < 64)
+    ) {
       continue;
     }
+    const size = tagPixelSize(tag);
     const src = htmlAttr(tag, ["data-src", "data-original", "data-lazy-src", "src"]);
-    if (src) values.push(src);
+    if (src) values.push({ raw: src, width: size.width, height: size.height });
     const srcset = htmlAttr(tag, ["srcset"]);
-    if (srcset) values.push(...parseSrcsetValue(srcset));
+    if (srcset) {
+      const best = bestSrcsetCandidate(parseSrcsetValue(srcset));
+      if (best) {
+        values.push({
+          raw: best.url,
+          width: best.width ?? size.width,
+          height: size.height,
+        });
+      }
+    }
   }
   return values;
+}
+
+function declaredForCandidate(
+  url: string,
+  tagWidth: number | null = null,
+  tagHeight: number | null = null
+): DeclaredImageSize {
+  const fromUrl = parseDeclaredSizeFromUrl(url);
+  return {
+    width: tagWidth ?? fromUrl.width,
+    height: tagHeight ?? fromUrl.height,
+  };
 }
 
 function pushUnique(
@@ -170,13 +242,31 @@ function pushUnique(
   seen: Set<string>,
   raw: string | null | undefined,
   baseUrl: string,
-  source: ProductImageSource
+  source: ProductImageSource,
+  tagWidth: number | null = null,
+  tagHeight: number | null = null
 ) {
   const url = resolveAbsoluteHttpUrl(raw, baseUrl);
   if (!isCandidateProductImageUrl(url)) return;
-  if (seen.has(url)) return;
+  const declared = declaredForCandidate(url, tagWidth, tagHeight);
+  if (seen.has(url)) {
+    const existing = items.find((item) => item.url === url);
+    if (
+      existing &&
+      betterDeclared(declared, { width: existing.declaredWidth, height: existing.declaredHeight })
+    ) {
+      existing.declaredWidth = declared.width;
+      existing.declaredHeight = declared.height;
+    }
+    return;
+  }
   seen.add(url);
-  items.push({ url, source });
+  items.push({
+    url,
+    source,
+    declaredWidth: declared.width,
+    declaredHeight: declared.height,
+  });
 }
 
 export function extractProductImageCandidates(
@@ -198,7 +288,7 @@ export function extractProductImageCandidates(
   }
 
   for (const image of parseItempropImages(html)) {
-    pushUnique(ordered, seen, image, pageUrl, "schema");
+    pushUnique(ordered, seen, image.raw, pageUrl, "schema", image.width, image.height);
   }
 
   for (const image of parseMetaContent(html, "property", "og:image")) {
@@ -213,10 +303,10 @@ export function extractProductImageCandidates(
   }
 
   for (const image of parseGalleryImages(html)) {
-    pushUnique(ordered, seen, image, pageUrl, "gallery");
+    pushUnique(ordered, seen, image.raw, pageUrl, "gallery", image.width, image.height);
   }
 
-  return ordered.slice(0, MAX_PRODUCT_REFERENCE_CANDIDATES);
+  return ordered.slice(0, MAX_PRODUCT_IMAGE_EXTRACT);
 }
 
 export function selectPrimaryProductImage(
