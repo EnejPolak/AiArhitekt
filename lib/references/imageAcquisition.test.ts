@@ -259,6 +259,9 @@ describe("product reference image acquisition", () => {
   it("banner/logo URLs are rejected", () => {
     expect(isRejectedGenericImageUrl("https://cdn.shop.example/logo.png")).toBe(true);
     expect(isRejectedGenericImageUrl("https://cdn.shop.example/banner/hero.jpg")).toBe(true);
+    expect(isRejectedGenericImageUrl("https://www.shop.example/media/wysiwyg/storitve-flyout-image.jpg")).toBe(
+      true
+    );
     expect(
       associateProductImage({
         url: "https://cdn.shop.example/logo.png",

@@ -4,7 +4,16 @@ export const MAX_PRODUCT_REFERENCE_BYTES = 10 * 1024 * 1024;
 export const MAX_REFERENCE_FETCH_REDIRECTS = 3;
 export const REFERENCE_FETCH_TIMEOUT_MS = 15_000;
 export const PRODUCT_PAGE_FETCH_TIMEOUT_MS = 8_000;
-export const MAX_PRODUCT_PAGE_HTML_BYTES = 512_000;
+/**
+ * Hard cap on *decompressed* product-page HTML.
+ * `Content-Length` is often the gzip size (~50KB) and cannot be used as the
+ * decoded budget. Large retailer product documents with JSON-LD, Open Graph,
+ * Twitter, and gallery markup commonly decompress to 0.5–1.2 MiB (OBI pages
+ * measured at ~650–670KB). 2 MiB admits those pages while remaining a hard
+ * DoS bound, far below the 10 MiB product-image cap. Pages over the cap fail
+ * closed; HTML is never truncated, so evidence parsers cannot see cut JSON-LD.
+ */
+export const MAX_PRODUCT_PAGE_HTML_BYTES = 2_097_152;
 export const MIN_PRODUCT_REFERENCE_EDGE = 64;
 export const MIN_PRODUCT_REFERENCE_BYTES = 256;
 export const MAX_PRODUCT_REFERENCE_CANDIDATES = 3;

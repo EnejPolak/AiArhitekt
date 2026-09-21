@@ -18,6 +18,8 @@ export type ExtractedProductImage = {
 const REJECT_IMAGE_URL =
   /(?:^|\/)(?:logo|favicon|sprite|placeholder|tracking|pixel|spacer|blank|icon)(?:[-_/]|\b)|\.(?:svg|ico)(?:$|[?#])/i;
 const REJECT_IMAGE_EXT = /\.(?:svg|ico|gif)(?:$|[?#])/i;
+/** Unresolved HTML/JS template leftovers, not fetchable image resources. */
+const REJECT_UNRESOLVED_TEMPLATE = /[(){}]|\$\{|\{\{|<%/;
 
 function resolveAbsoluteHttpUrl(raw: string | null | undefined, baseUrl: string): string | null {
   if (!raw?.trim()) return null;
@@ -40,10 +42,32 @@ export function isCandidateProductImageUrl(url: string | null | undefined): url 
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
     if (REJECT_IMAGE_URL.test(parsed.pathname) || REJECT_IMAGE_EXT.test(parsed.pathname)) return false;
     if (REJECT_IMAGE_URL.test(parsed.search)) return false;
+    if (
+      REJECT_UNRESOLVED_TEMPLATE.test(parsed.pathname) ||
+      REJECT_UNRESOLVED_TEMPLATE.test(parsed.search)
+    ) {
+      return false;
+    }
     return true;
   } catch {
     return false;
   }
+}
+
+function htmlAttr(tag: string, names: string[]): string | null {
+  for (const name of names) {
+    const pattern = new RegExp(`(?:^|[\\s"'<])${name}=["']([^"']+)["']`, "i");
+    const match = tag.match(pattern);
+    if (match?.[1]?.trim()) return match[1].trim();
+  }
+  return null;
+}
+
+function parseSrcsetValue(raw: string): string[] {
+  return raw
+    .split(",")
+    .map((part) => part.trim().split(/\s+/)[0])
+    .filter((item): item is string => Boolean(item));
 }
 
 function parseJsonLdBlocks(html: string): unknown[] {
@@ -118,9 +142,7 @@ function parseItempropImages(html: string): string[] {
   const values: string[] = [];
   const tags = html.match(/<(?:meta|img|link)\b[^>]*itemprop=["']image["'][^>]*>/gi) ?? [];
   for (const tag of tags) {
-    const content =
-      tag.match(/\b(?:content|src|href)=["']([^"']+)["']/i)?.[1] ??
-      tag.match(/\bitemprop=["']image["'][^>]*\b(?:content|src|href)=["']([^"']+)["']/i)?.[1];
+    const content = htmlAttr(tag, ["content", "src", "href"]);
     if (content) values.push(content);
   }
   return values;
@@ -128,16 +150,17 @@ function parseItempropImages(html: string): string[] {
 
 function parseGalleryImages(html: string): string[] {
   const values: string[] = [];
-  const tags = html.match(/<img\b[^>]*>/gi) ?? [];
+  const tags = html.match(/<(?:img|source)\b[^>]*>/gi) ?? [];
   for (const tag of tags) {
-    const width = Number(tag.match(/\bwidth=["']?(\d+)/i)?.[1] ?? "");
-    const height = Number(tag.match(/\bheight=["']?(\d+)/i)?.[1] ?? "");
+    const width = Number(tag.match(/(?:^|[\s"'<])width=["']?(\d+)/i)?.[1] ?? "");
+    const height = Number(tag.match(/(?:^|[\s"'<])height=["']?(\d+)/i)?.[1] ?? "");
     if ((Number.isFinite(width) && width > 0 && width < 64) || (Number.isFinite(height) && height > 0 && height < 64)) {
       continue;
     }
-    const src =
-      tag.match(/\b(?:data-src|data-original|data-lazy-src|src)=["']([^"']+)["']/i)?.[1] ?? null;
+    const src = htmlAttr(tag, ["data-src", "data-original", "data-lazy-src", "src"]);
     if (src) values.push(src);
+    const srcset = htmlAttr(tag, ["srcset"]);
+    if (srcset) values.push(...parseSrcsetValue(srcset));
   }
   return values;
 }
@@ -204,12 +227,108 @@ export function selectPrimaryProductImage(
 
 export type ProductPageHtmlFailure = "merchant_blocked" | "fetch_failed";
 
+export type ProductPageHtmlFailureDetail =
+  | "dns_failed"
+  | "ssrf_rejected"
+  | "timeout"
+  | "redirect_limit"
+  | "redirect_missing_location"
+  | "http_status"
+  | "merchant_blocked"
+  | "invalid_content_type"
+  | "declared_content_too_large"
+  | "streamed_content_too_large"
+  | "empty_body"
+  | "network_error";
+
 export type ProductPageHtmlResult =
   | { ok: true; html: string; finalUrl: string }
-  | { ok: false; reason: ProductPageHtmlFailure; status?: number };
+  | {
+      ok: false;
+      reason: ProductPageHtmlFailure;
+      detail: ProductPageHtmlFailureDetail;
+      status?: number;
+    };
 
 function blockedStatus(status: number | undefined): boolean {
   return status === 401 || status === 403 || status === 407 || status === 429 || status === 451;
+}
+
+function fail(
+  detail: ProductPageHtmlFailureDetail,
+  status?: number
+): Extract<ProductPageHtmlResult, { ok: false }> {
+  const reason: ProductPageHtmlFailure =
+    detail === "ssrf_rejected" || detail === "merchant_blocked" ? "merchant_blocked" : "fetch_failed";
+  return status != null ? { ok: false, reason, detail, status } : { ok: false, reason, detail };
+}
+
+function contentEncodingIsIdentity(header: string | null): boolean {
+  const encoding = (header ?? "").trim().toLowerCase();
+  return !encoding || encoding === "identity";
+}
+
+function isTimeoutError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const name = (error as { name?: string }).name;
+  const causeName = (error as { cause?: { name?: string } }).cause?.name;
+  return name === "TimeoutError" || name === "AbortError" || causeName === "TimeoutError";
+}
+
+function isDnsError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const code = (error as { code?: string }).code;
+  const causeCode = (error as { cause?: { code?: string } }).cause?.code;
+  return code === "ENOTFOUND" || code === "EAI_AGAIN" || causeCode === "ENOTFOUND" || causeCode === "EAI_AGAIN";
+}
+
+async function readCappedHtml(
+  response: Response,
+  maxBytes: number
+): Promise<{ ok: true; html: string } | { ok: false; detail: "empty_body" | "streamed_content_too_large" }> {
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+
+  const append = (value: Uint8Array): boolean => {
+    total += value.byteLength;
+    if (total > maxBytes) return false;
+    chunks.push(value);
+    return true;
+  };
+
+  const finish = (): { ok: true; html: string } | { ok: false; detail: "empty_body" | "streamed_content_too_large" } => {
+    if (total === 0) return { ok: false, detail: "empty_body" };
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return { ok: true, html: new TextDecoder("utf-8").decode(bytes) };
+  };
+
+  if (!response.body) {
+    const buffer = new Uint8Array(await response.arrayBuffer());
+    if (!append(buffer)) return { ok: false, detail: "streamed_content_too_large" };
+    return finish();
+  }
+
+  const reader = response.body.getReader();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      if (!append(value)) {
+        await reader.cancel().catch(() => undefined);
+        return { ok: false, detail: "streamed_content_too_large" };
+      }
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    throw error;
+  }
+  return finish();
 }
 
 export async function fetchProductPageHtmlResult(
@@ -232,7 +351,7 @@ export async function fetchProductPageHtmlResult(
       try {
         safe = await assertPublicHttpUrl(current, options.lookup);
       } catch {
-        return { ok: false, reason: "merchant_blocked" };
+        return fail("ssrf_rejected");
       }
 
       const response = await fetchFn(safe.toString(), {
@@ -247,16 +366,16 @@ export async function fetchProductPageHtmlResult(
 
       if (response.status >= 300 && response.status < 400) {
         const location = response.headers.get("location");
-        if (!location) return { ok: false, reason: "fetch_failed", status: response.status };
+        if (!location) return fail("redirect_missing_location", response.status);
         current = new URL(location, safe).toString();
         continue;
       }
 
       if (blockedStatus(response.status)) {
-        return { ok: false, reason: "merchant_blocked", status: response.status };
+        return fail("merchant_blocked", response.status);
       }
       if (!response.ok) {
-        return { ok: false, reason: "fetch_failed", status: response.status };
+        return fail("http_status", response.status);
       }
 
       const contentType = (response.headers.get("content-type") ?? "").toLowerCase();
@@ -266,22 +385,26 @@ export async function fetchProductPageHtmlResult(
         !contentType.includes("xml") &&
         !contentType.includes("text/plain")
       ) {
-        return { ok: false, reason: "fetch_failed", status: response.status };
+        return fail("invalid_content_type", response.status);
       }
       const declared = Number(response.headers.get("content-length"));
-      if (Number.isFinite(declared) && declared > maxBytes) {
-        return { ok: false, reason: "fetch_failed", status: response.status };
+      if (
+        contentEncodingIsIdentity(response.headers.get("content-encoding")) &&
+        Number.isFinite(declared) &&
+        declared > maxBytes
+      ) {
+        return fail("declared_content_too_large", response.status);
       }
-      const text = await response.text();
-      if (!text || text.length > maxBytes) {
-        return { ok: false, reason: "fetch_failed", status: response.status };
-      }
-      return { ok: true, html: text, finalUrl: safe.toString() };
+      const body = await readCappedHtml(response, maxBytes);
+      if (!body.ok) return fail(body.detail, response.status);
+      return { ok: true, html: body.html, finalUrl: safe.toString() };
     }
-    return { ok: false, reason: "fetch_failed" };
+    return fail("redirect_limit");
   } catch (error) {
     if (error instanceof ReferenceError) throw error;
-    return { ok: false, reason: "fetch_failed" };
+    if (isTimeoutError(error)) return fail("timeout");
+    if (isDnsError(error)) return fail("dns_failed");
+    return fail("network_error");
   }
 }
 

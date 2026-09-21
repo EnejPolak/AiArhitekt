@@ -32,7 +32,7 @@ export type ProductReferenceFailureCode =
   | "fetch_failed";
 
 const BANNER_OR_CATEGORY =
-  /(?:^|\/)(?:logo|favicon|sprite|placeholder|tracking|pixel|spacer|blank|icon|banner|hero|category|categories|promo|advert)(?:[-_/]|\b)/i;
+  /(?:^|[\/_-])(?:logo|favicon|sprite|placeholder|tracking|pixel|spacer|blank|icon|banner|hero|category|categories|promo|advert|flyout)(?:[-_/]|\b)/i;
 
 export function parseProductImageEvidence(value: unknown): ProductImageEvidence[] {
   if (!Array.isArray(value)) return [];

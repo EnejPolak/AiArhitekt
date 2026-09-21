@@ -137,6 +137,32 @@ describe("multi-candidate merchant page image acquisition", () => {
     expect(verdict.failureCode).toBe("association_unverified");
   });
 
+  it("skips a failed first associated image and uses the next exact-product image", async () => {
+    const broken = "https://cdn.example-retailer.si/broken.jpg";
+    const good = "https://cdn.example-retailer.si/floor.png";
+    const html = `<html><body>
+      <img itemprop="image" src="${broken}" width="400" height="400" />
+      <img src="${good}" width="400" height="400" />
+    </body></html>`;
+    const fetchFn = vi.fn(async (url: string) => {
+      if (url === broken) return new Response("missing", { status: 404 });
+      if (url === good) {
+        return new Response(USABLE_PRODUCT_PNG, {
+          status: 200,
+          headers: { "content-type": "image/png" },
+        });
+      }
+      return new Response(html, { status: 200, headers: { "content-type": "text/html" } });
+    });
+    const item = candidate({ url: "https://www.example-retailer.si/p/floor", image: null });
+    const verdict = await evaluateCandidateRenderReadyWithFetch(item, {
+      fetch: fetchFn,
+      lookup: publicLookup,
+    });
+    expect(verdict.ready).toBe(true);
+    expect(item.product.productImageUrl).toBe(good);
+  });
+
   it("G. recovery receives previously rejected canonical URLs before search", async () => {
     const rejectedUrl = "https://www.localhome.si/p/a";
     const recover = vi.fn(async ({ rejected }: { rejected: { productUrl: string }[] }) => {

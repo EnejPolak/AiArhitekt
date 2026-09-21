@@ -6,8 +6,10 @@ import {
   fetchProductPageHtmlResult,
 } from "@/lib/references/extractProductImages";
 import { fetchValidatedProductImage, type FetchLike } from "@/lib/references/fetchImage";
+import { MAX_PRODUCT_REFERENCE_CANDIDATES } from "@/lib/references/constants";
 import {
   associateProductImage,
+  evidenceCandidateUrls,
   extractedSourceToEvidenceSource,
   mergeImageEvidence,
   type ProductImageEvidence,
@@ -134,23 +136,42 @@ export async function downloadCandidateReferenceImage(
   candidate: RankedProductCandidate,
   options: { fetch?: FetchLike; lookup?: AddressLookup } = {}
 ): Promise<{ ready: boolean; failureCode?: string; cachedBytesValid?: boolean }> {
-  const imageUrl = usableProductImageUrl(candidate.product.productImageUrl);
-  if (!imageUrl) return { ready: false, failureCode: "no_image" };
+  const product = productFields(candidate);
+  const urls = [
+    usableProductImageUrl(product.productImageUrl),
+    ...evidenceCandidateUrls(product.imageEvidence),
+  ].filter((url, index, all): url is string => Boolean(url) && all.indexOf(url) === index);
+
+  if (urls.length === 0) return { ready: false, failureCode: "no_image" };
   if (!options.fetch) return { ready: true, cachedBytesValid: true };
-  try {
-    const image = await fetchValidatedProductImage(imageUrl, {
-      fetch: options.fetch,
-      lookup: options.lookup,
-    });
-    if (!image.bytes.length || image.sizeBytes <= 0) {
-      return { ready: false, failureCode: "invalid_image" };
+
+  let lastFailure: string = "fetch_failed";
+  for (const imageUrl of urls.slice(0, MAX_PRODUCT_REFERENCE_CANDIDATES)) {
+    try {
+      const image = await fetchValidatedProductImage(imageUrl, {
+        fetch: options.fetch,
+        lookup: options.lookup,
+      });
+      if (!image.bytes.length || image.sizeBytes <= 0) {
+        lastFailure = "invalid_image";
+        continue;
+      }
+      product.productImageUrl = imageUrl;
+      product.hasReferenceImage = true;
+      return { ready: true, cachedBytesValid: true };
+    } catch (error) {
+      if (error instanceof ReferenceError) {
+        if (error.code === "invalid_image") {
+          lastFailure = "invalid_image";
+          continue;
+        }
+        if (error.code === "unsafe_url") {
+          lastFailure = "merchant_blocked";
+          continue;
+        }
+      }
+      lastFailure = "fetch_failed";
     }
-    return { ready: true, cachedBytesValid: true };
-  } catch (error) {
-    if (error instanceof ReferenceError) {
-      if (error.code === "invalid_image") return { ready: false, failureCode: "invalid_image" };
-      if (error.code === "unsafe_url") return { ready: false, failureCode: "merchant_blocked" };
-    }
-    return { ready: false, failureCode: "fetch_failed" };
   }
+  return { ready: false, failureCode: lastFailure };
 }
