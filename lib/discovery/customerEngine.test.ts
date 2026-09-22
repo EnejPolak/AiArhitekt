@@ -298,7 +298,7 @@ describe("customer discovery engine", () => {
     expect(
       runOpenAIProductDiscoveryMock.mock.calls.slice(1).every((call) => call[0]?.items.length === 1)
     ).toBe(true);
-    expect(stepC?.items.join(" ")).toMatch(/floor lamp/i);
+    expect(stepC?.items.join(" ")).toMatch(/floor lamp|stoje[cč]a svetilka/i);
     expect(stepC?.items.join(" ")).toMatch(/vase/i);
     expect(stepC?.items.join(" ")).toMatch(/rug/i);
     expect(stepC?.items.join(" ")).not.toMatch(/ceiling|stropn|pendant/i);

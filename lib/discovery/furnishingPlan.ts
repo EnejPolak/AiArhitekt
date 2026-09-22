@@ -1,6 +1,14 @@
 import { z } from "zod";
 import type { DesignRequirements, FurniturePlanRole, RoomAnalysisObservation } from "@/lib/analysis/schema";
 import {
+  isAtomicLightingConcept,
+  isLightingConcept,
+  lightingCategory,
+  lightingDisplayLabel,
+  resolveAtomicFurnishingNeed,
+  type AtomicLightingConcept,
+} from "./atomicFurnishing";
+import {
   inferFurnitureConceptFromText,
   isArchitecturalFinishText,
   isDefaultDecorText,
@@ -107,6 +115,11 @@ const DISPLAY_LABELS: Partial<Record<ProductConcept, string>> = {
   dining_table: "Dining table",
   dining_chair: "Dining chairs",
   lighting: "Lighting",
+  ceiling_light: "Ceiling light fixture",
+  pendant_light: "Pendant light",
+  floor_lamp: "Floor lamp",
+  table_lamp: "Table lamp",
+  wall_light: "Wall light",
   wardrobe: "Wardrobe",
   bed: "Bed",
   bedside: "Bedside table",
@@ -174,6 +187,7 @@ function titleCaseCategory(category: string): string {
 }
 
 function displayLabelFor(concept: ProductConcept, category: string): string {
+  if (isLightingConcept(concept)) return lightingDisplayLabel(concept, category);
   return DISPLAY_LABELS[concept] ?? titleCaseCategory(category);
 }
 
@@ -196,6 +210,7 @@ function sanitizeConstraints(constraints: string[]): string[] {
 
 function clampQuantity(concept: ProductConcept, quantity: number | null): number | null {
   if (quantity == null) return null;
+  if (isLightingConcept(concept)) return null;
   const max = concept === "dining_chair" || concept === "chair" ? 8 : 2;
   return Math.min(Math.max(1, quantity), max);
 }
@@ -225,7 +240,7 @@ function keptConceptsFromObservation(observation?: RoomAnalysisObservation | nul
   }
   for (const fixed of observation.architecture?.fixedElements ?? []) {
     const concept = inferFurnitureConceptFromText(fixed);
-    if (concept === "wardrobe" || concept === "storage" || concept === "lighting") {
+    if (concept === "wardrobe" || concept === "storage" || isLightingConcept(concept)) {
       kept.add(concept);
     }
   }
@@ -244,6 +259,10 @@ function suppressedFromNotes(notes: string): Set<ProductConcept> {
 
 function conceptsOverlap(a: ProductConcept, b: ProductConcept): boolean {
   if (a === "other" || b === "other") return false;
+  if (isLightingConcept(a) && isLightingConcept(b)) {
+    if (a === "lighting" || b === "lighting") return true;
+    return a === b;
+  }
   return conceptFamily(a).includes(b) || conceptFamily(b).includes(a);
 }
 
@@ -253,35 +272,77 @@ function nextOccurrence(used: Map<string, number>, slug: string): number {
   return current;
 }
 
-function buildAnalysisItems(requirements: DesignRequirements): PlannedFurnishingItem[] {
+function lightingAlternativeItem(
+  concept: AtomicLightingConcept,
+  used: Map<string, number>
+): PlannedFurnishingItem {
+  const category = lightingCategory(concept);
+  const identitySlug = furnitureConceptIdentitySlug(concept, category);
+  const occurrence = nextOccurrence(used, identitySlug);
+  return {
+    requirementKey: stableFurnitureRequirementKey(identitySlug, occurrence),
+    concept,
+    category,
+    quantity: null,
+    placementNotes: null,
+    constraints: [],
+    rationale: "Optional lighting alternative. Accept only if you want this type searched.",
+    role: "suggested_only",
+    source: "analysis",
+    displayLabel: displayLabelFor(concept, category),
+  };
+}
+
+function buildAnalysisItems(
+  requirements: DesignRequirements,
+  observation?: RoomAnalysisObservation | null
+): PlannedFurnishingItem[] {
   const used = new Map<string, number>();
   const out: PlannedFurnishingItem[] = [];
   for (const need of requirements.furnitureNeeds) {
-    const blob = `${need.category} ${need.constraints.join(" ")}`;
+    const blob = `${need.category} ${need.constraints.join(" ")} ${need.placementNotes ?? ""}`;
     if (isArchitecturalFinishText(blob) || isArchitecturalFinishText(need.category)) continue;
-    const concept = inferFurnitureConceptFromText(blob);
-    const identitySlug = furnitureConceptIdentitySlug(concept, need.category);
+    const resolved = resolveAtomicFurnishingNeed(need, observation);
+    if (!resolved) continue;
+    if (isDefaultDecorText(blob) && resolved.role !== "suggested_only") continue;
+
+    if (resolved.concept === "lighting") {
+      for (const alternative of resolved.suggestedAlternatives) {
+        if (out.some((item) => item.concept === alternative)) continue;
+        out.push(lightingAlternativeItem(alternative, used));
+      }
+      continue;
+    }
+
+    const concept = resolved.concept;
+    const category = resolved.category;
+    const identitySlug = furnitureConceptIdentitySlug(concept, category);
     if (out.some((item) => item.concept !== "other" && conceptsOverlap(item.concept, concept))) {
       continue;
     }
-    if (concept === "other" && out.some((item) => furnitureConceptIdentitySlug(item.concept, item.category) === identitySlug)) {
+    if (
+      concept === "other" &&
+      out.some((item) => furnitureConceptIdentitySlug(item.concept, item.category) === identitySlug)
+    ) {
       continue;
     }
     const occurrence = nextOccurrence(used, identitySlug);
-    if (isDefaultDecorText(blob) && need.role !== "suggested_only") continue;
-    const role: FurniturePlanRole = need.role === "suggested_only" ? "suggested_only" : "required_for_render";
     out.push({
       requirementKey: stableFurnitureRequirementKey(identitySlug, occurrence),
       concept,
-      category: need.category,
-      quantity: clampQuantity(concept, need.quantity),
-      placementNotes: need.placementNotes,
+      category,
+      quantity: clampQuantity(concept, resolved.quantity),
+      placementNotes: resolved.placementNotes,
       constraints: sanitizeConstraints(need.constraints),
-      rationale: need.rationale?.trim() || defaultRationale(concept, need.category),
-      role,
+      rationale: resolved.rationale || defaultRationale(concept, category),
+      role: resolved.role,
       source: "analysis",
-      displayLabel: displayLabelFor(concept, need.category),
+      displayLabel: displayLabelFor(concept, category),
     });
+    for (const alternative of resolved.suggestedAlternatives) {
+      if (out.some((item) => item.concept === alternative)) continue;
+      out.push(lightingAlternativeItem(alternative, used));
+    }
   }
   return out;
 }
@@ -309,18 +370,20 @@ function applyKeepSuppressions(
 }
 
 function noteIntentItem(intent: NoteShoppingIntent, index: number): PlannedFurnishingItem {
-  const identitySlug = furnitureConceptIdentitySlug(intent.concept, intent.category);
+  const concept = intent.concept;
+  const category = isAtomicLightingConcept(concept) ? lightingCategory(concept) : intent.category;
+  const identitySlug = furnitureConceptIdentitySlug(concept, category);
   return {
     requirementKey: `furniture:${slugRequirementPart(intent.concept)}:note:${index}`,
-    concept: intent.concept,
-    category: intent.category,
-    quantity: 1,
+    concept,
+    category,
+    quantity: isLightingConcept(concept) ? null : 1,
     placementNotes: null,
     constraints: sanitizeConstraints(intent.constraints),
     rationale: `Requested in your notes (“${intent.matchedPhrase}”).`,
     role: "required_for_render",
     source: "user_notes",
-    displayLabel: displayLabelFor(intent.concept, intent.category),
+    displayLabel: displayLabelFor(concept, category),
   };
 }
 
@@ -330,11 +393,16 @@ function mergeNoteIntents(
 ): PlannedFurnishingItem[] {
   const merged = [...items];
   intents.forEach((intent, index) => {
-    const matchIndex = merged.findIndex(
+    let matchIndex = merged.findIndex(
       (item) =>
         item.concept === intent.concept ||
         (item.concept !== "other" && intent.concept !== "other" && conceptsOverlap(item.concept, intent.concept))
     );
+    if (matchIndex < 0 && isLightingConcept(intent.concept)) {
+      matchIndex = merged.findIndex(
+        (item) => isLightingConcept(item.concept) && item.source === "analysis"
+      );
+    }
     if (matchIndex >= 0) {
       const match = merged[matchIndex]!;
       if (match.role === "suggested_only" || match.concept !== intent.concept) {
@@ -352,8 +420,11 @@ function mergeNoteIntents(
 
 function applyEdits(item: PlannedFurnishingItem, edits?: FurnishingPlanEdits): PlannedFurnishingItem {
   if (!edits) return item;
-  const category = edits.category?.trim() || item.category;
+  let category = edits.category?.trim() || item.category;
   const concept = inferFurnitureConceptFromText(`${category} ${(edits.constraints ?? item.constraints).join(" ")}`);
+  if (isAtomicLightingConcept(concept)) {
+    category = lightingCategory(concept);
+  }
   return {
     ...item,
     category,
@@ -398,7 +469,7 @@ export function normalizeFurnishingPlan(input: {
   const userRequested = new Set(noteIntents.map((intent) => intent.concept));
   const generated = mergeNoteIntents(
     applyKeepSuppressions(
-      buildAnalysisItems(input.analysisRequirements),
+      buildAnalysisItems(input.analysisRequirements, input.observation),
       keptConceptsFromObservation(input.observation),
       suppressedFromNotes(notes),
       userRequested
@@ -445,10 +516,21 @@ export function normalizeFurnishingPlan(input: {
     withAdded.push(planned);
   }
 
+  const searchable = withAdded.map((item) => {
+    if (item.role === "required_for_render" && (item.concept === "lighting" || /\bor\b/i.test(item.category))) {
+      return {
+        ...item,
+        role: "suggested_only" as const,
+        rationale: item.rationale || "Needs a more specific product type before searching stores.",
+      };
+    }
+    return item;
+  });
+
   return {
     generated,
-    required: withAdded.filter((item) => item.role === "required_for_render"),
-    suggested: withAdded.filter((item) => item.role === "suggested_only"),
+    required: searchable.filter((item) => item.role === "required_for_render"),
+    suggested: searchable.filter((item) => item.role === "suggested_only"),
     removed,
   };
 }

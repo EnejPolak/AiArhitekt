@@ -51,6 +51,21 @@ export function inferFurnitureConceptFromText(text: string): ProductConcept {
   if (/\bstorage\b|predalnik|sideboard|komod/.test(blob)) return "storage";
   if (/\brug\b|\bcarpet\b|preproga/.test(blob)) return "rug";
   if (/curtain|drape|window\s+treatment|zaves/.test(blob)) return "window_treatment";
+  const ceilingHint = /ceiling|stropn|plafon/.test(blob) && /lamp|light|fixture|fitting|svetil/.test(blob);
+  const floorLampHint = /floor\s+lamp|standing\s+lamp|stoje[cč]a\s+svetil/.test(blob);
+  if (
+    (ceilingHint && floorLampHint) ||
+    (ceilingHint && /\bfloor\b/.test(blob) && /\blamp/.test(blob))
+  ) {
+    return "lighting";
+  }
+  if (/pendant\s+(?:light|lamp)|\bpendant\b/.test(blob) && /light|lamp|svetil|dining/.test(blob)) {
+    return "pendant_light";
+  }
+  if (floorLampHint) return "floor_lamp";
+  if (/table\s+lamp|namizn\w*\s+svetil/.test(blob)) return "table_lamp";
+  if (/wall\s+(?:light|lamp|sconce)|stenska\s+svetil/.test(blob)) return "wall_light";
+  if (ceilingHint || /ceiling\s+(?:light|lamp|fixture|fitting)/.test(blob)) return "ceiling_light";
   if (/\blamp\b|lighting|svetil|\blight fixture|\blight fitting/.test(blob)) return "lighting";
   if (/\bchair\b|\bstol\b/.test(blob)) return "chair";
   return "other";

@@ -79,7 +79,7 @@ describe("furnishing plan normalization", () => {
       observation: observation(),
     });
     const concepts = plan.required.map((item) => item.concept);
-    expect(concepts).toEqual(["sofa", "coffee_table", "rug", "lighting"]);
+    expect(concepts).toEqual(["sofa", "coffee_table", "rug", "floor_lamp"]);
     expect(concepts).not.toContain("other");
     expect(plan.required.some((item) => /plant|artwork/i.test(item.category))).toBe(false);
     expect(new Set(concepts).size).toBe(concepts.length);
@@ -208,8 +208,9 @@ describe("approved plan discovery and complete-room gate", () => {
       ]),
       observation: observation(),
     });
-    expect(plan.suggested.some((item) => item.concept === "lighting")).toBe(true);
+    expect(plan.suggested.some((item) => item.concept === "floor_lamp")).toBe(true);
     expect(searched.some((item) => item.provenance?.concept === "lighting")).toBe(false);
+    expect(searched.some((item) => item.provenance?.concept === "floor_lamp")).toBe(false);
     expect(searched.some((item) => /lamp|lighting/i.test(item.itemSpec))).toBe(false);
     const gate = completeRoomGate({
       searchedItemCount: searched.length,
@@ -355,5 +356,236 @@ describe("furnishing plan identity and persistence parsing", () => {
 
   it("bumped analysis schema version is 2", () => {
     expect(ROOM_ANALYSIS_SCHEMA_VERSION).toBe(2);
+  });
+});
+
+const liveV2Analysis = {
+  designRequirements: {
+    preserve: [],
+    constraints: [],
+    materialNeeds: [],
+    furnitureNeeds: [
+      {
+        role: "required_for_render" as const,
+        category: "sofa",
+        quantity: null,
+        rationale: "Primary seating; the room is empty.",
+        constraints: ["must not block windows or door"],
+        placementNotes: "against a wall or centrally if space allows",
+      },
+      {
+        role: "required_for_render" as const,
+        category: "coffee table",
+        quantity: null,
+        rationale: "Central table surface for living room use.",
+        constraints: [],
+        placementNotes: "in front of sofa",
+      },
+      {
+        role: "required_for_render" as const,
+        category: "rug",
+        quantity: null,
+        rationale: "Define seating area and add comfort.",
+        constraints: [],
+        placementNotes: "under sofa and coffee table",
+      },
+      {
+        role: "required_for_render" as const,
+        category: "lighting",
+        quantity: null,
+        rationale: "Functional lighting needed for evenings.",
+        constraints: [],
+        placementNotes: "ceiling or floor lamps",
+      },
+    ],
+    replaceOrRemove: [],
+  },
+  observation: observation({
+    constraints: ["large windows and sliding door limit wall space"],
+    architecture: {
+      doors: ["large sliding glass door"],
+      floor: "unfinished concrete",
+      walls: ["white, unfinished"],
+      windows: ["large, multiple, providing natural light"],
+      fixedElements: [],
+    },
+    visualCondition: {
+      colors: ["white"],
+      overall: "unfinished",
+      lighting: "natural light from windows",
+    },
+    measurementStatus: { exactDimensionsKnown: false, qualitativeNotes: ["large open space"] },
+    uncertainties: ["room purpose inferred as living-room"],
+  }),
+};
+
+describe("atomic furnishing requirements", () => {
+  it("A. generic lighting + ceiling electrical point becomes ceiling_light", () => {
+    const plan = normalizeFurnishingPlan({
+      analysisRequirements: requirements([
+        furnitureNeed("lighting", {
+          placementNotes: "needed for evenings",
+          rationale: "No usable fixture.",
+        }),
+      ]),
+      observation: observation({
+        architecture: {
+          walls: ["open wall"],
+          floor: "bare screed",
+          windows: ["one window"],
+          doors: ["entry door"],
+          fixedElements: ["dangling ceiling electrical point"],
+        },
+      }),
+    });
+    expect(plan.required).toHaveLength(1);
+    expect(plan.required[0]?.concept).toBe("ceiling_light");
+    expect(plan.required[0]?.displayLabel).toBe("Ceiling light fixture");
+    expect(plan.required[0]?.requirementKey).toBe("furniture:ceiling-light:0");
+    expect(plan.required[0]?.quantity).toBeNull();
+    expect(plan.required.some((item) => item.concept === "lighting")).toBe(false);
+  });
+
+  it("B. generic lighting + placement next to sofa becomes floor_lamp", () => {
+    const plan = normalizeFurnishingPlan({
+      analysisRequirements: requirements([
+        furnitureNeed("lighting", { placementNotes: "next to sofa" }),
+      ]),
+      observation: observation(),
+    });
+    expect(plan.required.map((item) => item.concept)).toEqual(["floor_lamp"]);
+    expect(plan.required[0]?.displayLabel).toBe("Floor lamp");
+    expect(plan.required[0]?.requirementKey).toBe("furniture:floor-lamp:0");
+  });
+
+  it("C. ceiling or floor lamp with no disambiguating evidence is not required", () => {
+    const { searched, plan } = resolveShoppingRequirements({
+      analysisRequirements: requirements([
+        furnitureNeed("ceiling or floor lamp", { placementNotes: "ceiling or floor lamps" }),
+      ]),
+      observation: observation(),
+    });
+    expect(plan.required).toHaveLength(0);
+    expect(searched.some((item) => /ceiling or floor/i.test(item.itemSpec))).toBe(false);
+    expect(searched.some((item) => item.provenance?.concept === "lighting")).toBe(false);
+    expect(plan.suggested.length).toBeGreaterThan(0);
+  });
+
+  it("D. explicit user floor lamp wins", () => {
+    const plan = normalizeFurnishingPlan({
+      analysisRequirements: requirements([furnitureNeed("lighting")]),
+      observation: observation(),
+      preferences: { notes: "I want a floor lamp" },
+    });
+    expect(plan.required.some((item) => item.concept === "floor_lamp")).toBe(true);
+    expect(plan.required.some((item) => item.concept === "lighting")).toBe(false);
+    expect(plan.required.some((item) => item.concept === "ceiling_light")).toBe(false);
+  });
+
+  it("E. explicit user pendant above dining table wins", () => {
+    const plan = normalizeFurnishingPlan({
+      analysisRequirements: requirements([furnitureNeed("sofa")]),
+      observation: observation(),
+      preferences: { notes: "pendant above dining table" },
+    });
+    expect(plan.required.some((item) => item.concept === "pendant_light")).toBe(true);
+    expect(plan.required.find((item) => item.concept === "pendant_light")?.displayLabel).toBe(
+      "Pendant light"
+    );
+  });
+
+  it("F. atomic lighting keys stay stable across reorder", () => {
+    const first = normalizeFurnishingPlan({
+      analysisRequirements: requirements([
+        furnitureNeed("coffee table"),
+        furnitureNeed("lighting", { placementNotes: "next to sofa" }),
+        furnitureNeed("sofa"),
+      ]),
+      observation: observation(),
+    });
+    const second = normalizeFurnishingPlan({
+      analysisRequirements: requirements([
+        furnitureNeed("sofa"),
+        furnitureNeed("lighting", { placementNotes: "next to sofa" }),
+        furnitureNeed("coffee table"),
+      ]),
+      observation: observation(),
+    });
+    expect(first.required.map((item) => item.requirementKey).sort()).toEqual(
+      second.required.map((item) => item.requirementKey).sort()
+    );
+    expect(first.required.find((item) => item.concept === "floor_lamp")?.requirementKey).toBe(
+      "furniture:floor-lamp:0"
+    );
+  });
+
+  it("G. normalization does not call providers", () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (() => {
+      throw new Error("provider called");
+    }) as typeof fetch;
+    try {
+      normalizeFurnishingPlan({
+        analysisRequirements: liveV2Analysis.designRequirements,
+        observation: liveV2Analysis.observation,
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("H. sofa / coffee table / rug behavior is unchanged", () => {
+    const plan = normalizeFurnishingPlan({
+      analysisRequirements: liveV2Analysis.designRequirements,
+      observation: liveV2Analysis.observation,
+    });
+    expect(plan.required.find((item) => item.concept === "sofa")?.requirementKey).toBe("furniture:sofa:0");
+    expect(plan.required.find((item) => item.concept === "coffee_table")?.requirementKey).toBe(
+      "furniture:coffee-table:0"
+    );
+    expect(plan.required.find((item) => item.concept === "rug")?.requirementKey).toBe("furniture:rug:0");
+  });
+
+  it("replays the saved empty living-room v2 analysis into a ceiling light fixture", () => {
+    const { searched, plan } = resolveShoppingRequirements({
+      analysisRequirements: liveV2Analysis.designRequirements,
+      observation: liveV2Analysis.observation,
+    });
+    expect(plan.required.map((item) => item.displayLabel)).toEqual([
+      "Sofa",
+      "Coffee table",
+      "Rug",
+      "Ceiling light fixture",
+    ]);
+    expect(plan.required.map((item) => item.concept)).toEqual([
+      "sofa",
+      "coffee_table",
+      "rug",
+      "ceiling_light",
+    ]);
+    expect(plan.required.some((item) => item.concept === "lighting")).toBe(false);
+    expect(plan.required.some((item) => /ceiling or floor/i.test(item.category))).toBe(false);
+    expect(searched.some((item) => item.provenance?.concept === "lighting")).toBe(false);
+    expect(searched.some((item) => /ceiling or floor/i.test(item.itemSpec))).toBe(false);
+    const light = plan.required.find((item) => item.concept === "ceiling_light")!;
+    expect(light.requirementKey).toBe("furniture:ceiling-light:0");
+    expect(light.quantity).toBeNull();
+  });
+
+  it("user can change a ceiling light fixture to a floor lamp without a provider call", () => {
+    const plan = normalizeFurnishingPlan({
+      analysisRequirements: liveV2Analysis.designRequirements,
+      observation: liveV2Analysis.observation,
+      planOverrides: {
+        ...EMPTY_FURNISHING_PLAN_OVERRIDES,
+        editedRequirements: {
+          "furniture:ceiling-light:0": { category: "Floor lamp" },
+        },
+      },
+    });
+    const light = plan.required.find((item) => item.requirementKey === "furniture:ceiling-light:0");
+    expect(light?.concept).toBe("floor_lamp");
+    expect(light?.displayLabel).toBe("Floor lamp");
+    expect(plan.required.some((item) => item.concept === "ceiling_light")).toBe(false);
   });
 });

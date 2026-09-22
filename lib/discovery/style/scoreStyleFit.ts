@@ -15,7 +15,10 @@ const GROUP_WEIGHTS = {
 
 function groupApplies(group: StyleSignalGroup, concept: ProductConcept): boolean {
   if (!group.concepts || group.concepts.length === 0) return true;
-  return group.concepts.includes(concept);
+  if (group.concepts.includes(concept)) return true;
+  const lighting = ["lighting", "ceiling_light", "pendant_light", "floor_lamp", "table_lamp", "wall_light"];
+  if (group.concepts.includes("lighting") && lighting.includes(concept)) return true;
+  return false;
 }
 
 function termsForLocale(group: StyleSignalGroup, locale: SearchLocale): string[] {

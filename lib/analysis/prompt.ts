@@ -22,6 +22,8 @@ Do NOT:
 - Produce a final-render prompt, design concept images, or executable code.
 - Make purchases or claim you did.
 - Duplicate the same functional furniture category.
+- Use umbrella furniture categories such as "lighting", "storage", "seating", "table", or "decor" when a specific product class is known.
+- Combine two product classes with "or" (example: "ceiling or floor lamp"). Each furnitureNeeds item must be one atomic shoppable class such as "ceiling light fixture" or "floor lamp".
 - Automatically create a new requirement for a category already present as likely_keep (example: existing sofa marked likely_keep must not also generate a new sofa, unless the user explicitly asked to replace it).
 - Invent flooring, wall paint, or ceiling finish as furniture. Architectural finishes are chosen separately.
 - Add decorative clutter by default: no plants, artwork, books, cushions, or decorative accessories unless the user explicitly asked for them.

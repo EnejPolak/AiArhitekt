@@ -38,6 +38,11 @@ const FURNITURE_STYLE_CONCEPTS = new Set<ProductConcept>([
   "tv_console",
   "rug",
   "lighting",
+  "ceiling_light",
+  "pendant_light",
+  "floor_lamp",
+  "table_lamp",
+  "wall_light",
 ]);
 
 const MASCULINE_STYLE_CONCEPTS = new Set<ProductConcept>([

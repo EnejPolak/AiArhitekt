@@ -247,6 +247,16 @@ function furnitureMatches(
       return /\bbed\b|postelj/.test(haystack);
     case "wardrobe":
       return /wardrobe|storage|garderob|omara/.test(haystack);
+    case "ceiling_light":
+      return /ceiling|stropn|plafon/.test(haystack) && /lamp|light|svetil|fixture/.test(haystack);
+    case "pendant_light":
+      return /pendant|vise[cč]/.test(haystack);
+    case "floor_lamp":
+      return /floor\s+lamp|standing\s+lamp|stoje/.test(haystack);
+    case "table_lamp":
+      return /table\s+lamp|namizn/.test(haystack);
+    case "wall_light":
+      return /wall\s+(?:light|lamp|sconce)|stenska\s+svetil/.test(haystack);
     case "lighting":
       return /lamp|\blight|svetil|\bluc\b/.test(haystack);
     case "reading_chair":

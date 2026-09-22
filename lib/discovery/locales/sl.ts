@@ -23,17 +23,18 @@ export function slFurnitureQueries(concept: ProductConcept, ctx: FurnitureQueryC
       return ["postelja"];
     case "wardrobe":
       return ["omara", "garderobna omara"];
-    case "lighting": {
-      const category = ctx.category.trim().toLowerCase();
-      const generic =
-        category === "lighting" ||
-        category === "lamp" ||
-        category === "light" ||
-        category === "svetilo" ||
-        category === "svetilka";
-      if (!generic) return [];
-      return ["stropna svetilka", "svetilo"];
-    }
+    case "ceiling_light":
+      return ["stropna svetilka", "ceiling light"];
+    case "pendant_light":
+      return ["viseča svetilka", "pendant light"];
+    case "floor_lamp":
+      return ["stoječa svetilka", "floor lamp"];
+    case "table_lamp":
+      return ["namizna svetilka", "table lamp"];
+    case "wall_light":
+      return ["stenska svetilka", "wall light"];
+    case "lighting":
+      return [];
     case "chair":
       return ["stol"];
     case "reading_chair":

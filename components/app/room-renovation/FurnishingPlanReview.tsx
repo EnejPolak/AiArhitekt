@@ -125,7 +125,7 @@ export function FurnishingPlanReview({
           ...planOverrides.editedRequirements,
           [item.requirementKey]: {
             ...planOverrides.editedRequirements[item.requirementKey],
-            constraints: [next],
+            category: next,
           },
         },
       })
@@ -178,7 +178,7 @@ export function FurnishingPlanReview({
                     value={editDraft}
                     onChange={(event) => setEditDraft(event.target.value)}
                     className="flex-1 min-w-[12rem] px-3 py-2 rounded-lg bg-[rgba(255,255,255,0.02)] border border-[rgba(255,255,255,0.08)] text-white text-sm"
-                    placeholder="Constraint or note"
+                    placeholder="Product, e.g. Floor lamp"
                     disabled={disabled}
                   />
                   <button
@@ -197,7 +197,7 @@ export function FurnishingPlanReview({
                     disabled={disabled}
                     onClick={() => {
                       setEditingKey(item.requirementKey);
-                      setEditDraft(item.constraints[0] ?? "");
+                      setEditDraft(item.category);
                     }}
                     className="text-[13px] text-[rgba(255,255,255,0.70)] hover:text-white disabled:opacity-40"
                   >

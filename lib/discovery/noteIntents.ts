@@ -88,6 +88,31 @@ const POSITIVE_INTENT_PATTERNS: IntentPattern[] = [
     patterns: [/\bwardrobe\b/i, /\bgarderob\w*\b/i, /\bomar[a]?\b/i],
   },
   {
+    concept: "floor_lamp",
+    category: "floor lamp",
+    patterns: [/\bfloor\s+lamps?\b/i, /\bstoje[cč]a\s+svetil/i, /\bstanding\s+lamp\b/i],
+  },
+  {
+    concept: "pendant_light",
+    category: "pendant light",
+    patterns: [/\bpendant\s+(?:light|lamp)s?\b/i, /\bpendant\s+above\b/i, /\babove\s+(?:the\s+)?dining\s+table\b/i],
+  },
+  {
+    concept: "ceiling_light",
+    category: "ceiling light fixture",
+    patterns: [/\bceiling\s+(?:light|lamp|fixture)s?\b/i, /\bstropn\w*\s+svetil/i],
+  },
+  {
+    concept: "table_lamp",
+    category: "table lamp",
+    patterns: [/\btable\s+lamps?\b/i, /\bnamizn\w*\s+svetil/i],
+  },
+  {
+    concept: "wall_light",
+    category: "wall light",
+    patterns: [/\bwall\s+(?:light|lamp|sconce)s?\b/i],
+  },
+  {
     concept: "lighting",
     category: "lighting",
     patterns: [
@@ -475,6 +500,9 @@ function extractViaKnownPatterns(notes: string, suppressions: Set<ProductConcept
   if (found.has("reading_chair")) {
     found.delete("chair");
   }
+  if (found.has("floor_lamp") || found.has("pendant_light") || found.has("ceiling_light") || found.has("table_lamp") || found.has("wall_light")) {
+    found.delete("lighting");
+  }
 
   return [...found.values()];
 }
@@ -528,6 +556,9 @@ export function extractShoppingIntentsFromNotes(notes: string): NoteShoppingInte
   }
   if (deduped.some((item) => item.concept === "reading_chair")) {
     return deduped.filter((item) => item.concept !== "chair");
+  }
+  if (deduped.some((item) => item.concept === "floor_lamp" || item.concept === "pendant_light" || item.concept === "ceiling_light" || item.concept === "table_lamp" || item.concept === "wall_light")) {
+    return deduped.filter((item) => item.concept !== "lighting");
   }
   return deduped;
 }
