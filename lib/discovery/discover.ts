@@ -52,6 +52,7 @@ import {
   exclusiveUnresolvedRetryKey,
   searchScopeAfterRejectedMemory,
   referenceFetchBlockedDomains,
+  mergeRankedCandidatePool,
   resolveCompleteRoomSelections,
   resolveRequirementSlot,
   selectionFromRenderReadyCandidate,
@@ -750,11 +751,14 @@ export async function retryUnresolvedRequirement(
       maxLevel: 1,
       stores: [],
     });
-    return deprioritizeBlockedMerchantCandidates(
-      ranking.ranked.filter(
-        (candidate) => !isRejectedCandidateUrl(nextRejected, candidate.product.productUrl)
-      ),
-      scope.referenceFetchBlockedDomains
+    return mergeRankedCandidatePool(
+      [],
+      deprioritizeBlockedMerchantCandidates(
+        ranking.ranked.filter(
+          (candidate) => !isRejectedCandidateUrl(nextRejected, candidate.product.productUrl)
+        ),
+        scope.referenceFetchBlockedDomains
+      )
     );
   };
 

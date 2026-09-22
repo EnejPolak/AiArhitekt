@@ -250,6 +250,7 @@ describe("merchant diversity hardening", () => {
     expect(discoverSrc).toMatch(
       /retryUnresolvedRequirement[\s\S]*searchScopeAfterRejectedMemory\(allowlistDomains/
     );
+    expect(discoverSrc).toMatch(/mergeRankedCandidatePool\(/);
   });
 
   it("J. READY sibling requirements are not searched again", () => {
