@@ -49,9 +49,9 @@ import {
   isRejectedCandidateUrl,
   isRequiredUnresolvedReason,
   markSlotUserRemoved,
-  recoveryExcludeProductUrls,
+  exclusiveUnresolvedRetryKey,
+  searchScopeAfterRejectedMemory,
   referenceFetchBlockedDomains,
-  requirementRetrySearchHints,
   resolveCompleteRoomSelections,
   resolveRequirementSlot,
   selectionFromRenderReadyCandidate,
@@ -486,10 +486,12 @@ export async function discoverProjectProducts(
       }),
     recover: async ({ requirement, rejected }) => {
       const query = requirement.queryPlan[0] || requirement.itemSpec;
+      const scope = searchScopeAfterRejectedMemory(allowlistDomains, rejected);
+      if (scope.noEligibleMerchants) return [];
       const outcome = useLegacySerp
         ? await serpSearch({
             items: [query],
-            allowlistDomains,
+            allowlistDomains: scope.allowlistDomains,
             domainCategoryMap: places.domainCategoryMapStores,
             retryOnTimeout: false,
             providerTimeoutMs: DISCOVERY_SERP_TIMEOUT_MS,
@@ -498,15 +500,15 @@ export async function discoverProjectProducts(
           })
         : await productSearch({
             items: [query],
-            allowlistDomains,
+            allowlistDomains: scope.allowlistDomains,
             deadlineAt,
             minRemainingBeforeRequestMs: DISCOVERY_OPENAI_MIN_REMAINING_MS,
-            excludeProductUrls: recoveryExcludeProductUrls(rejected),
-            referenceFetchBlockedDomains: referenceFetchBlockedDomains(rejected),
+            excludeProductUrls: scope.excludeProductUrls,
+            referenceFetchBlockedDomains: scope.referenceFetchBlockedDomains,
             marketContext: {
               countryCode: geo.countryCode,
               formattedLocation: geo.formattedAddress ?? locationInput,
-              merchantDomains: allowlistDomains,
+              merchantDomains: scope.allowlistDomains,
             },
           });
       if (!outcome.ok) return [];
@@ -698,7 +700,17 @@ export async function retryUnresolvedRequirement(
   const unmatchedItem = loaded.discovery.unmatchedRequirements.find(
     (item) => item.requirementKey === requirementKey && isRequiredUnresolvedReason(item.reason)
   );
-  if (!unmatchedItem) {
+  const readyKeys = loaded.selections
+    .filter((row) => row.referenceStatus === "ready")
+    .map((row) => row.requirementKey);
+  if (
+    !unmatchedItem ||
+    exclusiveUnresolvedRetryKey(
+      requirementKey,
+      loaded.discovery.unmatchedRequirements,
+      readyKeys
+    ) == null
+  ) {
     return loaded;
   }
 
@@ -712,14 +724,18 @@ export async function retryUnresolvedRequirement(
   };
 
   const searchRanked = async (nextRejected: typeof rejected) => {
-    const nextHints = requirementRetrySearchHints(nextRejected);
+    const scope = searchScopeAfterRejectedMemory(allowlistDomains, nextRejected);
+    if (scope.noEligibleMerchants) return [];
     const query = requirement.itemSpec;
     const outcome = await productSearch({
       items: [query],
-      allowlistDomains,
-      excludeProductUrls: nextHints.excludeProductUrls,
-      referenceFetchBlockedDomains: nextHints.referenceFetchBlockedDomains,
-      marketContext,
+      allowlistDomains: scope.allowlistDomains,
+      excludeProductUrls: scope.excludeProductUrls,
+      referenceFetchBlockedDomains: scope.referenceFetchBlockedDomains,
+      marketContext: {
+        ...marketContext,
+        merchantDomains: scope.allowlistDomains,
+      },
     });
     const row = outcome.ok
       ? outcome.response.results.find((item) => item.item === query) ??
@@ -738,7 +754,7 @@ export async function retryUnresolvedRequirement(
       ranking.ranked.filter(
         (candidate) => !isRejectedCandidateUrl(nextRejected, candidate.product.productUrl)
       ),
-      nextHints.referenceFetchBlockedDomains
+      scope.referenceFetchBlockedDomains
     );
   };
 

@@ -6,7 +6,7 @@ import { extractProductImageCandidates } from "@/lib/references/extractProductIm
 import { USABLE_PRODUCT_PNG } from "@/lib/references/imageFixtures";
 import { extractModelProposedCandidates } from "@/lib/productDiscovery/stepCCandidates";
 import { buildTargetedResearchUserMessage } from "@/lib/productDiscovery/targetedResearchPrompt";
-import { recoveryExcludeProductUrls, resolveRequirementSlot, requirementRetrySearchHints } from "./completeRoom";
+import { recoveryExcludeProductUrls, resolveRequirementSlot, requirementRetrySearchHints, searchScopeAfterRejectedMemory } from "./completeRoom";
 
 const publicLookup = async () => ({ address: "93.184.216.34", family: 4 });
 
@@ -262,12 +262,17 @@ describe("multi-candidate merchant page image acquisition", () => {
     const message = JSON.parse(
       buildProductDiscoveryUserMessage({
         requestedItem: "coffee table",
-        allowedDomains: ["blocked-shop.si", "localhome.si"],
+        allowedDomains: searchScopeAfterRejectedMemory(
+          ["blocked-shop.si", "localhome.si"],
+          rejected
+        ).allowlistDomains,
         excludeProductUrls: hints.excludeProductUrls,
         referenceFetchBlockedDomains: hints.referenceFetchBlockedDomains,
       })
     );
     expect(message.excludeProductUrls).toContain(rejectedUrl);
+    expect(message.allowedDomains).toEqual(["localhome.si"]);
+    expect(message.allowedDomains).not.toContain("blocked-shop.si");
     expect(message.merchantDomainStatus).toEqual([
       { domain: "blocked-shop.si", status: "reference_fetch_blocked" },
     ]);

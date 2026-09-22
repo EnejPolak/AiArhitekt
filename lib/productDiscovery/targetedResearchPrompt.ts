@@ -3,6 +3,7 @@ import {
   normalizeProductDiscoveryMarketContext,
   type ProductDiscoveryMarketContext,
 } from "./marketContext";
+import { MERCHANT_CANDIDATE_DIVERSITY_RULE } from "./prompt";
 
 export const TARGETED_RESEARCH_SYSTEM_PROMPT = `You are a targeted product discovery engine performing ONE follow-up merchant search.
 
@@ -25,6 +26,7 @@ Rules:
 - Return 3 to 5 ranked plausible product candidates from the same allowlisted merchant-domain context when that many distinct direct product pages exist. Do not return only one winner when other plausible product pages were found.
 - Never return a productUrl listed in excludeProductUrls. Those canonical product pages were already rejected. Search for different distinct product pages, optionally on other allowlisted merchant domains.
 - If merchantDomainStatus lists domains with status reference_fetch_blocked, prefer other allowed merchant domains for new candidates. Do not return only products from those domains when other allowlisted domains exist.
+- ${MERCHANT_CANDIDATE_DIVERSITY_RULE}
 - "product" is the strongest candidate when status is found. "candidates" is the bounded ranked pool of proposals (up to 5).
 - Each candidate must include name, retailer, retailerDomain, productUrl, price (or null), imageUrl (or null), sku if present, category, rank, sourceUrls, and requirement fields.
 - These are proposals only. Server-side ProductEvidence remains the authority.
@@ -70,6 +72,8 @@ export function buildTargetedResearchUserMessage(input: {
       max: 5,
       proposalsOnly: true,
       evidenceAuthority: "server_product_evidence",
+      preferAtLeastTwoMerchantDomains: true,
+      maxCandidatesPerDomainBeforeOthers: 2,
     },
     priorFailure: input.priorFailure,
     excludeProductUrls: input.excludeProductUrls ?? [],

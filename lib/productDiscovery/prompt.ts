@@ -8,6 +8,9 @@ import {
 
 export type { ProductDiscoveryMarketContext } from "./marketContext";
 
+export const MERCHANT_CANDIDATE_DIVERSITY_RULE =
+  "When credible direct product pages exist across multiple allowed merchant domains, return candidates from at least two merchant domains and no more than two candidates from one domain before including candidates from other available domains.";
+
 /** Frozen control prompt for before/after primary-search recall benchmarks. */
 export const PRODUCT_DISCOVERY_SYSTEM_PROMPT_CONTROL = `You are a product discovery engine.
 
@@ -58,6 +61,7 @@ Candidate pool (mandatory):
 - Do NOT return only one winner when other plausible allowlisted product pages were found.
 - If excludeProductUrls is non-empty, never return those canonical product URLs. Search for different distinct product pages.
 - If merchantDomainStatus lists domains with status reference_fetch_blocked, prefer other allowed merchant domains. Do not return only products from those domains when other allowlisted domains exist.
+- ${MERCHANT_CANDIDATE_DIVERSITY_RULE}
 - "product" is the strongest candidate when status is found. "candidates" is the bounded ranked pool of proposals (up to 5).
 - Each candidate must include: name, retailer, retailerDomain, productUrl, price (or null), imageUrl (or null), sku if present, category, rank, sourceUrls, and requirement fields.
 - These are proposals only. Server-side ProductEvidence remains the authority. Never fabricate URLs, prices, images, or SKUs.
@@ -145,6 +149,7 @@ Candidate pool (mandatory):
 - Do NOT return only one winner when other plausible allowlisted product pages were found.
 - If excludeProductUrls is non-empty, never return those canonical product URLs. Search for different distinct product pages.
 - If merchantDomainStatus lists domains with status reference_fetch_blocked, prefer other allowed merchant domains. Do not return only products from those domains when other allowlisted domains exist.
+- ${MERCHANT_CANDIDATE_DIVERSITY_RULE}
 - "product" is the strongest candidate when status is found. "candidates" is the bounded ranked pool of proposals (up to 5).
 - Each candidate must include: name, retailer, retailerDomain, productUrl, price (or null), imageUrl (or null), sku if present, category, rank, sourceUrls, and requirement fields.
 - These are proposals only. Server-side ProductEvidence remains the authority. Never fabricate URLs, prices, images, or SKUs.
@@ -198,6 +203,8 @@ export function buildProductDiscoveryUserMessage(input: {
       max: 5,
       proposalsOnly: true,
       evidenceAuthority: "server_product_evidence",
+      preferAtLeastTwoMerchantDomains: true,
+      maxCandidatesPerDomainBeforeOthers: 2,
     },
     localMarketSearchInstruction: LOCAL_MARKET_SEARCH_INSTRUCTION,
     searchGuidance: {

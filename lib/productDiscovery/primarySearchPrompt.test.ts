@@ -29,6 +29,12 @@ describe("primary discovery prompt", () => {
     expect(getProductDiscoverySystemPrompt()).toBe(PRODUCT_DISCOVERY_SYSTEM_PROMPT);
     expect(PRODUCT_DISCOVERY_SYSTEM_PROMPT).toContain("SEARCH BROAD ENOUGH TO DISCOVER CANDIDATES");
     expect(PRODUCT_DISCOVERY_SYSTEM_PROMPT).toContain("viseča svetilka");
+    expect(PRODUCT_DISCOVERY_SYSTEM_PROMPT_CONTROL).toContain(
+      "return candidates from at least two merchant domains"
+    );
+    expect(PRODUCT_DISCOVERY_SYSTEM_PROMPT).toContain(
+      "return candidates from at least two merchant domains"
+    );
   });
 
   it("user message includes search-broad-validate-strict guidance", () => {

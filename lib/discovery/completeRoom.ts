@@ -12,6 +12,7 @@ import {
   enrichRankedCandidateFromProductPage,
 } from "./candidatePageEnrichment";
 import {
+  isRequiredUnresolvedReason,
   unmatchedRequirementSchema,
   type SearchableRequirement,
   type UnmatchedRequirement,
@@ -27,7 +28,9 @@ import {
 
 export {
   MAX_CANDIDATES_PER_REQUIREMENT,
+  MAX_CANDIDATES_PER_MERCHANT_DOMAIN,
   MAX_RECOVERY_SEARCHES_PER_REQUIREMENT,
+  diversifyMerchantCandidatePool,
   mergeRankedCandidatePool,
   type RequirementCandidatePool,
 } from "./candidatePool";
@@ -39,6 +42,7 @@ export const CANDIDATE_FAILURE_CODES = [
   "association_unverified",
   "invalid_image",
   "merchant_blocked",
+  "reference_fetch_blocked",
   "category_unverified",
   "no_image",
   "fetch_failed",
@@ -151,6 +155,27 @@ export function referenceFetchBlockedDomains(rejected: RejectedCandidate[]): str
     .sort();
 }
 
+export function effectiveSearchAllowlist(
+  allowlistDomains: string[],
+  blockedDomains: string[]
+): string[] {
+  const blocked = new Set(blockedDomains.map((domain) => merchantDomainKey(domain)).filter(Boolean));
+  if (blocked.size === 0) return [...allowlistDomains];
+  return allowlistDomains.filter((domain) => !blocked.has(merchantDomainKey(domain)));
+}
+
+export function exclusiveUnresolvedRetryKey(
+  requestedKey: string,
+  unmatched: UnmatchedRequirement[],
+  readyRequirementKeys: string[]
+): string | null {
+  if (readyRequirementKeys.includes(requestedKey)) return null;
+  const item = unmatched.find(
+    (row) => row.requirementKey === requestedKey && isRequiredUnresolvedReason(row.reason)
+  );
+  return item?.requirementKey ?? null;
+}
+
 export function deprioritizeBlockedMerchantCandidates(
   candidates: RankedProductCandidate[],
   blockedDomains: string[]
@@ -174,6 +199,25 @@ export function requirementRetrySearchHints(rejected: RejectedCandidate[]): {
   return {
     excludeProductUrls: recoveryExcludeProductUrls(rejected),
     referenceFetchBlockedDomains: referenceFetchBlockedDomains(rejected),
+  };
+}
+
+export function searchScopeAfterRejectedMemory(
+  allowlistDomains: string[],
+  rejected: RejectedCandidate[]
+): {
+  allowlistDomains: string[];
+  excludeProductUrls: string[];
+  referenceFetchBlockedDomains: string[];
+  noEligibleMerchants: boolean;
+} {
+  const hints = requirementRetrySearchHints(rejected);
+  const allowlist = effectiveSearchAllowlist(allowlistDomains, hints.referenceFetchBlockedDomains);
+  return {
+    allowlistDomains: allowlist,
+    excludeProductUrls: hints.excludeProductUrls,
+    referenceFetchBlockedDomains: hints.referenceFetchBlockedDomains,
+    noEligibleMerchants: allowlist.length === 0,
   };
 }
 
@@ -222,6 +266,15 @@ export async function selectFirstRenderReadyCandidate(input: {
   let rejected = [...(input.rejected ?? [])];
   for (const candidate of input.candidates) {
     if (isRejectedCandidateUrl(rejected, candidate.product.productUrl)) continue;
+    const domain = merchantDomainKey(candidate.product.retailerDomain);
+    if (domain && referenceFetchBlockedDomains(rejected).includes(domain)) {
+      rejected = rememberRejectedCandidate(rejected, {
+        productUrl: candidate.product.productUrl,
+        merchant: candidate.product.retailerDomain || candidate.product.retailerName || "unknown",
+        failureCode: MERCHANT_DOMAIN_STATUS_REFERENCE_FETCH_BLOCKED,
+      });
+      continue;
+    }
     const verdict = await input.evaluate(candidate);
     if (verdict.ready) {
       return {
