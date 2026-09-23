@@ -17,6 +17,9 @@ export type ShoppingPreferenceInput = {
   keepExistingWalls?: boolean | null;
   notes?: string | null;
   furnishingPlanIdentity?: string | null;
+  designBriefIdentity?: string | null;
+  designBrief?: import("@/lib/design-brief").DesignBriefDocument | null;
+  budgetLevel?: "budget-friendly" | "balanced" | "premium" | "not-sure" | null;
 };
 
 export type ShoppingPreferenceSnapshot = {
@@ -30,6 +33,7 @@ export type ShoppingPreferenceSnapshot = {
   keepExistingWalls: boolean;
   noteShoppingIntents: string[];
   furnishingPlanIdentity?: string;
+  designBriefIdentity?: string;
 };
 
 function normalizeText(value: string | null | undefined): string {
@@ -66,6 +70,7 @@ export function canonicalShoppingPreferences(
   const flooringParsed = renderFlooringPreferenceSchema.safeParse(input?.flooring ?? "keep");
   const bedParsed = renderBedTypeSchema.safeParse(input?.bedType ?? "none");
   const furnishingPlanIdentity = (input?.furnishingPlanIdentity ?? "").trim();
+  const designBriefIdentity = (input?.designBriefIdentity ?? "").trim();
 
   return {
     schemaVersion: DISCOVERY_PREFERENCE_SCHEMA_VERSION,
@@ -78,6 +83,7 @@ export function canonicalShoppingPreferences(
     keepExistingWalls: Boolean(input?.keepExistingWalls),
     noteShoppingIntents: canonicalNoteShoppingIntents(input?.notes ?? ""),
     ...(furnishingPlanIdentity ? { furnishingPlanIdentity } : {}),
+    ...(designBriefIdentity ? { designBriefIdentity } : {}),
   };
 }
 
@@ -117,6 +123,9 @@ function normalizeStoredSnapshot(stored: unknown): ShoppingPreferenceSnapshot {
         : canonicalNoteShoppingIntents(record.notes ?? ""),
       ...((record.furnishingPlanIdentity ?? "").trim()
         ? { furnishingPlanIdentity: record.furnishingPlanIdentity!.trim() }
+        : {}),
+      ...((record.designBriefIdentity ?? "").trim()
+        ? { designBriefIdentity: record.designBriefIdentity!.trim() }
         : {}),
     };
   }
@@ -158,6 +167,7 @@ export function shoppingPreferenceInputFromSnapshot(
     ...(snapshot.furnishingPlanIdentity
       ? { furnishingPlanIdentity: snapshot.furnishingPlanIdentity }
       : {}),
+    ...(snapshot.designBriefIdentity ? { designBriefIdentity: snapshot.designBriefIdentity } : {}),
   };
 }
 
@@ -182,6 +192,7 @@ function furnitureIdentityFromSnapshot(snapshot: ShoppingPreferenceSnapshot) {
     ...(snapshot.furnishingPlanIdentity
       ? { furnishingPlanIdentity: snapshot.furnishingPlanIdentity }
       : {}),
+    ...(snapshot.designBriefIdentity ? { designBriefIdentity: snapshot.designBriefIdentity } : {}),
   };
 }
 

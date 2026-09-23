@@ -5,20 +5,15 @@ import { ConversationMessage } from "./ConversationMessage";
 import { Step1RoomType } from "./steps/Step1RoomType";
 import { Step2PhotoUpload } from "./steps/Step2PhotoUpload";
 import { Step3AIObservation } from "./steps/Step3AIObservation";
-import { Step4StyleSelection } from "./steps/Step4StyleSelection";
-import { Step5BudgetSignal } from "./steps/Step5BudgetSignal";
-import { Step6DesignGeneration } from "./steps/Step6DesignGeneration";
-import { Step6DesignPreferences, type RoomDesignPreferences } from "./steps/Step6DesignPreferences";
+import { DesignBriefStep } from "./design-brief/DesignBriefStep";
+import { type RoomDesignPreferences } from "./steps/Step6DesignPreferences";
 import { Step6bLocation } from "./steps/Step6bLocation";
-import { Step7FinalDesignSelection } from "./steps/Step7FinalDesignSelection";
-import { Step8CostEstimate } from "./steps/Step8CostEstimate";
-import { Step8bBudgetSplit } from "./steps/Step8bBudgetSplit";
 import { Step9aStoreDiscovery } from "./steps/Step9aStoreDiscovery";
 import { Step9bProductSourcing } from "./steps/Step9bProductSourcing";
 import { Step9cShoppingList } from "./steps/Step9cShoppingList";
 import { Step9dContractors } from "./steps/Step9dContractors";
 import { Step10FinalReport } from "./steps/Step10FinalReport";
-import { stepIndexFromKey, stepKeyFromIndex } from "@/lib/projects/steps";
+import { stepIndexFromKey, stepKeyFromIndex, ROOM_STEP_KEYS, type RoomStepKey } from "@/lib/projects/steps";
 import type { RoomAnalysisView } from "@/lib/analysis/types";
 import type { ProductDiscoveryView, ProductSelectionView } from "@/lib/discovery/types";
 import { DEFAULT_DISCOVERY_RADIUS_KM } from "@/lib/discovery/constants";
@@ -40,8 +35,7 @@ import {
   isFloorFinishRequirementKey,
   isWallFinishRequirementKey,
 } from "@/lib/render/finishes";
-import { inferLegacyFloorFinishMode, inferLegacyWallFinishMode, inferWallFinishMode, keepExistingWallsFromWallFinishMode } from "@/lib/render/preferences";
-import { isRequiredUnresolvedReason } from "@/lib/discovery/itemSpecs";
+import { inferLegacyFloorFinishMode, inferLegacyWallFinishMode, keepExistingWallsFromWallFinishMode } from "@/lib/render/preferences";
 
 export interface RoomRenovationData {
   roomType: "kitchen" | "bathroom" | "bedroom" | "living-room" | "other" | null;
@@ -378,24 +372,48 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
     setData((prev) => ({ ...prev, ...updates }));
   };
 
-  const persistRoomPreferences = async (patch: ProjectRoomPreferencesPatch): Promise<boolean> => {
-    if (preferenceSaving) return false;
-    setPreferenceSaving(true);
-    setPreferenceSaveError(null);
-    try {
-      const result = await saveProjectRoomPreferencesAction({ projectId, patch });
-      if (!result.ok) {
-        setPreferenceSaveError(result.message);
+  const persistChainRef = React.useRef(Promise.resolve());
+
+  const persistRoomPreferences = (patch: ProjectRoomPreferencesPatch): Promise<boolean> => {
+    const run = async () => {
+      setPreferenceSaving(true);
+      setPreferenceSaveError(null);
+      try {
+        const result = await saveProjectRoomPreferencesAction({ projectId, patch });
+        if (!result.ok) {
+          setPreferenceSaveError(result.message);
+          return false;
+        }
+        setRoomPrefs(result.preferences);
+        setData((prev) => ({
+          ...prev,
+          roomType: result.preferences.roomType,
+          selectedStyles: result.preferences.selectedStyles,
+          budgetLevel: result.preferences.budgetLevel,
+          preferences: prev.preferences
+            ? {
+                ...prev.preferences,
+                bedType: result.preferences.bedType,
+                notes: result.preferences.notes,
+                wallMainColor: result.preferences.wallMainColor,
+                wallAccentColor: result.preferences.wallAccentColor,
+              }
+            : prev.preferences,
+        }));
+        return true;
+      } catch {
+        setPreferenceSaveError("Could not save your preferences. Try again.");
         return false;
+      } finally {
+        setPreferenceSaving(false);
       }
-      setRoomPrefs(result.preferences);
-      return true;
-    } catch {
-      setPreferenceSaveError("Could not save your preferences. Try again.");
-      return false;
-    } finally {
-      setPreferenceSaving(false);
-    }
+    };
+    const next = persistChainRef.current.then(run, run);
+    persistChainRef.current = next.then(
+      () => undefined,
+      () => undefined
+    );
+    return next;
   };
 
   const shoppingPreferences = React.useMemo(() => {
@@ -426,7 +444,7 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
     [persistedDiscovery, persistedSelections]
   );
   const goToStepKey = React.useCallback(
-    (key: "design-preferences" | "budget-signal") => {
+    (key: RoomStepKey) => {
       const index = stepIndexFromKey("room-renovation", key);
       setCurrentStep(index);
       onStepChange?.(stepKeyFromIndex("room-renovation", index));
@@ -459,27 +477,6 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
     },
     [projectId]
   );
-  const floorReadySelection = persistedSelections.find(
-    (item) => item.referenceStatus === "ready" && isFloorFinishRequirementKey(item.requirementKey)
-  );
-  const wallPaintReadySelection = persistedSelections.find(
-    (item) => item.referenceStatus === "ready" && isWallFinishRequirementKey(item.requirementKey)
-  );
-  const floorUnresolved = (persistedDiscovery?.unmatchedRequirements ?? []).some(
-    (item) => isRequiredUnresolvedReason(item.reason) && isFloorFinishRequirementKey(item.requirementKey)
-  );
-  const wallPaintUnresolved = (persistedDiscovery?.unmatchedRequirements ?? []).some(
-    (item) => isRequiredUnresolvedReason(item.reason) && isWallFinishRequirementKey(item.requirementKey)
-  );
-  const retryFloorKey =
-    (persistedDiscovery?.unmatchedRequirements ?? []).find(
-      (item) => isFloorFinishRequirementKey(item.requirementKey)
-    )?.requirementKey ?? persistedSelections.find((item) => isFloorFinishRequirementKey(item.requirementKey))?.requirementKey;
-  const retryWallPaintKey =
-    (persistedDiscovery?.unmatchedRequirements ?? []).find(
-      (item) => isWallFinishRequirementKey(item.requirementKey)
-    )?.requirementKey ?? persistedSelections.find((item) => isWallFinishRequirementKey(item.requirementKey))?.requirementKey;
-
   const persistKeepExistingFloor = async () => {
     const saved = await persistRoomPreferences({ flooring: "keep", floorFinishMode: "keep_existing" });
     if (saved) {
@@ -525,11 +522,37 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
     : data.location;
   const searchRadiusKm = persistedProjectLocation?.radiusKm ?? data.radiusKm;
 
+  const skipStepKeys = React.useMemo(
+    () =>
+      new Set<RoomStepKey>([
+        "design-generation",
+        "final-design-selection",
+        "cost-estimate",
+        "budget-split",
+      ]),
+    []
+  );
+
   const nextStep = () => {
-    const next = Math.min(currentStep + 1, 16);
-    setCurrentStep(next);
-    onStepChange?.(stepKeyFromIndex("room-renovation", next));
+    let next = currentStep + 1;
+    while (next < ROOM_STEP_KEYS.length && skipStepKeys.has(ROOM_STEP_KEYS[next]!)) {
+      next += 1;
+    }
+    const bounded = Math.min(next, ROOM_STEP_KEYS.length - 1);
+    setCurrentStep(bounded);
+    onStepChange?.(stepKeyFromIndex("room-renovation", bounded));
   };
+
+  React.useEffect(() => {
+    const key = ROOM_STEP_KEYS[currentStep];
+    if (!key || !skipStepKeys.has(key)) return;
+    const briefDone = Boolean(roomPrefs?.designBriefAnswers?.completed);
+    if (!briefDone) {
+      goToStepKey("design-brief");
+      return;
+    }
+    goToStepKey(searchLocation ? "store-discovery" : "location");
+  }, [currentStep, searchLocation, goToStepKey, skipStepKeys, roomPrefs?.designBriefAnswers?.completed]);
 
   // Cleanup typing timers on unmount
   React.useEffect(() => {
@@ -575,25 +598,32 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
   const stepMessagesRef = React.useRef<Set<number>>(new Set());
   
   React.useEffect(() => {
-    const stepMessages: Record<number, string> = {
-      1: "Which room would you like to renovate today?",
-      2: "Great.\n\nPlease upload a photo of the room as it looks right now.",
-      3: "When you are ready, I will analyze the saved photo of this room and prepare design requirements. I will not search products or generate a render yet.",
-      4: "What style would you like this room to have?",
-      5: "To guide the design choices, what budget level should I aim for?",
-      6: "Great. Tell me your preferences (colors, floor, heating, key furniture) so I don’t guess.",
-      7: "To find products in local stores near you, share your location.",
-      11: "I'll allocate your budget into category caps so we don't overspend.",
-      12: "When you are ready, I will search nearby stores for real products from the room analysis. This does not generate a render.",
-      13: "Review the persisted products. Confirm the ones to use in the future design.",
-      14: "Building a final shopping list that stays within your total budget…",
-      15: "Do you want me to find local contractors (painters, flooring, assembly) within 50 km?",
-      16: "Your renovation project is ready.",
+    const stepMessages: Partial<Record<RoomStepKey, string>> = {
+      "room-type": "Which room would you like to renovate today?",
+      "photo-upload": "Great.\n\nPlease upload a photo of the room as it looks right now.",
+      "ai-observation":
+        "When you are ready, I will analyze the saved photo of this room and prepare design requirements. I will not search products or generate a render yet.",
+      "design-brief":
+        "I’ll ask a few focused questions so the design follows how you live in this room — not assumptions from an empty photograph.",
+      "style-selection":
+        "I’ll ask a few focused questions so the design follows how you live in this room — not assumptions from an empty photograph.",
+      "budget-signal":
+        "I’ll ask a few focused questions so the design follows how you live in this room — not assumptions from an empty photograph.",
+      "design-preferences":
+        "I’ll ask a few focused questions so the design follows how you live in this room — not assumptions from an empty photograph.",
+      location: "To find products in local stores near you, share your location.",
+      "store-discovery":
+        "When you are ready, I will search nearby stores for real products from the room analysis. This does not generate a render.",
+      "product-sourcing": "Review the persisted products. Confirm the ones to use in the future design.",
+      "shopping-list": "Building a final shopping list that stays within your total budget…",
+      contractors: "Do you want me to find local contractors (painters, flooring, assembly) within 50 km?",
+      "final-report": "Your renovation project is ready.",
     };
 
-    if (stepMessages[currentStep] && !stepMessagesRef.current.has(currentStep)) {
+    const key = ROOM_STEP_KEYS[currentStep];
+    if (key && stepMessages[key] && !stepMessagesRef.current.has(currentStep)) {
       stepMessagesRef.current.add(currentStep);
-      const messageText = stepMessages[currentStep];
+      const messageText = stepMessages[key];
       const messageId = `step${currentStep}-ai`;
       
       setConversation((prev) => [
@@ -603,23 +633,36 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
           type: "ai",
           content: messageText,
           timestamp: new Date(),
-          // Initialize typing state
           isTyping: true,
           hasTyped: false,
           displayedText: "",
         },
       ]);
 
-      // Start typewriter effect
       setTimeout(() => {
         startTypewriter(messageId, messageText);
       }, 50);
     }
   }, [currentStep, startTypewriter]);
 
+  const renderDesignBrief = () => (
+    <DesignBriefStep
+      roomType={roomPrefs?.roomType ?? data.roomType}
+      analysis={currentAnalysis}
+      preferences={roomPrefs}
+      saving={preferenceSaving}
+      error={preferenceSaveError}
+      onSave={persistRoomPreferences}
+      onComplete={() => {
+        addUserMessage("Design brief confirmed");
+        goToStepKey("location");
+      }}
+    />
+  );
+
   const renderCurrentStep = () => {
-    switch (currentStep) {
-      case 1:
+    switch (ROOM_STEP_KEYS[currentStep]) {
+      case "room-type":
         return (
           <Step1RoomType
             selectedRoomType={data.roomType}
@@ -639,7 +682,7 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
             }}
           />
         );
-      case 2:
+      case "photo-upload":
         return (
           <Step2PhotoUpload
             projectId={projectId}
@@ -661,7 +704,7 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
             }}
           />
         );
-      case 3:
+      case "ai-observation":
         return (
           <Step3AIObservation
             projectId={projectId}
@@ -676,88 +719,12 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
             }}
           />
         );
-      case 4:
-        return (
-          <Step4StyleSelection
-            selectedStyles={data.selectedStyles}
-            onStylesChange={(styles) => {
-              updateData({ selectedStyles: styles });
-            }}
-            onContinue={async () => {
-              const saved = await persistRoomPreferences({ selectedStyles: data.selectedStyles });
-              if (!saved) return;
-              addUserMessage(`Selected styles: ${data.selectedStyles.join(", ")}`);
-              nextStep();
-            }}
-          />
-        );
-      case 5:
-        return (
-          <Step5BudgetSignal
-            selectedBudget={data.budgetLevel}
-            onSelect={async (budget) => {
-              const budgetLabels: Record<string, string> = {
-                "budget-friendly": "Budget-friendly",
-                balanced: "Balanced",
-                premium: "Premium",
-                "not-sure": "Not sure yet",
-              };
-              const saved = await persistRoomPreferences({ budgetLevel: budget });
-              if (!saved) return;
-              addUserMessage(budgetLabels[budget]);
-              updateData({ budgetLevel: budget });
-              nextStep();
-            }}
-          />
-        );
-      case 6:
-        return (
-          <Step6DesignPreferences
-            roomType={data.roomType!}
-            value={data.preferences!}
-            onChange={(value) => updateData({ preferences: value })}
-            floorProductName={floorReadySelection?.productTitle ?? null}
-            floorUnresolved={Boolean(
-              data.preferences?.floorFinishMode === "exact_product" &&
-                (floorUnresolved || (!floorReadySelection && persistedDiscovery))
-            )}
-            wallPaintProductName={wallPaintReadySelection?.productTitle ?? null}
-            wallPaintUnresolved={Boolean(data.preferences?.wallFinishMode === "exact_product" && (wallPaintUnresolved || (!wallPaintReadySelection && persistedDiscovery)))}
-            onRetryFloor={retryFloorKey ? () => void handleRetryRequirement(retryFloorKey) : undefined}
-            onRetryWallPaint={retryWallPaintKey ? () => void handleRetryRequirement(retryWallPaintKey) : undefined}
-            onContinue={async () => {
-              const p = data.preferences!;
-              const wallFinishMode = inferWallFinishMode(p);
-              const floorFinishMode =
-                p.floorFinishMode ?? (p.flooring === "keep" ? "keep_existing" : "exact_product");
-              const saved = await persistRoomPreferences({
-                wallMainColor: p.wallMainColor,
-                wallAccentColor: p.wallAccentColor,
-                flooring: p.flooring,
-                underfloorHeating: p.underfloorHeating,
-                bedType: p.bedType,
-                notes: p.notes,
-                keepExistingWalls: keepExistingWallsFromWallFinishMode(wallFinishMode),
-                wallFinishMode,
-                floorFinishMode,
-              });
-              if (!saved) return;
-              const parts: string[] = [];
-              if (wallFinishMode === "keep_existing") parts.push("Walls: keep existing");
-              else if (wallFinishMode === "concept_color") parts.push("Walls: choose color (concept, not shoppable)");
-              else parts.push("Walls: exact paint product required");
-              if (wallFinishMode !== "keep_existing" && p.wallMainColor) parts.push(`Wall main: ${p.wallMainColor}`);
-              if (wallFinishMode !== "keep_existing" && p.wallAccentColor) parts.push(`Accent: ${p.wallAccentColor}`);
-              parts.push(p.flooring === "keep" ? "Floor: keep existing" : `Floor: change to ${p.flooring}`);
-              parts.push(`Underfloor heating: ${p.underfloorHeating ? "yes" : "no"}`);
-              if (data.roomType === "bedroom") parts.push(`Bed: ${p.bedType}`);
-              if (p.notes?.trim()) parts.push(`Notes: ${p.notes.trim()}`);
-              addUserMessage(parts.join(" · "));
-              nextStep();
-            }}
-          />
-        );
-      case 7:
+      case "design-brief":
+      case "style-selection":
+      case "budget-signal":
+      case "design-preferences":
+        return renderDesignBrief();
+      case "location":
         return (
           <Step6bLocation
             projectId={projectId}
@@ -776,177 +743,12 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
             }}
           />
         );
-      case 8:
-        return (
-          <Step6DesignGeneration
-            roomType={data.roomType!}
-            photos={data.photos}
-            styles={data.selectedStyles}
-            budget={data.budgetLevel!}
-            preferences={data.preferences}
-            observation={data.aiObservation}
-            onContinueWithoutRender={() => {
-              addAIMessage("The room visualization comes after real products are selected.");
-              nextStep();
-            }}
-            onDesignsGenerated={(designs) => {
-              updateData({ generatedDesigns: designs });
-              nextStep();
-            }}
-          />
-        );
-      case 9:
-        return (
-          <Step7FinalDesignSelection
-            designs={data.generatedDesigns}
-            selectedDesign={data.selectedDesign}
-            onContinueWithoutRender={() => {
-              nextStep();
-            }}
-            onSelect={(design) => {
-              addUserMessage("Selected design concept");
-              updateData({ selectedDesign: design });
-              addAIMessage(
-                <div>
-                  <div className="mb-3 text-[15px] text-[rgba(255,255,255,0.85)]">
-                    Selected concept:
-                  </div>
-                  <img
-                    src={design}
-                    alt="Selected concept"
-                    className="w-full max-w-[520px] h-auto max-h-[260px] object-contain rounded-[12px] border border-[rgba(255,255,255,0.10)]"
-                  />
-                </div>
-              );
-              nextStep();
-            }}
-          />
-        );
-      case 10:
-        return (
-          <Step8CostEstimate
-            roomType={data.roomType!}
-            budget={data.budgetLevel!}
-            onEstimateComplete={(estimate) => {
-              updateData({ costEstimate: estimate });
-              // Add cost breakdown to conversation
-              const formatCurrency = (amount: number) =>
-                new Intl.NumberFormat("sl-SI", {
-                  style: "currency",
-                  currency: "EUR",
-                  minimumFractionDigits: 0,
-                }).format(amount);
-              
-              setConversation((prev) => [
-                ...prev,
-                {
-                  id: `step8-cost-${Date.now()}-${Math.random()}`,
-                  type: "ai",
-                  content: (
-                    <div>
-                      <div className="mb-4">
-                        Based on this design and your preferences, here's an estimated renovation cost:
-                      </div>
-                      {data.selectedDesign ? (
-                        <img
-                          src={data.selectedDesign}
-                          alt="Selected concept"
-                          className="w-full max-w-[520px] h-auto max-h-[240px] object-contain rounded-[12px] border border-[rgba(255,255,255,0.10)] mb-4"
-                        />
-                      ) : null}
-                      <div className="space-y-3 mt-4">
-                        <div className="flex justify-between text-[14px]">
-                          <span className="text-[rgba(255,255,255,0.70)]">Materials:</span>
-                          <span className="text-white">
-                            {formatCurrency(estimate.materials.min)} - {formatCurrency(estimate.materials.max)}
-                          </span>
-                        </div>
-                        <div className="flex justify-between text-[14px]">
-                          <span className="text-[rgba(255,255,255,0.70)]">Furniture:</span>
-                          <span className="text-white">
-                            {formatCurrency(estimate.furniture.min)} - {formatCurrency(estimate.furniture.max)}
-                          </span>
-                        </div>
-                        <div className="flex justify-between text-[14px]">
-                          <span className="text-[rgba(255,255,255,0.70)]">Labor:</span>
-                          <span className="text-white">
-                            {formatCurrency(estimate.labor.min)} - {formatCurrency(estimate.labor.max)}
-                          </span>
-                        </div>
-                        <div className="flex justify-between text-[16px] font-medium pt-2 border-t border-[rgba(255,255,255,0.1)]">
-                          <span className="text-white">Total:</span>
-                          <span className="text-white">
-                            {formatCurrency(estimate.total.min)} - {formatCurrency(estimate.total.max)}
-                          </span>
-                        </div>
-                        <div className="text-[12px] text-[rgba(255,255,255,0.50)] mt-2">
-                          * Estimated values ±10–15%
-                        </div>
-                      </div>
-                    </div>
-                  ),
-                  timestamp: new Date(),
-                },
-              ]);
-              nextStep();
-            }}
-          />
-        );
-      case 11:
-        return (
-          <Step8bBudgetSplit
-            roomType={data.roomType!}
-            budgetLevel={data.budgetLevel!}
-            totalBudget={data.costEstimate!.total}
-            preferences={data.preferences}
-            onBudgetPlanComplete={(plan) => {
-              updateData({ budgetPlan: plan });
-              // Add budget plan to conversation
-              const formatCurrency = (amount: number) =>
-                new Intl.NumberFormat("sl-SI", {
-                  style: "currency",
-                  currency: "EUR",
-                  minimumFractionDigits: 0,
-                }).format(amount);
-              
-              setConversation((prev) => [
-                ...prev,
-                {
-                  id: `step11-budget-plan-${Date.now()}-${Math.random()}`,
-                  type: "ai",
-                  content: (
-                    <div>
-                      <div className="mb-4">
-                        I've allocated your budget into category caps:
-                      </div>
-                      <div className="space-y-2 mt-4">
-                        {Object.entries(plan.caps).map(([category, cap]) => (
-                          <div key={category} className="flex justify-between text-[14px]">
-                            <span className="text-[rgba(255,255,255,0.85)]">{category}:</span>
-                            <span className="text-white">
-                              {formatCurrency(cap.max)} (qty: {cap.qty})
-                            </span>
-                          </div>
-                        ))}
-                        <div className="pt-2 border-t border-[rgba(255,255,255,0.1)] mt-2">
-                          <div className="flex justify-between text-[14px]">
-                            <span className="text-[rgba(255,255,255,0.85)]">Total budget:</span>
-                            <span className="text-white font-medium">
-                              {formatCurrency(plan.totalBudget)}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ),
-                  timestamp: new Date(),
-                },
-              ]);
-              nextStep();
-            }}
-          />
-        );
-      case 12:
+      case "design-generation":
+      case "final-design-selection":
+      case "cost-estimate":
+      case "budget-split":
+        return null;
+      case "store-discovery":
         return (
           <Step9aStoreDiscovery
             projectId={projectId}
@@ -976,7 +778,7 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
             }}
           />
         );
-      case 13:
+      case "product-sourcing":
         return (
           <Step9bProductSourcing
             projectId={projectId}
@@ -997,6 +799,9 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
               notes: data.preferences?.notes ?? "",
             }}
             roomPhotoPreviewUrl={roomPhoto?.previewUrl ?? null}
+            analysis={currentAnalysis}
+            shoppingPreferences={shoppingPreferences}
+            planOverrides={roomPrefs?.furnishingPlan ?? null}
             onRetryRequirement={(requirementKey) => void handleRetryRequirement(requirementKey)}
             onChangeConstraints={() => goToStepKey("design-preferences")}
             onIncreaseBudget={() => goToStepKey("budget-signal")}
@@ -1010,7 +815,7 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
             }}
           />
         );
-      case 14:
+      case "shopping-list":
         return (
           <Step9cShoppingList
             shoppingState={productShoppingState}
@@ -1033,7 +838,7 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
             }}
           />
         );
-      case 15:
+      case "contractors":
         return (
           <Step9dContractors
             location={searchLocation}
@@ -1054,7 +859,7 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
             }}
           />
         );
-      case 16:
+      case "final-report":
         return (
           <Step10FinalReport
             projectId={projectId}

@@ -23,6 +23,8 @@ import {
 } from "./noteIntents";
 import type { ShoppingPreferenceInput } from "./preferences";
 import { slugRequirementPart, type FurnitureNeed, type RequirementSource } from "./itemSpecs";
+import { extraCompletenessItems } from "@/lib/design/completeInterior";
+import { briefPlannerIntent, parseDesignBriefAnswers } from "@/lib/design-brief";
 
 export const FURNISHING_PLAN_OVERRIDE_SCHEMA_VERSION = 1 as const;
 
@@ -437,6 +439,68 @@ function applyEdits(item: PlannedFurnishingItem, edits?: FurnishingPlanEdits): P
   };
 }
 
+function observationHasArchitecture(observation?: RoomAnalysisObservation | null): boolean {
+  if (!observation) return false;
+  const architecture = observation.architecture;
+  if (!architecture) return false;
+  return (
+    architecture.walls.length > 0 ||
+    architecture.windows.length > 0 ||
+    architecture.doors.length > 0 ||
+    Boolean(architecture.floor?.trim()) ||
+    architecture.fixedElements.length > 0
+  );
+}
+
+function completenessSuggestionItems(
+  observation: RoomAnalysisObservation | null | undefined,
+  existing: PlannedFurnishingItem[],
+  used: Map<string, number>,
+  userNotes?: string | null,
+  preferences?: ShoppingPreferenceInput | null
+): PlannedFurnishingItem[] {
+  if (!observationHasArchitecture(observation)) return [];
+  const plannedConcepts = existing.map((item) => item.concept);
+  const brief = preferences?.designBrief
+    ? briefPlannerIntent(parseDesignBriefAnswers(preferences.designBrief))
+    : null;
+  const extras = extraCompletenessItems({
+    observation,
+    plannedConcepts,
+    userNotes,
+    brief,
+  });
+  const budgetConstraint =
+    preferences?.budgetLevel && preferences.budgetLevel !== "not-sure" ? [preferences.budgetLevel] : [];
+  const out: PlannedFurnishingItem[] = [];
+  for (const extra of extras) {
+    if (
+      existing.some(
+        (item) => item.concept !== "other" && conceptsOverlap(item.concept, extra.concept)
+      )
+    ) {
+      continue;
+    }
+    if (out.some((item) => conceptsOverlap(item.concept, extra.concept))) continue;
+    if (extra.concept === "other") continue;
+    const identitySlug = furnitureConceptIdentitySlug(extra.concept, extra.category);
+    const occurrence = nextOccurrence(used, identitySlug);
+    out.push({
+      requirementKey: stableFurnitureRequirementKey(identitySlug, occurrence),
+      concept: extra.concept,
+      category: extra.category,
+      quantity: clampQuantity(extra.concept, 1),
+      placementNotes: extra.concept === "tv_console" && brief?.tvSize ? `Preferred size ${brief.tvSize}` : null,
+      constraints: extra.concept === "tv_console" && brief?.tvSize ? [brief.tvSize, ...budgetConstraint] : budgetConstraint,
+      rationale: extra.rationale,
+      role: extra.decision === "required" ? "required_for_render" : "suggested_only",
+      source: "analysis",
+      displayLabel: displayLabelFor(extra.concept, extra.category),
+    });
+  }
+  return out;
+}
+
 function addedItemToPlan(item: FurnishingPlanAddedItem, used: Map<string, number>): PlannedFurnishingItem {
   const concept = inferFurnitureConceptFromText(item.category);
   const identitySlug = furnitureConceptIdentitySlug(concept, item.category);
@@ -467,15 +531,32 @@ export function normalizeFurnishingPlan(input: {
   const notes = input.preferences?.notes ?? "";
   const noteIntents = extractShoppingIntentsFromNotes(notes);
   const userRequested = new Set(noteIntents.map((intent) => intent.concept));
-  const generated = mergeNoteIntents(
+  const kept = keptConceptsFromObservation(input.observation);
+  const noteSuppressed = suppressedFromNotes(notes);
+  const generatedCore = mergeNoteIntents(
     applyKeepSuppressions(
       buildAnalysisItems(input.analysisRequirements, input.observation),
-      keptConceptsFromObservation(input.observation),
-      suppressedFromNotes(notes),
+      kept,
+      noteSuppressed,
       userRequested
     ),
     noteIntents
   );
+
+  const completenessUsed = new Map<string, number>();
+  for (const item of generatedCore) {
+    const slug = furnitureConceptIdentitySlug(item.concept, item.category);
+    const match = item.requirementKey.match(/:(\d+)$/);
+    const occurrence = match ? Number(match[1]) + 1 : 1;
+    completenessUsed.set(slug, Math.max(completenessUsed.get(slug) ?? 0, occurrence));
+  }
+  const completenessExtras = applyKeepSuppressions(
+    completenessSuggestionItems(input.observation, generatedCore, completenessUsed, notes, input.preferences),
+    kept,
+    noteSuppressed,
+    userRequested
+  );
+  const generated = [...generatedCore, ...completenessExtras];
 
   const overrides = parseFurnishingPlanOverrides(input.planOverrides);
   const overridesApply =

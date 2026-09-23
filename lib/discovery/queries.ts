@@ -215,6 +215,65 @@ export async function persistProductDiscoveryResult(
   return { discovery, selections };
 }
 
+export async function appendProductDiscoverySelections(
+  persistClient: Client,
+  readClient: Client,
+  input: {
+    projectId: string;
+    discoveryId: string;
+    searchedItemCount: number;
+    notSearchedCount: number;
+    allowlistDomains: string[];
+    unmatchedRequirements: UnmatchedRequirement[];
+    sourcePreferences: ShoppingPreferenceSnapshot;
+    sourcePreferencesHash: string;
+    selections: PersistDiscoveryInput["selections"];
+  }
+): Promise<{ discovery: ProductDiscoveryView; selections: ProductSelectionView[] }> {
+  const { error: updateError } = await persistClient
+    .from("project_product_discoveries")
+    .update({
+      searched_item_count: input.searchedItemCount,
+      not_searched_count: input.notSearchedCount,
+      allowlist_domains: input.allowlistDomains as unknown as Json,
+      unmatched_requirements: input.unmatchedRequirements as unknown as Json,
+      source_preferences: input.sourcePreferences as unknown as Json,
+      source_preferences_hash: input.sourcePreferencesHash,
+    })
+    .eq("id", input.discoveryId);
+  if (updateError) throw mapDiscoveryDbError(updateError);
+
+  for (const item of input.selections) {
+    const { error } = await persistClient.from("project_product_selections").insert({
+      project_id: input.projectId,
+      discovery_id: input.discoveryId,
+      requirement_type: item.requirementType,
+      requirement_key: item.requirementKey,
+      requirement_snapshot: item.requirementSnapshot as unknown as Json,
+      item_spec: item.itemSpec,
+      product_title: item.product.productTitle,
+      product_url: item.product.productUrl,
+      product_image_url: item.product.productImageUrl,
+      price: item.product.price,
+      currency: item.product.currency,
+      retailer_domain: item.product.retailerDomain,
+      retailer_name: item.product.retailerName,
+      has_reference_image: item.product.hasReferenceImage,
+      image_evidence: (item.product.imageEvidence ?? []) as unknown as Json,
+      is_confirmed: false,
+      reference_status: "pending",
+    });
+    if (error) throw mapDiscoveryDbError(error);
+  }
+
+  const discovery = await getProjectProductDiscovery(readClient, input.projectId);
+  if (!discovery) {
+    throw new DiscoveryError("failed", discoveryErrorMessage("failed"));
+  }
+  const selections = await getProjectProductSelections(readClient, discovery.id);
+  return { discovery, selections };
+}
+
 export async function setSelectionConfirmed(
   client: Client,
   selectionId: string,

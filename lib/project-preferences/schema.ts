@@ -7,6 +7,7 @@ import {
   floorFinishModeSchema,
 } from "@/lib/render/preferences";
 import { parseFurnishingPlanOverrides } from "@/lib/discovery/furnishingPlan";
+import { parseDesignBriefAnswers } from "@/lib/design-brief";
 
 export const ROOM_PREFERENCE_ROOM_TYPES = [
   "kitchen",
@@ -43,6 +44,10 @@ export const projectRoomPreferencesRowSchema = z.object({
   radiusKm: z.number().int().min(1).max(50).nullable(),
   countryCode: z.string().trim().length(2).nullable(),
   furnishingPlan: z.unknown().transform((value) => parseFurnishingPlanOverrides(value)),
+  designBriefAnswers: z
+    .unknown()
+    .optional()
+    .transform((value) => parseDesignBriefAnswers(value)),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -68,6 +73,10 @@ export const projectRoomPreferencesPatchSchema = z
     radiusKm: z.number().int().min(1).max(50).nullable(),
     countryCode: z.string().trim().length(2).nullable(),
     furnishingPlan: z.unknown().transform((value) => parseFurnishingPlanOverrides(value)),
+    designBriefAnswers: z
+      .unknown()
+      .optional()
+      .transform((value) => parseDesignBriefAnswers(value)),
   })
   .partial();
 

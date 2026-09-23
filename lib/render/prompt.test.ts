@@ -251,10 +251,18 @@ describe("buildRoomRenderPrompt", () => {
     expect(snapshot.prompt).not.toContain("sliding door");
   });
 
-  it("uses FURNISH_ONLY to preserve unfinished surfaces", () => {
+  it("uses FURNISH_ONLY shopping constraints with visual completion for unfinished rooms", () => {
     const snapshot = buildRoomRenderPrompt({
       observation: {
         ...validRoomAnalysisResult.analysis,
+        architecture: {
+          ...validRoomAnalysisResult.analysis.architecture,
+          floor: "concrete slab",
+          fixedElements: [
+            ...validRoomAnalysisResult.analysis.architecture.fixedElements,
+            "hanging ceiling wires",
+          ],
+        },
         visualCondition: {
           ...validRoomAnalysisResult.analysis.visualCondition,
           overall: "unfinished raw plaster and concrete slab",
@@ -287,11 +295,11 @@ describe("buildRoomRenderPrompt", () => {
 
     expect(snapshot.renderIntent).toBe("furnish_only");
     expect(snapshot.prompt).toContain("Render mode: FURNISH_ONLY.");
-    expect(snapshot.prompt).toContain("raw/unfinished state");
-    expect(snapshot.prompt).toContain("Do not paint, plaster, refinish, or complete unfinished walls, floors, or ceilings.");
-    expect(snapshot.prompt).toContain("Do not invent a completed white interior over an unfinished room.");
+    expect(snapshot.prompt).toContain("VISUAL COMPLETION");
+    expect(snapshot.prompt).toContain("Do not leave exposed hanging electrical wires");
     expect(snapshot.prompt).toContain("unfinished raw plaster and concrete slab");
-    expect(snapshot.prompt).not.toContain("Surface completion is intentional and allowed");
+    expect(snapshot.prompt).not.toContain("Do not paint, plaster, refinish, or complete unfinished walls, floors, or ceilings.");
+    expect(snapshot.prompt).not.toContain("Do not invent a completed white interior over an unfinished room.");
     expect(snapshot.prompt).not.toContain("Render mode: COMPLETE_INTERIOR.");
   });
 
@@ -332,5 +340,40 @@ describe("buildRoomRenderPrompt", () => {
     expect(snapshot.prompt).not.toContain("Do not paint, plaster, refinish, or complete unfinished walls");
     expect(snapshot.prompt).not.toContain("Render mode: FURNISH_ONLY.");
     expect(snapshot.prompt).not.toContain("Surface completion is intentional and allowed");
+  });
+
+  it("keeps the previous inventory contract when no Design Brief planner intent is supplied", () => {
+    const snapshot = buildRoomRenderPrompt({
+      observation: validRoomAnalysisResult.analysis,
+      designRequirements: validRoomAnalysisResult.designRequirements,
+      unmatchedRequirements: [],
+      preferences: {
+        selectedStyles: ["warm-minimal"],
+        budgetLevel: "balanced",
+        wallMainColor: "",
+        wallAccentColor: "",
+        flooring: "keep",
+        underfloorHeating: false,
+        bedType: "none",
+        keepExistingWalls: true,
+        wallFinishMode: "keep_existing",
+        floorFinishMode: "keep_existing",
+        notes: "",
+      },
+      references: [
+        ref(2, {
+          id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
+          requirementType: "furniture",
+          requirementKey: "furniture:sofa:0",
+          itemSpec: "sofa",
+          productTitle: "Modern beige sofa",
+          requirementSnapshot: validRoomAnalysisResult.designRequirements.furnitureNeeds[0],
+        }),
+      ],
+    });
+    expect(snapshot.expectedRenderInventory.map((item) => item.productName)).toEqual(["Modern beige sofa"]);
+    expect(snapshot.prompt).toContain("exact-product reference-grounded");
+    expect(snapshot.prompt).toContain("Do not introduce unrelated major furniture");
+    expect(snapshot.prompt).not.toContain("television size");
   });
 });

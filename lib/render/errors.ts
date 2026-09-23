@@ -58,7 +58,7 @@ export function renderErrorMessage(code: RenderErrorCode): string {
     case "stale_source":
       return "Your room analysis or products are out of date. Finish those steps first.";
     case "no_confirmed_products":
-      return "Find products before generating a design.";
+      return "Approve each product before generating a design.";
     case "reference_missing":
       return "A selected product is not render-ready. Unconfirm it or choose another product.";
     case "reference_grounding_unavailable":

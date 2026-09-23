@@ -31,7 +31,11 @@ import { buildRoomRenderPath } from "./path";
 import { completeRoomRender, failRoomRender, insertProcessingRoomRender } from "./persist";
 import { canonicalRenderPreferences, type RoomRenderPreferences } from "./preferences";
 import { buildRoomRenderPrompt } from "./prompt";
-import { completeRoomBlockMessage, evaluateCompleteRoomReadiness } from "./readiness";
+import { completeRoomBlockMessage, evaluateCompleteRoomReadiness, productApprovalBlockMessage, productApprovalGate } from "./readiness";
+import { normalizeFurnishingPlan } from "@/lib/discovery/furnishingPlan";
+import { inferFurnitureConceptFromText } from "@/lib/discovery/locales/concepts";
+import { getProjectRoomPreferences } from "@/lib/project-preferences/queries";
+import { projectRoomPreferencesToShoppingPreferences } from "@/lib/project-preferences/adapter";
 import {
   getLatestSucceededRenderByFingerprint,
   getProcessingRenderByFingerprint,
@@ -59,6 +63,7 @@ export type GenerateRoomRenderInput = {
   ownerUserId: string;
   projectId: string;
   preferences: RoomRenderPreferences;
+  plannerBrief?: import("@/lib/design-brief/apply").BriefPlannerIntent | null;
   force?: boolean;
   editImage?: RoomImageEditFn;
   fetch?: FetchLike;
@@ -160,11 +165,28 @@ export async function prepareRenderSource(
     references: orderedResult.ordered,
   });
 
+  const storedPrefs = await getProjectRoomPreferences(userClient, projectId);
+  const shopping = projectRoomPreferencesToShoppingPreferences(storedPrefs);
+  const plan = normalizeFurnishingPlan({
+    analysisRequirements: analysis.design_requirements,
+    observation: analysis.analysis,
+    analysisId: analysis.id,
+    preferences: shopping,
+    planOverrides: storedPrefs?.furnishingPlan ?? null,
+  });
   const completeRoom = evaluateCompleteRoomReadiness({
     searchedItemCount: discovery.searchedItemCount,
     unmatched: discovery.unmatchedRequirements,
     readyRequirementKeys: orderedResult.ordered.map((item) => item.selection.requirementKey),
     preferences,
+    requiredPlanItems: plan.required.map((item) => ({
+      requirementKey: item.requirementKey,
+      displayLabel: item.displayLabel,
+      concept: item.concept,
+    })),
+    readyPlanConcepts: orderedResult.ordered.map((item) =>
+      inferFurnitureConceptFromText(item.selection.itemSpec)
+    ),
   });
 
   return {
@@ -186,11 +208,12 @@ export async function generateRoomRender(
 ): Promise<{ render: RoomRenderView; reused: boolean; providerCalls: number }> {
   const probe = await prepareRenderSource(input.userClient, input.projectId, input.preferences);
   if (probe.missing.length > 0) {
+    const missingIds = new Set(probe.missing.map((item) => item.selectionId));
     await ensureProductReferenceAssets({
       persistClient: input.persistClient,
       ownerUserId: input.ownerUserId,
       projectId: input.projectId,
-      selections: probe.selections,
+      selections: probe.selections.filter((item) => missingIds.has(item.id)),
       fetch: input.fetch,
       lookup: input.lookup,
     });
@@ -209,6 +232,15 @@ export async function generateRoomRender(
               productTitle: label,
             }))
           : source.missing,
+    });
+  }
+  const approval = productApprovalGate(source.selections);
+  if (!approval.allowed) {
+    throw new RenderError("no_confirmed_products", productApprovalBlockMessage(approval), {
+      missingReferences: approval.unconfirmedLabels.map((title) => ({
+        selectionId: "",
+        productTitle: title,
+      })),
     });
   }
   if (source.ordered.length === 0) {
@@ -266,6 +298,7 @@ export async function generateRoomRender(
       (item) => !source.ordered.some((ref) => ref.selection.id === item.id)
     ),
     preferences: source.preferences,
+    plannerBrief: input.plannerBrief ?? null,
     references: source.ordered,
   });
   const referenceSnapshot = source.ordered.map((item) =>

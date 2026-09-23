@@ -281,8 +281,7 @@ export const Step9aStoreDiscovery: React.FC<Step9aStoreDiscoveryProps> = ({
     <div className="flex justify-start mb-6">
       <div className={`${wizardPanelClass} space-y-5`}>
         <div className="text-[15px] text-[rgba(255,255,255,0.85)] leading-relaxed">
-          I will search nearby stores for the approved furnishing plan. This does not generate a
-          render.
+          I will search nearby stores for the furnishing categories the design plan requires. You approve or replace individual products afterward. This does not generate a render.
         </div>
 
         <FurnishingPlanReview
@@ -403,9 +402,17 @@ export const Step9aStoreDiscovery: React.FC<Step9aStoreDiscoveryProps> = ({
                       <div className="text-[12px] text-[rgba(255,255,255,0.50)] mt-1 break-words">
                         {selection.retailerName ?? selection.retailerDomain}
                       </div>
-                      {!selection.isConfirmed ? (
+                      {selection.referenceStatus === "ready" && !selection.isConfirmed ? (
                         <div className="text-[11px] text-[rgba(255,255,255,0.40)] mt-1">
-                          Not yet reference-ready for the future render
+                          Ready reference — approve to use it in the design.
+                        </div>
+                      ) : selection.referenceStatus === "ready" && selection.isConfirmed ? (
+                        <div className="text-[11px] text-[rgba(255,255,255,0.40)] mt-1">
+                          Locked approved product
+                        </div>
+                      ) : !selection.isConfirmed ? (
+                        <div className="text-[11px] text-[rgba(255,255,255,0.40)] mt-1">
+                          Waiting for a verified merchant reference.
                         </div>
                       ) : null}
                       <div className="flex flex-wrap gap-3 mt-3">

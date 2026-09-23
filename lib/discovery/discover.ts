@@ -28,6 +28,7 @@ import {
   DISCOVERY_SERP_TIMEOUT_MS,
   MAX_LOCATION_INPUT_LENGTH,
   MIN_LOCATION_INPUT_LENGTH,
+  MAX_PRODUCT_DISCOVERY_ITEMS,
   PER_DISCOVERY_SERP_BUDGET,
 } from "./constants";
 import { DiscoveryError, discoveryErrorMessage, logDiscoveryAttempt, logDiscoveryError, logDiscoveryTiming } from "./errors";
@@ -64,12 +65,22 @@ import {
   getProjectProductSelections,
   insertReadyProductSelection,
   persistProductDiscoveryResult,
+  appendProductDiscoverySelections,
   updateDiscoveryUnmatchedRequirements,
 } from "./queries";
 import type { ShoppingPreferenceInput } from "./preferences";
 import { shoppingPreferenceFingerprint } from "./preferenceHash";
 import { isCurrentProductDiscovery, isDiscoveryAnalysisCurrent } from "./stale";
 import type { ProductDiscoveryView, ProductSelectionView } from "./types";
+import {
+  isLockedApprovedSelection,
+  lockedApprovedRequirementKeys,
+} from "@/lib/design/approvedLock";
+import {
+  nextDiscoverySearchBatch,
+  resolveMixedDiscoveryMode,
+} from "@/lib/design/mixedDiscovery";
+import type { ResolvedDiscoverySelection } from "./resolveProducts";
 
 type Client = SupabaseClient<Database>;
 
@@ -147,6 +158,40 @@ function storeAllowlist(places: SearchResult): string[] {
   return validateAndNormalizeAllowlist(raw);
 }
 
+function lockedSelectionToResolved(
+  selection: ProductSelectionView
+): ResolvedDiscoverySelection | null {
+  if (!isLockedApprovedSelection(selection) || !selection.productUrl.trim()) return null;
+  return {
+    requirementType: selection.requirementType,
+    requirementKey: selection.requirementKey,
+    requirementSnapshot: {
+      category: selection.itemSpec,
+      quantity: 1,
+      placementNotes: null,
+      constraints: [],
+      ...(selection.requirementSnapshot && typeof selection.requirementSnapshot === "object"
+        ? selection.requirementSnapshot
+        : {}),
+      discoveryQuery: selection.itemSpec,
+      discoveryQueryLevel: 0,
+    },
+    itemSpec: selection.itemSpec,
+    product: {
+      productTitle: selection.productTitle,
+      productSnippet: null,
+      productUrl: selection.productUrl,
+      productImageUrl: selection.productImageUrl,
+      price: selection.price,
+      currency: selection.currency,
+      retailerDomain: selection.retailerDomain,
+      retailerName: selection.retailerName,
+      hasReferenceImage: selection.hasReferenceImage,
+      imageEvidence: selection.imageEvidence,
+    },
+  };
+}
+
 export async function loadCurrentProductDiscovery(
   client: Client,
   projectId: string
@@ -159,6 +204,10 @@ export async function loadCurrentProductDiscovery(
   if (!discovery) return null;
 
   if (!analysis || !isDiscoveryAnalysisCurrent(discovery, analysis)) {
+    const selections = await getProjectProductSelections(client, discovery.id);
+    if (lockedApprovedRequirementKeys(selections).length > 0) {
+      return { discovery, selections };
+    }
     await deleteProjectProductDiscovery(client, parsed.data);
     return null;
   }
@@ -202,11 +251,52 @@ export async function discoverProjectProducts(
 
   const preferenceFingerprint = shoppingPreferenceFingerprint(options.preferences);
 
-  if (!force) {
-    const existing = await getProjectProductDiscovery(client, parsedId.data);
+  const resolvedRequirements = resolveShoppingRequirements({
+    analysisRequirements: analysis.design_requirements,
+    observation: analysis.analysis,
+    preferences: options.preferences,
+    planOverrides: options.planOverrides,
+    analysisId: analysis.id,
+  });
+  const allRequired = [...resolvedRequirements.searched, ...resolvedRequirements.notSearched];
+
+  const priorDiscovery = await getProjectProductDiscovery(client, parsedId.data);
+  const priorSelections = priorDiscovery
+    ? await getProjectProductSelections(client, priorDiscovery.id)
+    : [];
+  const lockedKeys = lockedApprovedRequirementKeys(priorSelections);
+  const lockedResolved = priorSelections
+    .map(lockedSelectionToResolved)
+    .filter((item): item is ResolvedDiscoverySelection => item !== null);
+  const failedUnmatchedKeys = (priorDiscovery?.unmatchedRequirements ?? [])
+    .filter((item) => item.reason !== "not_searched")
+    .map((item) => item.requirementKey);
+  const { searched, notSearched } = nextDiscoverySearchBatch(allRequired, {
+    priorSelectionKeys: force ? lockedKeys : priorSelections.map((item) => item.requirementKey),
+    unmatchedKeys: force ? [] : failedUnmatchedKeys,
+    lockedKeys,
+    limit: MAX_PRODUCT_DISCOVERY_ITEMS,
+  });
+  const unmatched: UnmatchedRequirement[] = notSearched.map((item) =>
+    unmatchedRequirementSchema.parse({
+      requirementKey: item.requirementKey,
+      requirementType: item.requirementType,
+      itemSpec: item.itemSpec,
+      displayLabel: item.displayLabel,
+      reason: "not_searched" as const,
+    })
+  );
+  const searchedKeys = new Set(searched.map((item) => item.requirementKey));
+  for (const item of priorDiscovery?.unmatchedRequirements ?? []) {
+    if (item.reason === "not_searched") continue;
+    if (lockedKeys.includes(item.requirementKey) || searchedKeys.has(item.requirementKey)) continue;
+    unmatched.push(item);
+  }
+  const searchable = searched;
+
+  if (!force && priorDiscovery && searchable.length === 0) {
     if (
-      existing &&
-      isCurrentProductDiscovery(existing, analysis, {
+      isCurrentProductDiscovery(priorDiscovery, analysis, {
         locationInput,
         latitude: storedLocation?.latitude,
         longitude: storedLocation?.longitude,
@@ -214,9 +304,16 @@ export async function discoverProjectProducts(
         preferences: options.preferences,
       })
     ) {
-      const selections = await getProjectProductSelections(client, existing.id);
-      return { discovery: existing, selections, reused: true };
+      return { discovery: priorDiscovery, selections: priorSelections, reused: true };
     }
+  }
+
+  if (searched.length === 0 && priorDiscovery && lockedKeys.length > 0) {
+    return { discovery: priorDiscovery, selections: priorSelections, reused: true };
+  }
+
+  if (searchable.length === 0 && priorDiscovery) {
+    return { discovery: priorDiscovery, selections: priorSelections, reused: true };
   }
 
   await claimProductDiscoverySlot(client, parsedId.data);
@@ -284,23 +381,6 @@ export async function discoverProjectProducts(
     throw new DiscoveryError("location_invalid", discoveryErrorMessage("location_invalid"));
   }
 
-  const { searched, notSearched } = resolveShoppingRequirements({
-    analysisRequirements: analysis.design_requirements,
-    observation: analysis.analysis,
-    preferences: options.preferences,
-    planOverrides: options.planOverrides,
-    analysisId: analysis.id,
-  });
-  const unmatched: UnmatchedRequirement[] = notSearched.map((item) =>
-    unmatchedRequirementSchema.parse({
-      requirementKey: item.requirementKey,
-      requirementType: item.requirementType,
-      itemSpec: item.itemSpec,
-      displayLabel: item.displayLabel,
-      reason: "not_searched" as const,
-    })
-  );
-
   if (searched.length === 0) {
     const persisted = await persistProductDiscoveryResult(
       options.persistClient,
@@ -326,7 +406,7 @@ export async function discoverProjectProducts(
     return { ...persisted, reused: false };
   }
 
-  const storePlan = buildStoreDiscoveryPlan(searched);
+  const storePlan = buildStoreDiscoveryPlan(searchable);
   let places: SearchResult;
   const placesStarted = Date.now();
   try {
@@ -354,7 +434,7 @@ export async function discoverProjectProducts(
   }
 
   const searchedForSerp = localizeSearchableRequirements(
-    searched,
+    searchable,
     geo.countryCode,
     options.preferences?.selectedStyles
   );
@@ -536,65 +616,101 @@ export async function discoverProjectProducts(
     },
   });
 
-  unmatched.push(...resolvedSlots.unmatched);
-  let selections = resolvedSlots.selections;
+  unmatched.push(...resolvedSlots.unmatched.filter((item) => !lockedKeys.includes(item.requirementKey)));
+  const newSelections = resolvedSlots.selections.filter(
+    (item) => !lockedKeys.includes(item.requirementKey)
+  );
 
   const enrichmentStarted = Date.now();
-  const enrichedWinners = await enrichDiscoveryWinners(selections, {
+  const enrichedWinners = await enrichDiscoveryWinners(newSelections, {
     allowlistDomains,
     deadlineAt,
   });
-  selections = enrichedWinners.selections;
+  const discoveredSelections = enrichedWinners.selections;
   const enrichmentMs = Date.now() - enrichmentStarted;
 
+  const mixedMode = resolveMixedDiscoveryMode({
+    searchedCount: searched.length,
+    searchableCount: searchable.length,
+    lockedCount: lockedResolved.length,
+    hasPriorDiscovery: Boolean(priorDiscovery),
+  });
+  const nextSearchedItemCount =
+    mixedMode === "append" && priorDiscovery
+      ? priorDiscovery.searchedItemCount + searchable.length
+      : searched.length;
+  const mergedAllowlist = [
+    ...new Set([...(priorDiscovery?.allowlistDomains ?? []), ...allowlistDomains]),
+  ];
+
   const persistStarted = Date.now();
-  const persisted = await persistProductDiscoveryResult(
-    options.persistClient,
-    options.ownerUserId,
-    {
-      projectId: parsedId.data,
-      sourceAnalysisId: analysis.id,
-      sourceAnalysisUpdatedAt: analysis.updated_at,
-      locationInput,
-      latitude: geo.lat,
-      longitude: geo.lng,
-      radiusKm,
-      searchedItemCount: searched.length,
-      notSearchedCount: unmatched.length,
-      allowlistDomains,
-      unmatchedRequirements: unmatched,
-      sourcePreferences: preferenceFingerprint.snapshot,
-      sourcePreferencesHash: preferenceFingerprint.hash,
-      selections,
-    },
-    client
-  );
+  const persisted =
+    mixedMode === "append" && priorDiscovery
+      ? await appendProductDiscoverySelections(options.persistClient, client, {
+          projectId: parsedId.data,
+          discoveryId: priorDiscovery.id,
+          searchedItemCount: nextSearchedItemCount,
+          notSearchedCount: unmatched.length,
+          allowlistDomains: mergedAllowlist,
+          unmatchedRequirements: unmatched,
+          sourcePreferences: preferenceFingerprint.snapshot,
+          sourcePreferencesHash: preferenceFingerprint.hash,
+          selections: discoveredSelections.filter(
+            (item) => !priorSelections.some((row) => row.requirementKey === item.requirementKey)
+          ),
+        })
+      : await persistProductDiscoveryResult(
+          options.persistClient,
+          options.ownerUserId,
+          {
+            projectId: parsedId.data,
+            sourceAnalysisId: analysis.id,
+            sourceAnalysisUpdatedAt: analysis.updated_at,
+            locationInput,
+            latitude: geo.lat,
+            longitude: geo.lng,
+            radiusKm,
+            searchedItemCount: nextSearchedItemCount,
+            notSearchedCount: unmatched.length,
+            allowlistDomains,
+            unmatchedRequirements: unmatched,
+            sourcePreferences: preferenceFingerprint.snapshot,
+            sourcePreferencesHash: preferenceFingerprint.hash,
+            selections: [...lockedResolved, ...discoveredSelections],
+          },
+          client
+        );
   persistMs = Date.now() - persistStarted;
 
-  const selectionsWithEvidence = persisted.selections.map((row) => {
-    const source = selections.find((item) => item.requirementKey === row.requirementKey);
-    return {
-      ...row,
-      imageEvidence: source?.product.imageEvidence?.length
-        ? source.product.imageEvidence
-        : row.imageEvidence,
-    };
-  });
-  try {
-    await ensureProductReferenceAssets({
-      persistClient: options.persistClient,
-      ownerUserId: options.ownerUserId,
-      projectId: parsedId.data,
-      selections: selectionsWithEvidence,
-      fetch: options.fetch,
-      lookup: options.lookup,
+  const newKeys = new Set(discoveredSelections.map((item) => item.requirementKey));
+  const selectionsToEnsure = persisted.selections
+    .filter((row) => newKeys.has(row.requirementKey))
+    .map((row) => {
+      const source = discoveredSelections.find((item) => item.requirementKey === row.requirementKey);
+      return {
+        ...row,
+        imageEvidence: source?.product.imageEvidence?.length
+          ? source.product.imageEvidence
+          : row.imageEvidence,
+      };
     });
+  try {
+    if (selectionsToEnsure.length > 0) {
+      await ensureProductReferenceAssets({
+        persistClient: options.persistClient,
+        ownerUserId: options.ownerUserId,
+        projectId: parsedId.data,
+        selections: selectionsToEnsure,
+        fetch: options.fetch,
+        lookup: options.lookup,
+      });
+    }
   } catch {
     // Image acquisition must not un-FOUND a persisted product.
   }
   const refreshed = await getProjectProductSelections(client, persisted.discovery.id);
   const selectionsOut =
-    refreshed.length === persisted.selections.length ? refreshed : persisted.selections;
+    refreshed.length >= persisted.selections.length ? refreshed : persisted.selections;
 
   const totalMs = Date.now() - discoveryStarted;
   logDiscoveryTiming({

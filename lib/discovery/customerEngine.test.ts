@@ -5,7 +5,7 @@ import { runOpenAIProductDiscovery } from "@/lib/productDiscovery/search";
 import { discoverProjectProducts } from "./discover";
 import { loadReusableRoomAnalysis } from "@/lib/analysis/analyze";
 import { claimProductDiscoverySlot } from "./claim";
-import { persistProductDiscoveryResult, getProjectProductDiscovery } from "./queries";
+import { persistProductDiscoveryResult, getProjectProductDiscovery, getProjectProductSelections, appendProductDiscoverySelections } from "./queries";
 import { shoppingPreferenceHash } from "./preferenceHash";
 
 vi.mock("@/lib/serp/search", () => ({
@@ -31,6 +31,7 @@ vi.mock("./queries", () => ({
   getProjectProductSelections: vi.fn(async () => []),
   deleteProjectProductDiscovery: vi.fn(async () => undefined),
   persistProductDiscoveryResult: vi.fn(),
+  appendProductDiscoverySelections: vi.fn(),
 }));
 
 const runOpenAIProductDiscoveryMock = vi.mocked(runOpenAIProductDiscovery);
@@ -38,6 +39,8 @@ const runCanonicalSerpSearchMock = vi.mocked(runCanonicalSerpSearch);
 const loadReusableRoomAnalysisMock = vi.mocked(loadReusableRoomAnalysis);
 const persistMock = vi.mocked(persistProductDiscoveryResult);
 const getDiscoveryMock = vi.mocked(getProjectProductDiscovery);
+const getSelectionsMock = vi.mocked(getProjectProductSelections);
+const appendMock = vi.mocked(appendProductDiscoverySelections);
 
 const projectId = randomUUID();
 const analysisId = randomUUID();
@@ -72,6 +75,7 @@ describe("customer discovery engine", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getDiscoveryMock.mockResolvedValue(null);
+    getSelectionsMock.mockResolvedValue([]);
     loadReusableRoomAnalysisMock.mockResolvedValue(analysis() as never);
     persistMock.mockImplementation(async (_client, _owner, input) => ({
       discovery: {
@@ -113,6 +117,46 @@ describe("customer discovery engine", () => {
         updatedAt: new Date().toISOString(),
       })),
       reused: false,
+    }));
+    appendMock.mockImplementation(async (_persist, _read, input) => ({
+      discovery: {
+        id: discoveryId,
+        projectId,
+        sourceAnalysisId: analysisId,
+        sourceAnalysisUpdatedAt: analysis().updated_at,
+        locationInput: "Ljubljana",
+        latitude: 46.05,
+        longitude: 14.5,
+        radiusKm: 50,
+        searchedItemCount: input.searchedItemCount,
+        notSearchedCount: input.notSearchedCount,
+        allowlistDomains: input.allowlistDomains,
+        unmatchedRequirements: input.unmatchedRequirements,
+        sourcePreferences: {},
+        sourcePreferencesHash: "",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      selections: input.selections.map((selection) => ({
+        id: randomUUID(),
+        projectId,
+        discoveryId,
+        requirementType: selection.requirementType,
+        requirementKey: selection.requirementKey,
+        requirementSnapshot: selection.requirementSnapshot,
+        itemSpec: selection.itemSpec,
+        productTitle: selection.product.productTitle,
+        productUrl: selection.product.productUrl,
+        productImageUrl: selection.product.productImageUrl,
+        price: selection.product.price,
+        currency: selection.product.currency,
+        retailerDomain: selection.product.retailerDomain,
+        retailerName: selection.product.retailerName,
+        hasReferenceImage: selection.product.hasReferenceImage,
+        isConfirmed: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })),
     }));
   });
 
@@ -657,6 +701,50 @@ describe("customer discovery engine", () => {
       updatedAt: current.updated_at,
     };
     getDiscoveryMock.mockResolvedValue(existing as never);
+    getSelectionsMock.mockResolvedValue([
+      {
+        id: randomUUID(),
+        projectId,
+        discoveryId,
+        requirementType: "furniture",
+        requirementKey: "furniture:desk:0",
+        requirementSnapshot: { category: "desk" },
+        itemSpec: "desk",
+        productTitle: "Desk",
+        productUrl: "https://www.localhome.si/p/desk",
+        productImageUrl: "https://cdn.localhome.si/desk.jpg",
+        price: 199,
+        currency: "EUR",
+        retailerDomain: "localhome.si",
+        retailerName: "Local",
+        hasReferenceImage: true,
+        isConfirmed: true,
+        referenceStatus: "ready",
+        createdAt: current.created_at,
+        updatedAt: current.updated_at,
+      },
+      {
+        id: randomUUID(),
+        projectId,
+        discoveryId,
+        requirementType: "furniture",
+        requirementKey: "furniture:chair:0",
+        requirementSnapshot: { category: "chair" },
+        itemSpec: "office chair",
+        productTitle: "Chair",
+        productUrl: "https://www.localhome.si/p/chair",
+        productImageUrl: "https://cdn.localhome.si/chair.jpg",
+        price: 99,
+        currency: "EUR",
+        retailerDomain: "localhome.si",
+        retailerName: "Local",
+        hasReferenceImage: true,
+        isConfirmed: true,
+        referenceStatus: "ready",
+        createdAt: current.created_at,
+        updatedAt: current.updated_at,
+      },
+    ] as never);
     const geocodeAddress = vi.fn();
     const searchPlaces = vi.fn(async () => ({
       stores: [
@@ -702,6 +790,30 @@ describe("customer discovery engine", () => {
     expect(reused.reused).toBe(true);
     expect(searchPlaces).not.toHaveBeenCalled();
 
+    getSelectionsMock.mockResolvedValue([
+      {
+        id: randomUUID(),
+        projectId,
+        discoveryId,
+        requirementType: "furniture",
+        requirementKey: "furniture:desk:0",
+        requirementSnapshot: { category: "desk" },
+        itemSpec: "desk",
+        productTitle: "Desk",
+        productUrl: "https://www.localhome.si/p/desk",
+        productImageUrl: "https://cdn.localhome.si/desk.jpg",
+        price: 199,
+        currency: "EUR",
+        retailerDomain: "localhome.si",
+        retailerName: "Local",
+        hasReferenceImage: true,
+        isConfirmed: true,
+        referenceStatus: "ready",
+        createdAt: current.created_at,
+        updatedAt: current.updated_at,
+      },
+    ] as never);
+
     const radiusChanged = await discoverProjectProducts({} as never, projectId, "Celje", {
       ownerUserId: randomUUID(),
       persistClient: {} as never,
@@ -738,5 +850,210 @@ describe("customer discovery engine", () => {
     expect(locationChanged.reused).toBe(false);
     expect(searchPlaces).toHaveBeenCalledTimes(1);
     expect(geocodeAddress).not.toHaveBeenCalled();
+  });
+
+  it("appends a new required extra without replacing locked READY products", async () => {
+    const current = analysis();
+    current.analysis = {
+      roomType: "living-room",
+      architecture: {
+        walls: ["usable wall"],
+        floor: "bare screed",
+        windows: ["one window"],
+        doors: ["balcony door"],
+        fixedElements: ["ceiling electrical point with hanging wires"],
+      },
+      existingElements: [],
+      visualCondition: {
+        lighting: "daylight",
+        colors: ["raw plaster"],
+        overall: "unfinished empty living room",
+      },
+      constraints: [],
+      preserve: ["windows"],
+      replaceOrRemove: [],
+      measurementStatus: { exactDimensionsKnown: false, qualitativeNotes: [] },
+      uncertainties: [],
+    };
+    current.design_requirements = {
+      furnitureNeeds: [
+        { category: "sofa", quantity: 1, placementNotes: null, constraints: [] },
+        { category: "coffee table", quantity: 1, placementNotes: null, constraints: [] },
+        { category: "rug", quantity: 1, placementNotes: null, constraints: [] },
+        { category: "ceiling light fixture", quantity: 1, placementNotes: null, constraints: [] },
+      ],
+      materialNeeds: [],
+      constraints: [],
+      preserve: [],
+      replaceOrRemove: [],
+    };
+    loadReusableRoomAnalysisMock.mockResolvedValue(current as never);
+
+    const locked = ["sofa", "coffee-table", "rug", "ceiling-light"].map((slug, index) => ({
+      id: randomUUID(),
+      projectId,
+      discoveryId,
+      requirementType: "furniture" as const,
+      requirementKey: `furniture:${slug}:0`,
+      requirementSnapshot: { category: slug },
+      itemSpec: slug,
+      productTitle: `Locked ${slug}`,
+      productUrl: `https://www.localhome.si/p/${slug}`,
+      productImageUrl: `https://cdn.localhome.si/${slug}.jpg`,
+      price: 100,
+      currency: "EUR" as const,
+      retailerDomain: "localhome.si",
+      retailerName: "Local",
+      hasReferenceImage: true,
+      isConfirmed: true,
+      referenceStatus: "ready" as const,
+      createdAt: current.created_at,
+      updatedAt: current.updated_at,
+    }));
+    getDiscoveryMock.mockResolvedValue({
+      id: discoveryId,
+      projectId,
+      sourceAnalysisId: current.id,
+      sourceAnalysisUpdatedAt: current.updated_at,
+      locationInput: "Celje",
+      latitude: 46.2358,
+      longitude: 15.2677,
+      radiusKm: 10,
+      searchedItemCount: 4,
+      notSearchedCount: 0,
+      allowlistDomains: ["localhome.si"],
+      unmatchedRequirements: [],
+      sourcePreferences: {},
+      sourcePreferencesHash: shoppingPreferenceHash(null),
+      createdAt: current.created_at,
+      updatedAt: current.updated_at,
+    } as never);
+    getSelectionsMock.mockResolvedValue(locked as never);
+    appendMock.mockImplementation(async (_persist, _read, input) => ({
+      discovery: {
+        id: discoveryId,
+        projectId,
+        sourceAnalysisId: current.id,
+        sourceAnalysisUpdatedAt: current.updated_at,
+        locationInput: "Celje",
+        latitude: 46.2358,
+        longitude: 15.2677,
+        radiusKm: 10,
+        searchedItemCount: input.searchedItemCount,
+        notSearchedCount: input.notSearchedCount,
+        allowlistDomains: input.allowlistDomains,
+        unmatchedRequirements: input.unmatchedRequirements,
+        sourcePreferences: {},
+        sourcePreferencesHash: "",
+        createdAt: current.created_at,
+        updatedAt: current.updated_at,
+      },
+      selections: [
+        ...locked,
+        ...input.selections.map((selection) => ({
+          id: randomUUID(),
+          projectId,
+          discoveryId,
+          requirementType: selection.requirementType,
+          requirementKey: selection.requirementKey,
+          requirementSnapshot: selection.requirementSnapshot,
+          itemSpec: selection.itemSpec,
+          productTitle: selection.product.productTitle,
+          productUrl: selection.product.productUrl,
+          productImageUrl: selection.product.productImageUrl,
+          price: selection.product.price,
+          currency: selection.product.currency,
+          retailerDomain: selection.product.retailerDomain,
+          retailerName: selection.product.retailerName,
+          hasReferenceImage: selection.product.hasReferenceImage,
+          isConfirmed: false,
+          referenceStatus: "pending" as const,
+          createdAt: current.created_at,
+          updatedAt: current.updated_at,
+        })),
+      ],
+    }));
+    runOpenAIProductDiscoveryMock.mockImplementation(async (input) => ({
+      ok: true as const,
+      response: {
+        dryRun: false,
+        plannedQueries: {},
+        plannedTotalQueries: input.items.length,
+        effectiveMaxRequests: input.items.length,
+        executedCount: input.items.length,
+        dailyUsed: 0,
+        dailyRemaining: 0,
+        status: 200,
+        results: input.items.map((item) => ({
+          item,
+          topCandidates: [],
+          picked: {
+            title: "Merchant curtains",
+            url: "https://www.localhome.si/p/curtains",
+            image: "https://cdn.localhome.si/curtains.jpg",
+            price: 89,
+            currency: "EUR",
+            score: 80,
+            confidence: 0.8,
+            reasons: ["curtains"],
+          },
+        })),
+      },
+    }));
+
+    const result = await discoverProjectProducts({} as never, projectId, "Celje", {
+      ownerUserId: randomUUID(),
+      persistClient: {} as never,
+      projectLocation: {
+        locationInput: "Celje",
+        formattedAddress: "Celje",
+        latitude: 46.2358,
+        longitude: 15.2677,
+        radiusKm: 10,
+        countryCode: "SI",
+      },
+      geocodeAddress: vi.fn(),
+      searchPlaces: async () =>
+        ({
+          stores: [
+            {
+              name: "Local Home Store",
+              place_id: "place-1",
+              website: "https://www.localhome.si",
+              websiteDomain: "localhome.si",
+              categoryBucket: "store",
+              types: ["furniture_store"],
+              qualityFlags: {
+                officialSite: true,
+                hasCatalogSignal: true,
+                isDirectoryOrSocial: false,
+                isAggregator: false,
+              },
+            },
+          ],
+          contractors: [],
+          domains: { stores: ["localhome.si"], contractors: [] },
+          allowlistDomainsStores: ["localhome.si"],
+          allowlistDomainsContractors: [],
+          status: 200,
+          outcome: "OK",
+          meta: { radiusMeters: 10000, requestsMade: 0, cacheHits: 0, fallbacksUsed: 0 },
+          places: [],
+        }) as never,
+    });
+
+    expect(result.reused).toBe(false);
+    expect(persistMock).not.toHaveBeenCalled();
+    expect(appendMock).toHaveBeenCalledTimes(1);
+    const appended = appendMock.mock.calls[0]?.[2];
+    expect(appended?.selections.every((item) => item.requirementKey.includes("window"))).toBe(true);
+    expect(runOpenAIProductDiscoveryMock.mock.calls.some((call) =>
+      /curtain|window|zaves/i.test(call[0]?.items.join(" ") ?? "")
+    )).toBe(true);
+    expect(
+      runOpenAIProductDiscoveryMock.mock.calls.every((call) =>
+        !/taremo|rutar|giulia|varano|sofa|coffee|rug|ceiling/i.test(call[0]?.items.join(" ") ?? "")
+      )
+    ).toBe(true);
   });
 });

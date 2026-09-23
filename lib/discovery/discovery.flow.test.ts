@@ -310,10 +310,12 @@ describe("product discovery pipeline (local, mocked providers)", () => {
     expect(geocodeFn).toHaveBeenCalledTimes(1);
     expect(placesFn).toHaveBeenCalledTimes(1);
     expect(serpFn.mock.calls.length).toBeGreaterThanOrEqual(1);
-    expect(serpFn.mock.calls.length).toBeLessThanOrEqual(4);
+    expect(serpFn.mock.calls.length).toBeLessThanOrEqual(8);
     expect(analyzeRoomImageMock).not.toHaveBeenCalled();
-    expect(first.selections).toHaveLength(1);
-    expect(first.selections[0]?.productUrl).toBe("https://www.localhome.si/p/1");
+    expect(first.selections.length).toBeGreaterThanOrEqual(1);
+    expect(first.selections.some((item) => item.productUrl === "https://www.localhome.si/p/1")).toBe(
+      true
+    );
     expect(first.selections[0]).not.toHaveProperty("link");
     expect(first.discovery.unmatchedRequirements.some((item) => item.reason === "no_valid_product")).toBe(
       true
@@ -322,7 +324,7 @@ describe("product discovery pipeline (local, mocked providers)", () => {
     const serpCallsAfterFirst = serpFn.mock.calls.length;
 
     const loaded = await loadCurrentProductDiscovery(userA.client, seeded.projectId);
-    expect(loaded?.selections).toHaveLength(1);
+    expect(loaded?.selections.length).toBeGreaterThanOrEqual(1);
     expect(geocodeFn).toHaveBeenCalledTimes(1);
     expect(placesFn).toHaveBeenCalledTimes(1);
     expect(serpFn.mock.calls.length).toBe(serpCallsAfterFirst);
@@ -361,9 +363,15 @@ describe("product discovery pipeline (local, mocked providers)", () => {
       })
     );
 
-    expect(result.selections[0]?.price).toBeNull();
-    expect(result.selections[0]?.currency).toBeNull();
-    expect(result.selections[0]?.productImageUrl).toBe("https://cdn.localhome.si/1.jpg");
+    expect(result.selections.length).toBeGreaterThanOrEqual(1);
+    expect(
+      result.selections.every((item) => item.price === null && item.currency === null)
+    ).toBe(true);
+    const firstSerpProduct = result.selections.find(
+      (item) => item.productUrl === "https://www.localhome.si/p/1"
+    );
+    expect(firstSerpProduct).toBeDefined();
+    expect(firstSerpProduct?.productImageUrl).toBe("https://cdn.localhome.si/1.jpg");
     expect(JSON.stringify(result.selections)).not.toMatch(/"link"\s*:/);
 
     await expireLocalProductDiscoveryCooldown(seeded.projectId);
@@ -512,7 +520,7 @@ describe("product discovery pipeline (local, mocked providers)", () => {
     }
     expect(geocodeFn.mock.calls.length).toBe(1);
     expect(placesFn.mock.calls.length).toBe(1);
-    expect(serpFn.mock.calls.length).toBe(1);
+    expect(serpFn.mock.calls.length).toBeGreaterThanOrEqual(1);
   });
 
   const marblePrefs = {

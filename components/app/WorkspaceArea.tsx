@@ -54,6 +54,7 @@ export const WorkspaceArea: React.FC<WorkspaceAreaProps> = ({
     >
       {projectId && projectType === MVP_PROJECT_TYPE ? (
         <RoomRenovationFlow
+          key={projectId}
           projectId={projectId}
           initialStepKey={currentStepKey}
           onStepChange={persistStep}

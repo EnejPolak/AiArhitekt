@@ -4,6 +4,9 @@ import * as React from "react";
 import type { ProductDiscoveryView, ProductSelectionView } from "@/lib/discovery/types";
 import type { UnmatchedRequirement } from "@/lib/discovery/itemSpecs";
 import type { RoomRenderPreferences } from "@/lib/render/preferences";
+import type { RoomAnalysisView } from "@/lib/analysis/types";
+import type { ShoppingPreferenceInput } from "@/lib/discovery/preferences";
+import type { FurnishingPlanOverrides } from "@/lib/discovery/furnishingPlan";
 import { FinalRoomRenderPanel } from "../FinalRoomRenderPanel";
 import { wizardPanelClass } from "../wizardUi";
 
@@ -14,6 +17,9 @@ export interface Step9bProductSourcingProps {
   unmatchedRequirements?: UnmatchedRequirement[];
   preferences: RoomRenderPreferences;
   roomPhotoPreviewUrl: string | null;
+  analysis?: RoomAnalysisView | null;
+  shoppingPreferences?: ShoppingPreferenceInput | null;
+  planOverrides?: FurnishingPlanOverrides | null;
   onContinue: () => void;
   onRetryRequirement?: (requirementKey: string) => void;
   onChangeConstraints?: (requirementKey: string) => void;
@@ -32,6 +38,9 @@ export const Step9bProductSourcing: React.FC<Step9bProductSourcingProps> = ({
   unmatchedRequirements = [],
   preferences,
   roomPhotoPreviewUrl,
+  analysis = null,
+  shoppingPreferences = null,
+  planOverrides = null,
   onContinue,
   onRetryRequirement,
   onChangeConstraints,
@@ -55,6 +64,9 @@ export const Step9bProductSourcing: React.FC<Step9bProductSourcingProps> = ({
           unmatchedRequirements={unmatchedRequirements}
           preferences={preferences}
           roomPhotoPreviewUrl={roomPhotoPreviewUrl}
+          analysis={analysis}
+          shoppingPreferences={shoppingPreferences}
+          planOverrides={planOverrides}
           onRetryRequirement={onRetryRequirement}
           onChangeConstraints={onChangeConstraints}
           onIncreaseBudget={onIncreaseBudget}

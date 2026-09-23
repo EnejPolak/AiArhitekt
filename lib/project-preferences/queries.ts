@@ -76,6 +76,7 @@ export function mapProjectRoomPreferenceRow(
       return /^[A-Z]{2}$/.test(code) ? code : null;
     })(),
     furnishingPlan: row.furnishing_plan,
+    designBriefAnswers: row.design_brief_answers,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });
@@ -119,6 +120,7 @@ function toInsert(
     writeWallFinishMode: boolean;
     writeFloorFinishMode: boolean;
     writeFurnishingPlan: boolean;
+    writeDesignBriefAnswers: boolean;
   }
 ) {
   const payload: Database["public"]["Tables"]["project_room_preferences"]["Insert"] = {
@@ -148,6 +150,9 @@ function toInsert(
   }
   if (options.writeFurnishingPlan) {
     payload.furnishing_plan = values.furnishingPlan as Json;
+  }
+  if (options.writeDesignBriefAnswers) {
+    payload.design_brief_answers = values.designBriefAnswers as Json;
   }
   return payload;
 }
@@ -207,6 +212,7 @@ export async function upsertProjectRoomPreferences(
           radiusKm: existing.radiusKm,
           countryCode: existing.countryCode,
           furnishingPlan: existing.furnishingPlan,
+          designBriefAnswers: existing.designBriefAnswers,
         }
       : {}),
     ...patchData,
@@ -223,11 +229,13 @@ export async function upsertProjectRoomPreferences(
     patchData.floorFinishMode !== undefined ||
     patchData.flooring !== undefined;
   const writeFurnishingPlan = patchData.furnishingPlan !== undefined;
+  const writeDesignBriefAnswers = patchData.designBriefAnswers !== undefined;
 
   const payload = toInsert(id.data, next, {
     writeWallFinishMode,
     writeFloorFinishMode,
     writeFurnishingPlan,
+    writeDesignBriefAnswers,
   });
   const { data, error } = await client
     .from("project_room_preferences")

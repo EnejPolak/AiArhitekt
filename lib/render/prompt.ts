@@ -1,6 +1,12 @@
 import type { DesignRequirements, RoomAnalysisObservation } from "@/lib/analysis/schema";
 import type { UnmatchedRequirement } from "@/lib/discovery/itemSpecs";
 import type { ProductSelectionView } from "@/lib/discovery/types";
+import { inferFurnitureConceptFromText } from "@/lib/discovery/locales/concepts";
+import {
+  buildInteriorDesignBrief,
+  formatInteriorDesignBriefForPrompt,
+} from "@/lib/design/brief";
+import { isUnfinishedConstruction } from "@/lib/design/unfinishedRoom";
 import {
   isArchitecturalFinishReference,
   resolveArchitecturalFinishes,
@@ -43,6 +49,7 @@ export type BuildRenderPromptInput = {
   ungroundedSelections?: ProductSelectionView[];
   preferences: RoomRenderPreferences;
   references: OrderedRenderReference[];
+  plannerBrief?: import("@/lib/design-brief/apply").BriefPlannerIntent | null;
 };
 
 function joinNotes(notes: string[]): string {
@@ -96,6 +103,7 @@ function roomAuthoritySection(input: {
   designRequirements: DesignRequirements;
   preferences: RoomRenderPreferences;
   renderIntent: RenderIntent;
+  visualCompletion: boolean;
 }): string {
   const architecture = [
     observedList("Walls", input.observation.architecture.walls),
@@ -129,13 +137,24 @@ function roomAuthoritySection(input: {
 
   const modeLines =
     input.renderIntent === "furnish_only"
-      ? [
-          "Render mode: FURNISH_ONLY.",
-          "Preserve the existing architectural surfaces exactly as photographed: walls, floor finish, ceiling, windows, doors, raw/unfinished state, materials, and surface condition.",
-          "Do not paint, plaster, refinish, or complete unfinished walls, floors, or ceilings.",
-          "Do not replace flooring or invent a finished interior.",
-          "Only add the referenced inventory products. Leave remaining space empty.",
-        ]
+      ? input.visualCompletion
+        ? [
+            "Render mode: FURNISH_ONLY.",
+            "Shopping constraint: do not invent shoppable wall paint or flooring SKUs.",
+            "Preserve room geometry: camera, perspective, wall planes, windows, doors, floor geometry, ceiling plane, and room proportions.",
+            "VISUAL COMPLETION: this visualization must represent a finished interior, not a construction photograph.",
+            "Complete unfinished wall patches, raw construction surfaces, and exposed hanging electrical wires as a design proposal — not verified construction work and not a shoppable merchant product.",
+            "Do not leave exposed hanging electrical wires, unfinished wall patches, raw construction surfaces, or unexplained empty electrical points.",
+            "If a ceiling light fixture is in PHYSICAL OBJECT INVENTORY, install it at the existing ceiling electrical point.",
+            "Do not silently move windows, doors, walls, electrical outlets, or other fixed architectural features.",
+          ]
+        : [
+            "Render mode: FURNISH_ONLY.",
+            "Preserve the existing architectural surfaces exactly as photographed: walls, floor finish, ceiling, windows, doors, raw/unfinished state, materials, and surface condition.",
+            "Do not paint, plaster, refinish, or complete unfinished walls, floors, or ceilings.",
+            "Do not replace flooring or invent a finished interior.",
+            "Only add the referenced inventory products. Leave remaining space empty.",
+          ]
       : [
           "Render mode: COMPLETE_INTERIOR.",
           "Preserve room geometry: camera, perspective, wall planes, windows, doors, floor geometry, ceiling plane, and room proportions.",
@@ -212,6 +231,8 @@ function physicalObjectInventorySection(
 
   return [
     "PHYSICAL OBJECT INVENTORY",
+    "This is not product-catalog placement. Arrange inventory furniture as a lived-in interior using LAYOUT PLAN.",
+    "Do not center furniture only because it looks attractive in a product photograph.",
     "The only new physical furniture, decor, accessories, plants, lighting, textiles or other purchasable objects you may introduce into this room are the supplied referenced products listed below.",
     "Do not invent additional furniture or decor.",
     "Do not add placeholder objects.",
@@ -225,10 +246,19 @@ function physicalObjectInventorySection(
   ].join("\n");
 }
 
-function wallFinishLines(wall: WallFinishDecision): string[] {
+function wallFinishLines(wall: WallFinishDecision, visualCompletion: boolean): string[] {
   const requested = `Wall finish requestedMode: ${wall.requestedMode}.`;
   const resolved = `Wall finish resolvedMode: ${wall.resolvedMode}.`;
   if (wall.requestedMode === "keep_existing") {
+    if (visualCompletion) {
+      return [
+        requested,
+        resolved,
+        "Visually complete unfinished wall surfaces as a design proposal matching DESIGN LANGUAGE.",
+        "This is not a shoppable paint SKU. Do not invent a paint brand, label, or product listing.",
+        "Do not move wall planes.",
+      ];
+    }
     return [
       requested,
       resolved,
@@ -268,10 +298,18 @@ function wallFinishLines(wall: WallFinishDecision): string[] {
   ];
 }
 
-function floorFinishLines(floor: FloorFinishDecision): string[] {
+function floorFinishLines(floor: FloorFinishDecision, visualCompletion: boolean): string[] {
   const requested = `Floor finish requestedMode: ${floor.requestedMode}.`;
   const resolved = `Floor finish resolvedMode: ${floor.resolvedMode}.`;
   if (floor.requestedMode === "keep_existing") {
+    if (visualCompletion) {
+      return [
+        requested,
+        resolved,
+        "Visually complete raw floor surfaces as a design proposal matching DESIGN LANGUAGE.",
+        "This is not a shoppable flooring SKU unless ARCHITECTURAL FINISHES later lists a grounded floor product.",
+      ];
+    }
     return [
       requested,
       resolved,
@@ -295,20 +333,24 @@ function floorFinishLines(floor: FloorFinishDecision): string[] {
   ];
 }
 
-function architecturalFinishesSection(finishes: ArchitecturalFinishes): string {
+function architecturalFinishesSection(
+  finishes: ArchitecturalFinishes,
+  visualCompletion: boolean
+): string {
   return [
     "ARCHITECTURAL FINISHES",
     "Architectural finishes are separate from shoppable furniture.",
     "Do not invent extra purchasable furniture or decor to complete the room.",
-    ...wallFinishLines(finishes.wall_finish),
-    ...floorFinishLines(finishes.floor_finish),
+    ...wallFinishLines(finishes.wall_finish, visualCompletion),
+    ...floorFinishLines(finishes.floor_finish, visualCompletion),
   ].join("\n");
 }
 
 function allowedChangesSection(
   preferences: RoomRenderPreferences,
   renderIntent: RenderIntent,
-  finishes: ArchitecturalFinishes
+  finishes: ArchitecturalFinishes,
+  visualCompletion: boolean
 ): string {
   const styleLine =
     preferences.selectedStyles.length > 0
@@ -340,8 +382,10 @@ function allowedChangesSection(
               : "Keep the existing floor finish. Do not invent a floor covering.",
         ]
       : [
-          "Allowed room changes: add only the referenced inventory products. Leave remaining space empty.",
-          "Do not apply wall color or flooring changes; keep photographed surface finishes.",
+          "Allowed room changes: add only the referenced inventory products. Leave remaining purchasable objects out of empty areas.",
+          visualCompletion
+            ? "Visually complete unfinished construction surfaces as a design proposal. Do not invent extra furniture to fill the room."
+            : "Do not apply wall color or flooring changes; keep photographed surface finishes.",
         ];
 
   return [
@@ -357,13 +401,23 @@ function allowedChangesSection(
     .join("\n");
 }
 
-function forbiddenChangesSection(renderIntent: RenderIntent, finishes: ArchitecturalFinishes): string {
+function forbiddenChangesSection(
+  renderIntent: RenderIntent,
+  finishes: ArchitecturalFinishes,
+  visualCompletion: boolean
+): string {
   const surfaceForbidden =
     renderIntent === "furnish_only"
-      ? [
-          "Do not finish, paint, plaster, or replace unfinished/raw walls, floors, or ceilings.",
-          "Do not invent a completed white interior over an unfinished room.",
-        ]
+      ? visualCompletion
+        ? [
+            "Do not leave exposed hanging electrical wires, unfinished wall patches, or raw construction surfaces in the completed visualization.",
+            "Do not present visual surface completion as a shoppable paint or flooring product.",
+            "Do not invent extra furniture to make the room look furnished beyond the supplied references.",
+          ]
+        : [
+            "Do not finish, paint, plaster, or replace unfinished/raw walls, floors, or ceilings.",
+            "Do not invent a completed white interior over an unfinished room.",
+          ]
       : [
           "Do not change camera, room proportions, or structural openings while completing interior surfaces.",
           finishes.floor_finish.resolvedMode === "exact_product"
@@ -449,6 +503,20 @@ export function buildRoomRenderPrompt(input: BuildRenderPromptInput): RenderProm
   });
   const renderIntent = resolveRenderIntentFromFinishes(architecturalFinishes);
   const expectedRenderInventory = toExpectedRenderInventory(input.references);
+  const visualCompletion = isUnfinishedConstruction(input.observation);
+  const designBrief = buildInteriorDesignBrief({
+    observation: input.observation,
+    requirements: input.designRequirements,
+    plannedConcepts: [
+      ...input.designRequirements.furnitureNeeds.map((item) =>
+        inferFurnitureConceptFromText(item.category)
+      ),
+      ...input.references.map((item) => inferFurnitureConceptFromText(item.selection.itemSpec)),
+    ].filter((concept) => concept !== "other"),
+    selectedStyles: preferences.selectedStyles,
+    userNotes: preferences.notes,
+    brief: input.plannerBrief ?? null,
+  });
   const renderReport = buildRenderHonestyReport({
     inventory: expectedRenderInventory,
     finishes: architecturalFinishes,
@@ -476,17 +544,19 @@ export function buildRoomRenderPrompt(input: BuildRenderPromptInput): RenderProm
 
   const prompt = [
     "This is exact-product reference-grounded rendering of the customer's original room, not generic furniture invention.",
+    formatInteriorDesignBriefForPrompt(designBrief),
     roomAuthoritySection({
       observation: input.observation,
       designRequirements: input.designRequirements,
       preferences,
       renderIntent,
+      visualCompletion,
     }),
     existingRoomObjectsSection(),
     physicalObjectInventorySection(input.references, expectedRenderInventory),
-    architecturalFinishesSection(architecturalFinishes),
-    allowedChangesSection(preferences, renderIntent, architecturalFinishes),
-    forbiddenChangesSection(renderIntent, architecturalFinishes),
+    architecturalFinishesSection(architecturalFinishes, visualCompletion),
+    allowedChangesSection(preferences, renderIntent, architecturalFinishes, visualCompletion),
+    forbiddenChangesSection(renderIntent, architecturalFinishes, visualCompletion),
     excludedProductsSection({
       unmatchedRequirements: input.unmatchedRequirements,
       ungroundedSelections: input.ungroundedSelections ?? [],

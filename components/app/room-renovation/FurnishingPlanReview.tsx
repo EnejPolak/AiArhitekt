@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import type { RoomAnalysisView } from "@/lib/analysis/types";
+import type { ShoppingPreferenceInput } from "@/lib/discovery/preferences";
 import {
   EMPTY_FURNISHING_PLAN_OVERRIDES,
   normalizeFurnishingPlan,
@@ -11,7 +12,9 @@ import {
   type PlannedFurnishingItem,
 } from "@/lib/discovery/furnishingPlan";
 import { slugRequirementPart } from "@/lib/discovery/itemSpecs";
-import type { ShoppingPreferenceInput } from "@/lib/discovery/preferences";
+import { MAX_PRODUCT_DISCOVERY_ITEMS } from "@/lib/discovery/constants";
+import { buildInteriorDesignBrief } from "@/lib/design/brief";
+import { briefPlannerIntent } from "@/lib/design-brief";
 
 export function FurnishingPlanReview({
   analysis,
@@ -40,6 +43,20 @@ export function FurnishingPlanReview({
       analysisId: analysis.id,
     });
   }, [analysis, shoppingPreferences, planOverrides]);
+
+  const brief = React.useMemo(() => {
+    if (!analysis || !plan) return null;
+    return buildInteriorDesignBrief({
+      observation: analysis.analysis,
+      requirements: analysis.designRequirements,
+      plannedConcepts: [...plan.required, ...plan.suggested].map((item) => item.concept),
+      selectedStyles: shoppingPreferences?.selectedStyles ?? undefined,
+      userNotes: shoppingPreferences?.notes,
+      brief: shoppingPreferences?.designBrief
+        ? briefPlannerIntent(shoppingPreferences.designBrief)
+        : null,
+    });
+  }, [analysis, plan, shoppingPreferences]);
 
   if (!analysis || !plan) return null;
 
@@ -135,11 +152,86 @@ export function FurnishingPlanReview({
   return (
     <div className="space-y-4">
       <div>
-        <h3 className="text-[15px] font-medium text-white">AI furnishing plan</h3>
+        <h3 className="text-[15px] font-medium text-white">Interior design plan</h3>
         <p className="text-[13px] text-[rgba(255,255,255,0.55)] mt-1">
-          Review required items before searching stores. Changing this plan does not search yet.
+          The AI chose the necessary furnishing categories and will search stores for those items. You approve or replace individual products later — not each category.
         </p>
       </div>
+
+      {brief ? (
+        <div className="rounded-[12px] border border-[rgba(255,255,255,0.08)] p-3 space-y-3">
+          <p className="text-[13px] text-[rgba(255,255,255,0.80)]">{brief.concept.character}</p>
+          <div>
+            <h4 className="text-[12px] uppercase tracking-[0.08em] text-[rgba(255,255,255,0.45)]">Layout</h4>
+            <p className="text-[13px] text-[rgba(255,255,255,0.75)] mt-1">
+              {brief.layout.options.find((item) => item.selected)?.title}
+            </p>
+            <p className="text-[12px] text-[rgba(255,255,255,0.55)] mt-1">{brief.layout.selectedRationale}</p>
+            <p className="text-[12px] text-[rgba(255,255,255,0.50)] mt-1">
+              {brief.layout.options.find((item) => item.selected)?.sofaOrientation}
+            </p>
+            <p className="text-[12px] text-[rgba(255,255,255,0.50)] mt-1">
+              Media wall: {brief.layout.mediaWall.glare}
+            </p>
+            <p className="text-[12px] text-[rgba(255,255,255,0.50)] mt-1">
+              {brief.layout.mediaWall.electrical}
+            </p>
+          </div>
+          {brief.exactDimensionsKnown ? null : (
+            <p className="text-[12px] text-[rgba(255,255,255,0.50)]">
+              Physical fit is not verified. Exact room dimensions are unknown; no measurements were invented.
+            </p>
+          )}
+          {brief.completeness.filter((item) => item.decision === "needs_preference").length > 0 ? (
+            <div>
+              <h4 className="text-[12px] uppercase tracking-[0.08em] text-[rgba(255,255,255,0.45)]">
+                Needs a preference
+              </h4>
+              <ul className="mt-1 space-y-1">
+                {brief.completeness
+                  .filter((item) => item.decision === "needs_preference")
+                  .map((item) => (
+                    <li key={item.concept} className="text-[12px] text-[rgba(255,255,255,0.50)]">
+                      {item.category}: {item.rationale}
+                    </li>
+                  ))}
+              </ul>
+            </div>
+          ) : null}
+          {brief.completeness.filter((item) => item.decision === "design_proposal").length > 0 ? (
+            <div>
+              <h4 className="text-[12px] uppercase tracking-[0.08em] text-[rgba(255,255,255,0.45)]">
+                Design recommendations
+              </h4>
+              <ul className="mt-1 space-y-1">
+                {brief.completeness
+                  .filter((item) => item.decision === "design_proposal")
+                  .map((item) => (
+                    <li key={item.category} className="text-[12px] text-[rgba(255,255,255,0.50)]">
+                      {item.category}: {item.rationale}
+                    </li>
+                  ))}
+              </ul>
+            </div>
+          ) : null}
+          {brief.completeness.filter((item) => item.decision === "not_appropriate").length > 0 ? (
+            <div>
+              <h4 className="text-[12px] uppercase tracking-[0.08em] text-[rgba(255,255,255,0.45)]">
+                Not used in this room
+              </h4>
+              <ul className="mt-1 space-y-1">
+                {brief.completeness
+                  .filter((item) => item.decision === "not_appropriate")
+                  .map((item) => (
+                    <li key={item.concept} className="text-[12px] text-[rgba(255,255,255,0.50)]">
+                      {item.category}: {item.rationale}
+                    </li>
+                  ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {plan.required.length === 0 ? (
         <p className="text-[13px] text-[rgba(255,255,255,0.55)]">
@@ -218,6 +310,14 @@ export function FurnishingPlanReview({
         </ul>
       )}
 
+      {plan.required.length > MAX_PRODUCT_DISCOVERY_ITEMS ? (
+        <p className="text-[12px] text-[rgba(255,210,80,0.85)]">
+          This search can resolve {MAX_PRODUCT_DISCOVERY_ITEMS} required items at a time. The first{" "}
+          {MAX_PRODUCT_DISCOVERY_ITEMS} will be searched now; the rest stay listed and can be searched
+          in a later pass without replacing approved products.
+        </p>
+      ) : null}
+
       <div className="flex flex-wrap gap-2">
         <input
           value={addText}
@@ -240,7 +340,7 @@ export function FurnishingPlanReview({
         <div className="space-y-2">
           <h4 className="text-[13px] font-medium text-[rgba(255,255,255,0.80)]">Optional ideas</h4>
           <p className="text-[12px] text-[rgba(255,255,255,0.50)]">
-            These are not searched and will not appear in the render unless you accept them.
+            These optional items are not searched unless you add them. Decorative extras stay here so they do not appear as invented products.
           </p>
           <ul className="space-y-2">
             {plan.suggested.map((item) => (

@@ -7,6 +7,7 @@ export const ROOM_STEP_KEYS = [
   "room-type",
   "photo-upload",
   "ai-observation",
+  "design-brief",
   "style-selection",
   "budget-signal",
   "design-preferences",

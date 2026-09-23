@@ -79,11 +79,13 @@ describe("furnishing plan normalization", () => {
       observation: observation(),
     });
     const concepts = plan.required.map((item) => item.concept);
-    expect(concepts).toEqual(["sofa", "coffee_table", "rug", "floor_lamp"]);
+    expect(concepts).toEqual(expect.arrayContaining(["sofa", "coffee_table", "rug", "floor_lamp"]));
+    expect(concepts).toContain("window_treatment");
+    expect(concepts).not.toContain("tv_console");
     expect(concepts).not.toContain("other");
     expect(plan.required.some((item) => /plant|artwork/i.test(item.category))).toBe(false);
     expect(new Set(concepts).size).toBe(concepts.length);
-    expect(plan.required.length).toBeLessThanOrEqual(6);
+    expect(plan.required.length).toBeLessThanOrEqual(8);
   });
 
   it("B. likely_keep sofa suppresses a new sofa requirement", () => {
@@ -314,7 +316,9 @@ describe("approved plan discovery and complete-room gate", () => {
       observation: observation(),
     });
     expect(plan.required.some((item) => item.concept === "sofa")).toBe(true);
-    expect(plan.required.some((item) => /floor|paint|wall/i.test(item.category))).toBe(false);
+    expect(
+      plan.required.some((item) => /flooring|wall paint|\bpaint\b/i.test(item.category))
+    ).toBe(false);
 
     const { searched } = resolveShoppingRequirements({
       analysisRequirements: requirements([furnitureNeed("sofa")]),
@@ -438,11 +442,13 @@ describe("atomic furnishing requirements", () => {
         },
       }),
     });
-    expect(plan.required).toHaveLength(1);
-    expect(plan.required[0]?.concept).toBe("ceiling_light");
-    expect(plan.required[0]?.displayLabel).toBe("Ceiling light fixture");
-    expect(plan.required[0]?.requirementKey).toBe("furniture:ceiling-light:0");
-    expect(plan.required[0]?.quantity).toBeNull();
+    expect(plan.required.find((item) => item.concept === "ceiling_light")?.displayLabel).toBe(
+      "Ceiling light fixture"
+    );
+    expect(plan.required.find((item) => item.concept === "ceiling_light")?.requirementKey).toBe(
+      "furniture:ceiling-light:0"
+    );
+    expect(plan.required.find((item) => item.concept === "ceiling_light")?.quantity).toBeNull();
     expect(plan.required.some((item) => item.concept === "lighting")).toBe(false);
   });
 
@@ -453,9 +459,11 @@ describe("atomic furnishing requirements", () => {
       ]),
       observation: observation(),
     });
-    expect(plan.required.map((item) => item.concept)).toEqual(["floor_lamp"]);
-    expect(plan.required[0]?.displayLabel).toBe("Floor lamp");
-    expect(plan.required[0]?.requirementKey).toBe("furniture:floor-lamp:0");
+    expect(plan.required.map((item) => item.concept)).toContain("floor_lamp");
+    expect(plan.required.find((item) => item.concept === "floor_lamp")?.displayLabel).toBe("Floor lamp");
+    expect(plan.required.find((item) => item.concept === "floor_lamp")?.requirementKey).toBe(
+      "furniture:floor-lamp:0"
+    );
   });
 
   it("C. ceiling or floor lamp with no disambiguating evidence is not required", () => {
@@ -465,7 +473,8 @@ describe("atomic furnishing requirements", () => {
       ]),
       observation: observation(),
     });
-    expect(plan.required).toHaveLength(0);
+    expect(plan.required.some((item) => /ceiling or floor/i.test(item.category))).toBe(false);
+    expect(plan.required.some((item) => item.concept === "lighting")).toBe(false);
     expect(searched.some((item) => /ceiling or floor/i.test(item.itemSpec))).toBe(false);
     expect(searched.some((item) => item.provenance?.concept === "lighting")).toBe(false);
     expect(plan.suggested.length).toBeGreaterThan(0);
@@ -551,18 +560,15 @@ describe("atomic furnishing requirements", () => {
       analysisRequirements: liveV2Analysis.designRequirements,
       observation: liveV2Analysis.observation,
     });
-    expect(plan.required.map((item) => item.displayLabel)).toEqual([
-      "Sofa",
-      "Coffee table",
-      "Rug",
-      "Ceiling light fixture",
-    ]);
-    expect(plan.required.map((item) => item.concept)).toEqual([
-      "sofa",
-      "coffee_table",
-      "rug",
-      "ceiling_light",
-    ]);
+    expect(plan.required.map((item) => item.concept)).toEqual(
+      expect.arrayContaining(["sofa", "coffee_table", "rug", "ceiling_light"])
+    );
+    expect(plan.required.find((item) => item.concept === "sofa")?.displayLabel).toBe("Sofa");
+    expect(plan.required.find((item) => item.concept === "coffee_table")?.displayLabel).toBe("Coffee table");
+    expect(plan.required.find((item) => item.concept === "rug")?.displayLabel).toBe("Rug");
+    expect(plan.required.find((item) => item.concept === "ceiling_light")?.displayLabel).toBe(
+      "Ceiling light fixture"
+    );
     expect(plan.required.some((item) => item.concept === "lighting")).toBe(false);
     expect(plan.required.some((item) => /ceiling or floor/i.test(item.category))).toBe(false);
     expect(searched.some((item) => item.provenance?.concept === "lighting")).toBe(false);

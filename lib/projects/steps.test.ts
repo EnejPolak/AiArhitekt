@@ -21,6 +21,21 @@ describe("wizard step keys", () => {
     expect(stepIndexFromKey("room-renovation", "not-a-step")).toBe(0);
   });
 
+  it("inserts design-brief after analysis and keeps legacy keys", () => {
+    expect(ROOM_STEP_KEYS).toContain("design-brief");
+    expect(stepIndexFromKey("room-renovation", "design-brief")).toBe(4);
+    expect(stepIndexFromKey("room-renovation", "style-selection")).toBe(5);
+    expect(stepIndexFromKey("room-renovation", "ai-observation")).toBe(3);
+    expect(isAllowedStepKey("room-renovation", "design-generation")).toBe(true);
+    expect(isAllowedStepKey("room-renovation", "store-discovery")).toBe(true);
+    expect(stepIndexFromKey("room-renovation", "design-brief")).toBeLessThan(
+      stepIndexFromKey("room-renovation", "design-generation")
+    );
+    expect(stepIndexFromKey("room-renovation", "design-brief")).toBeLessThan(
+      stepIndexFromKey("room-renovation", "store-discovery")
+    );
+  });
+
   it("does not expose inactive home or new-construction steps", () => {
     expect(isAllowedStepKey("home-renovation", "greeting")).toBe(false);
     expect(isAllowedStepKey("home-renovation", "floor-plan-upload")).toBe(false);

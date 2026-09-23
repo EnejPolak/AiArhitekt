@@ -1,5 +1,6 @@
 import { canonicalShoppingPreferences, type ShoppingPreferenceInput, type ShoppingPreferenceSnapshot } from "@/lib/discovery/preferences";
 import { canonicalFurnishingPlanIdentity } from "@/lib/discovery/furnishingPlan";
+import { parseDesignBriefAnswers, designBriefIdentity } from "@/lib/design-brief";
 import {
   canonicalRenderPreferences,
   type RoomRenderPreferences,
@@ -25,10 +26,14 @@ export function projectRoomPreferencesToShoppingPreferences(
     | "floorFinishMode"
     | "notes"
     | "furnishingPlan"
+    | "designBriefAnswers"
+    | "budgetLevel"
   > | null
 ): ShoppingPreferenceInput {
   const source = row ?? EMPTY_PROJECT_ROOM_PREFERENCES;
   const furnishingPlanIdentity = canonicalFurnishingPlanIdentity(source.furnishingPlan);
+  const brief = parseDesignBriefAnswers(source.designBriefAnswers);
+  const identity = designBriefIdentity(brief);
   return {
     selectedStyles: source.selectedStyles,
     wallMainColor: source.wallMainColor,
@@ -38,7 +43,10 @@ export function projectRoomPreferencesToShoppingPreferences(
     bedType: source.bedType,
     keepExistingWalls: source.wallFinishMode === "exact_product" ? false : true,
     notes: source.notes,
+    budgetLevel: source.budgetLevel,
+    designBrief: brief,
     ...(furnishingPlanIdentity ? { furnishingPlanIdentity } : {}),
+    ...(identity ? { designBriefIdentity: identity } : {}),
   };
 }
 

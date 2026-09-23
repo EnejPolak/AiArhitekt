@@ -353,6 +353,7 @@ export type Database = {
           floor_finish_mode: string | null
           wall_main_color: string
           furnishing_plan: Json
+          design_brief_answers: Json
         }
         Insert: {
           bed_type?: string
@@ -377,6 +378,7 @@ export type Database = {
           floor_finish_mode?: string | null
           wall_main_color?: string
           furnishing_plan?: Json
+          design_brief_answers?: Json
         }
         Update: {
           bed_type?: string
@@ -401,6 +403,7 @@ export type Database = {
           floor_finish_mode?: string | null
           wall_main_color?: string
           furnishing_plan?: Json
+          design_brief_answers?: Json
         }
         Relationships: [
           {

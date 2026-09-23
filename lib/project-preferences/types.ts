@@ -40,4 +40,13 @@ export const EMPTY_PROJECT_ROOM_PREFERENCES = {
     addedRequirements: [],
     editedRequirements: {},
   },
+  designBriefAnswers: {
+    schemaVersion: 1,
+    roomType: null,
+    customPurpose: null,
+    customPurposeText: null,
+    currentQuestionId: null,
+    completed: false,
+    answers: {},
+  },
 } as const satisfies Omit<ProjectRoomPreferences, "projectId" | "createdAt" | "updatedAt">;

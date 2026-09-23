@@ -14,6 +14,7 @@ import { completeRoomBlockMessage } from "./readiness";
 import { getProjectRoomPreferences } from "@/lib/project-preferences/queries";
 import { projectRoomPreferencesToRenderPreferences } from "@/lib/project-preferences/adapter";
 import { EMPTY_PROJECT_ROOM_PREFERENCES } from "@/lib/project-preferences/types";
+import { briefPlannerIntent, parseDesignBriefAnswers } from "@/lib/design-brief";
 import { listProjectProductReferenceAssets } from "@/lib/references/queries";
 import { overlayPromptSnapshotReferenceQuality } from "./report";
 import { listProjectRoomRenders, markCurrent } from "./queries";
@@ -230,12 +231,15 @@ export async function generateRoomRenderAction(input: {
     const preferences = projectRoomPreferencesToRenderPreferences(
       stored ?? EMPTY_PROJECT_ROOM_PREFERENCES
     );
+    const parsedBrief = parseDesignBriefAnswers(stored?.designBriefAnswers);
+    const plannerBrief = parsedBrief.completed ? briefPlannerIntent(parsedBrief) : null;
     const result = await generateRoomRender({
       userClient: supabase,
       persistClient,
       ownerUserId: user.id,
       projectId: project.id,
       preferences,
+      plannerBrief,
       force: Boolean(parsed.data.force),
     });
     return {

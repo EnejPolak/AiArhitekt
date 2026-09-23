@@ -19,7 +19,11 @@ import {
   requestedFloorFinishMode,
   requestedWallFinishMode,
 } from "@/lib/render/finishes";
-import { completeRoomBlockMessage, evaluateCompleteRoomReadiness } from "@/lib/render/readiness";
+import { completeRoomBlockMessage, evaluateCompleteRoomReadiness, productApprovalBlockMessage, productApprovalGate } from "@/lib/render/readiness";
+import type { RoomAnalysisView } from "@/lib/analysis/types";
+import { normalizeFurnishingPlan, type FurnishingPlanOverrides } from "@/lib/discovery/furnishingPlan";
+import { inferFurnitureConceptFromText } from "@/lib/discovery/locales/concepts";
+import type { ShoppingPreferenceInput } from "@/lib/discovery/preferences";
 import type { ProductDiscoveryView, ProductSelectionView } from "@/lib/discovery/types";
 import type { UnmatchedRequirement } from "@/lib/discovery/itemSpecs";
 import { formatVerifiedProductPrice, toProjectProductShoppingState } from "@/lib/discovery/shoppingState";
@@ -32,6 +36,9 @@ export interface FinalRoomRenderPanelProps {
   unmatchedRequirements?: UnmatchedRequirement[];
   preferences: RoomRenderPreferences;
   roomPhotoPreviewUrl: string | null;
+  analysis?: RoomAnalysisView | null;
+  shoppingPreferences?: ShoppingPreferenceInput | null;
+  planOverrides?: FurnishingPlanOverrides | null;
   onRetryRequirement?: (requirementKey: string) => void;
   onChangeConstraints?: (requirementKey: string) => void;
   onIncreaseBudget?: (requirementKey: string) => void;
@@ -49,6 +56,9 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
   unmatchedRequirements = [],
   preferences,
   roomPhotoPreviewUrl,
+  analysis = null,
+  shoppingPreferences = null,
+  planOverrides = null,
   onRetryRequirement,
   onChangeConstraints,
   onIncreaseBudget,
@@ -171,13 +181,31 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
     const readyRequirementKeys = selections
       .filter((item) => item.referenceStatus === "ready")
       .map((item) => item.requirementKey);
+    const plan = analysis
+      ? normalizeFurnishingPlan({
+          analysisRequirements: analysis.designRequirements,
+          observation: analysis.analysis,
+          analysisId: analysis.id,
+          preferences: shoppingPreferences,
+          planOverrides,
+        })
+      : null;
     return evaluateCompleteRoomReadiness({
       searchedItemCount: discovery.searchedItemCount,
       unmatched: unmatchedRequirements,
       readyRequirementKeys,
       preferences,
+      requiredPlanItems: plan?.required.map((item) => ({
+        requirementKey: item.requirementKey,
+        displayLabel: item.displayLabel,
+        concept: item.concept,
+      })),
+      readyPlanConcepts: selections
+        .filter((item) => item.referenceStatus === "ready")
+        .map((item) => inferFurnitureConceptFromText(item.itemSpec)),
     });
-  }, [discovery, selections, unmatchedRequirements, preferences]);
+  }, [discovery, selections, unmatchedRequirements, preferences, analysis, shoppingPreferences, planOverrides]);
+  const approval = React.useMemo(() => productApprovalGate(selections), [selections]);
   const floorReady = selections.find(
     (item) => item.referenceStatus === "ready" && isFloorFinishRequirementKey(item.requirementKey)
   );
@@ -197,8 +225,12 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
     [discovery, selections]
   );
   const buttonLabel = hasCurrent && !stale ? "Regenerate design" : "Generate design";
-  const canGenerate = Boolean(completeRoom?.allowed);
-  const blockMessage = completeRoom && !completeRoom.allowed ? completeRoomBlockMessage(completeRoom) : null;
+  const canGenerate = Boolean(completeRoom?.allowed) && approval.allowed;
+  const blockMessage = !approval.allowed
+    ? productApprovalBlockMessage(approval)
+    : completeRoom && !completeRoom.allowed
+      ? completeRoomBlockMessage(completeRoom)
+      : null;
 
   return (
     <div className="space-y-5">

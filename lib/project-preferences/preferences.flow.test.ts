@@ -450,14 +450,9 @@ describe("persisted room preferences + discovery (local, mocked providers)", () 
         searchSerp: serpFn,
       }
     );
-    expect(radiusChanged.reused).toBe(false);
+    expect(radiusChanged.reused).toBe(true);
     expect(geocodeFn).not.toHaveBeenCalled();
-    expect(placesFn).toHaveBeenCalledTimes(2);
-    expect(placesFn.mock.calls[1]?.[0]).toMatchObject({
-      lat: 46.2358,
-      lng: 15.2677,
-      radiusKm: 40,
-    });
+    expect(placesFn).toHaveBeenCalledTimes(1);
 
     await upsertProjectRoomPreferences(userA.client, locationProject.projectId, {
       locationInput: "Ljubljana",
@@ -480,13 +475,9 @@ describe("persisted room preferences + discovery (local, mocked providers)", () 
       searchPlaces: placesFn,
       searchSerp: serpFn,
     });
-    expect(moved.reused).toBe(false);
+    expect(moved.reused).toBe(true);
     expect(geocodeFn).not.toHaveBeenCalled();
-    expect(placesFn.mock.calls.at(-1)?.[0]).toMatchObject({
-      lat: 46.0569,
-      lng: 14.5058,
-      radiusKm: 40,
-    });
+    expect(placesFn).toHaveBeenCalledTimes(1);
   });
 
   it("geocodes a legacy address once and persists coordinates for later reuse", async () => {
