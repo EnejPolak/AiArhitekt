@@ -4,12 +4,17 @@ import * as React from "react";
 import { RoomRenovationData } from "../RoomRenovationFlow";
 import { ProductShoppingSections } from "../ProductShoppingSections";
 import type { ProjectProductShoppingState } from "@/lib/discovery/shoppingState";
+import { formatVerifiedProductPrice } from "@/lib/discovery/shoppingState";
+import { loadRoomRenderState } from "@/lib/render/actions";
+import { PHYSICAL_FIT_DISCLAIMER, PRODUCT_FIDELITY_DISCLAIMER } from "@/lib/render/constants";
+import { renderHonestyReportFromSnapshot, type RenderHonestyReport } from "@/lib/render/report";
 
 export interface Step10FinalReportProps {
   projectId: string;
   data: RoomRenovationData;
   shoppingState: ProjectProductShoppingState;
   onStartAnother: () => void;
+  onBack?: () => void;
 }
 
 export const Step10FinalReport: React.FC<Step10FinalReportProps> = ({
@@ -17,6 +22,7 @@ export const Step10FinalReport: React.FC<Step10FinalReportProps> = ({
   data,
   shoppingState,
   onStartAnother,
+  onBack,
 }) => {
   const formatCurrency = (amount: number) =>
     new Intl.NumberFormat("sl-SI", {
@@ -25,22 +31,110 @@ export const Step10FinalReport: React.FC<Step10FinalReportProps> = ({
       minimumFractionDigits: 0,
     }).format(amount);
 
-  const handleDownloadReport = () => {
-    console.log("Downloading report for project:", projectId);
-  };
+  const [previewUrl, setPreviewUrl] = React.useState<string | null>(data.selectedDesign);
+  const [honestyReport, setHonestyReport] = React.useState<RenderHonestyReport | null>(null);
+  const [loadError, setLoadError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      const result = await loadRoomRenderState({ projectId });
+      if (cancelled) return;
+      if (!result.ok) {
+        setLoadError(result.message);
+        return;
+      }
+      setLoadError(null);
+      if (result.previewUrl) setPreviewUrl(result.previewUrl);
+      const snapshot =
+        result.currentRender?.promptSnapshot ?? result.latestSucceeded?.promptSnapshot ?? null;
+      setHonestyReport(renderHonestyReportFromSnapshot(snapshot));
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
 
   return (
     <div className="space-y-6 mt-8">
-      {data.selectedDesign && (
-        <div className="rounded-[16px] px-4 py-4 sm:px-6 sm:py-5 bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.08)] min-w-0">
-          <h3 className="text-[16px] font-medium text-white mb-3">Selected Design</h3>
+      <div className="rounded-[16px] px-4 py-4 sm:px-6 sm:py-5 bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.08)] min-w-0">
+        <h3 className="text-[16px] font-medium text-white mb-3">Selected Design</h3>
+        {previewUrl ? (
           <img
-            src={data.selectedDesign}
+            src={previewUrl}
             alt="Selected design"
             className="w-full max-w-[600px] h-auto rounded-lg"
           />
+        ) : (
+          <p className="text-[13px] text-[rgba(255,255,255,0.55)]">No visualization yet.</p>
+        )}
+        <p className="text-[12px] text-[rgba(255,255,255,0.55)] mt-3">{PRODUCT_FIDELITY_DISCLAIMER}</p>
+        <p className="text-[12px] text-[rgba(255,255,255,0.45)] mt-1">{PHYSICAL_FIT_DISCLAIMER}</p>
+        {loadError ? (
+          <p className="text-[12px] text-[rgba(255,140,140,0.9)] mt-2">{loadError}</p>
+        ) : null}
+      </div>
+
+      {honestyReport ? (
+        <div className="rounded-[16px] px-4 py-4 sm:px-6 sm:py-5 bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.08)] min-w-0 space-y-4">
+          <h3 className="text-[16px] font-medium text-white">Finish decisions</h3>
+          <p className="text-[13px] text-white">
+            Walls requested: {honestyReport.finishIntent.wall_finish.requestedLabel}
+          </p>
+          <p className="text-[13px] text-white">
+            Walls resolved: {honestyReport.finishIntent.wall_finish.resolvedLabel}
+            {honestyReport.finishDecisions.wall_finish.resolvedMode === "concept_color"
+              ? ` (${honestyReport.finishDecisions.wall_finish.colorDirection || "color direction"}, not shoppable)`
+              : ""}
+          </p>
+          <p className="text-[13px] text-white">
+            Floor requested: {honestyReport.finishIntent.floor_finish.requestedLabel}
+          </p>
+          <p className="text-[13px] text-white">
+            Floor resolved: {honestyReport.finishIntent.floor_finish.resolvedLabel}
+          </p>
+          {honestyReport.conceptOnlyFinishChoices.length > 0 ? (
+            <div className="space-y-1">
+              <h4 className="text-[13px] font-medium text-white">Concept-only finish choices</h4>
+              {honestyReport.conceptOnlyFinishChoices.map((item) => (
+                <p key={`${item.surface}-${item.colorDirection}`} className="text-[13px] text-white">
+                  Walls: {item.colorDirection || "color direction"}
+                  {item.accentColorDirection ? ` / accent ${item.accentColorDirection}` : ""}
+                  <span className="text-[rgba(255,255,255,0.55)]"> · not a shoppable product</span>
+                </p>
+              ))}
+            </div>
+          ) : (
+            <p className="text-[13px] text-[rgba(255,255,255,0.45)]">
+              No concept-only finishes. Wall color is either kept or an exact product.
+            </p>
+          )}
+          {honestyReport.productsToBuy.length > 0 ? (
+            <div className="space-y-2">
+              <h4 className="text-[13px] font-medium text-white">Exact visualized items</h4>
+              {honestyReport.productsToBuy.map((item) => (
+                <div key={item.selectionId} className="text-[13px] text-white">
+                  <div>{item.productName}</div>
+                  <div className="text-[12px] text-[rgba(255,255,255,0.55)]">
+                    {formatVerifiedProductPrice(item.price, item.currency)} · {item.merchantName}
+                  </div>
+                  {item.productUrl ? (
+                    <a
+                      href={item.productUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[12px] text-[#3B82F6] hover:underline"
+                    >
+                      Open product
+                    </a>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
         </div>
-      )}
+      ) : null}
 
       {data.costEstimate && (
         <div className="rounded-[16px] px-4 py-4 sm:px-6 sm:py-5 bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.08)] min-w-0">
@@ -159,13 +253,20 @@ export const Step10FinalReport: React.FC<Step10FinalReportProps> = ({
       )}
 
       <div className="flex flex-col md:flex-row gap-4 mt-8">
+        {onBack ? (
+          <button
+            type="button"
+            onClick={onBack}
+            className="px-6 py-3 rounded-lg border border-[rgba(255,255,255,0.15)] text-white text-[14px] font-medium hover:bg-[rgba(255,255,255,0.05)] transition-colors"
+          >
+            Back to visualization
+          </button>
+        ) : null}
+        <p className="px-6 py-3 text-[13px] text-[rgba(255,255,255,0.55)]">
+          PDF export is not available yet. Use this page to review the visualization and shopping links.
+        </p>
         <button
-          onClick={handleDownloadReport}
-          className="px-6 py-3 rounded-lg bg-[#3B82F6] text-white text-[14px] font-medium hover:bg-[#2563EB] transition-colors"
-        >
-          Download Project Report
-        </button>
-        <button
+          type="button"
           onClick={onStartAnother}
           className="px-6 py-3 rounded-lg border border-[rgba(255,255,255,0.15)] text-white text-[14px] font-medium hover:bg-[rgba(255,255,255,0.05)] transition-colors"
         >

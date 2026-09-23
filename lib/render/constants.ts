@@ -32,3 +32,5 @@ export const RENDER_MIME_TO_EXT: Record<RoomRenderOutputMimeType, "jpg" | "png" 
 
 export const PRODUCT_FIDELITY_DISCLAIMER =
   "Visualization created from your room photo using selected product images as visual references. It is not a photograph of those exact items in your room.";
+export const PHYSICAL_FIT_DISCLAIMER =
+  "Physical fit is not verified from this image; exact room dimensions were not measured.";

@@ -188,6 +188,24 @@ describe("toProjectProductShoppingState", () => {
     expect(state.knownProductTotalIsPartial).toBe(false);
   });
 
+  it("lists not_searched leftovers as unresolved so they are not silently omitted", () => {
+    const persisted = discovery({
+      notSearchedCount: 2,
+      unmatchedRequirements: [
+        {
+          requirementKey: "furniture:desk:0",
+          requirementType: "furniture",
+          itemSpec: "desk",
+          displayLabel: "desk",
+          reason: "not_searched",
+        },
+      ],
+    });
+    const state = toProjectProductShoppingState(persisted, [productA]);
+    expect(state.missingRequirements.map((item) => item.requirementKey)).toEqual(["furniture:desk:0"]);
+    expect(state.notSearchedCount).toBe(1);
+  });
+
   it("returns an empty read-only state when discovery is missing", () => {
     const state = toProjectProductShoppingState(null, [productA]);
     expect(state.hasDiscovery).toBe(false);

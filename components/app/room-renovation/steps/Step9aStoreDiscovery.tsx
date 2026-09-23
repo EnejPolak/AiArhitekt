@@ -30,6 +30,7 @@ import { FurnishingPlanReview } from "../FurnishingPlanReview";
 import type { RoomAnalysisView } from "@/lib/analysis/types";
 import type { FurnishingPlanOverrides } from "@/lib/discovery/furnishingPlan";
 import { EMPTY_FURNISHING_PLAN_OVERRIDES } from "@/lib/discovery/furnishingPlan";
+import { SHOPPING_RETRYABLE_REASONS } from "@/lib/discovery/shoppingState";
 
 export interface Step9aStoreDiscoveryProps {
   projectId: string;
@@ -49,6 +50,11 @@ export interface Step9aStoreDiscoveryProps {
     discovery: ProductDiscoveryView;
     selections: ProductSelectionView[];
   }) => void;
+  onRetryRequirement?: (requirementKey: string) => void;
+  onChangeConstraints?: (requirementKey: string) => void;
+  onIncreaseBudget?: (requirementKey: string) => void;
+  onRemoveRequirement?: (requirementKey: string) => void;
+  retryBusyKey?: string | null;
 }
 
 type Phase = "ready" | "searching" | "results" | "error";
@@ -85,6 +91,11 @@ export const Step9aStoreDiscovery: React.FC<Step9aStoreDiscoveryProps> = ({
   onFurnishingPlanChange,
   onComplete,
   onDiscoveryUpdated,
+  onRetryRequirement,
+  onChangeConstraints,
+  onIncreaseBudget,
+  onRemoveRequirement,
+  retryBusyKey,
 }) => {
   const [discovery, setDiscovery] = React.useState<ProductDiscoveryView | null>(initialDiscovery);
   const [selections, setSelections] = React.useState<ProductSelectionView[]>(initialSelections);
@@ -243,12 +254,19 @@ export const Step9aStoreDiscovery: React.FC<Step9aStoreDiscoveryProps> = ({
       setErrorCode(result.code);
       return;
     }
-    setSelections((prev) =>
-      prev.map((item) => (item.id === result.selection.id ? result.selection : item))
-    );
+    setSelections((prev) => {
+      const next = prev.map((item) => (item.id === result.selection.id ? result.selection : item));
+      if (discovery) {
+        onDiscoveryUpdated?.({ discovery, selections: next });
+      }
+      return next;
+    });
   };
 
-  const unmatchedNotFound = discovery?.unmatchedRequirements.filter((item) => item.reason === "no_valid_product") ?? [];
+  const unmatchedNotFound =
+    discovery?.unmatchedRequirements.filter(
+      (item) => item.reason === "no_valid_product" || item.reason === "search_interrupted"
+    ) ?? [];
   const unmatchedNotSearched = discovery?.unmatchedRequirements.filter((item) => item.reason === "not_searched") ?? [];
   const allNotFound = showResults && selections.length === 0;
   const uiKind = discoveryUiKind(errorCode);
@@ -350,10 +368,42 @@ export const Step9aStoreDiscovery: React.FC<Step9aStoreDiscoveryProps> = ({
               search result, not a system error.
             </p>
             {unmatchedNotFound.length > 0 ? (
-              <ul className="mt-2 space-y-1 text-[13px] text-[rgba(255,255,255,0.60)]">
+              <ul className="mt-2 space-y-3 text-[13px] text-[rgba(255,255,255,0.60)]">
                 {unmatchedNotFound.map((item) => (
-                  <li key={item.requirementKey}>
-                    {unmatchedRequirementDisplayLabel(item)}
+                  <li key={item.requirementKey} className="space-y-2">
+                    <div>{unmatchedRequirementDisplayLabel(item)}</div>
+                    {onRetryRequirement || onChangeConstraints || onRemoveRequirement ? (
+                      <div className="flex flex-wrap gap-2">
+                        {onRetryRequirement && SHOPPING_RETRYABLE_REASONS.has(item.reason) ? (
+                          <button
+                            type="button"
+                            disabled={retryBusyKey === item.requirementKey}
+                            onClick={() => onRetryRequirement(item.requirementKey)}
+                            className="text-[12px] text-[#3B82F6] hover:underline disabled:opacity-40"
+                          >
+                            {retryBusyKey === item.requirementKey ? "Retrying…" : "Retry this item"}
+                          </button>
+                        ) : null}
+                        {onChangeConstraints ? (
+                          <button
+                            type="button"
+                            onClick={() => onChangeConstraints(item.requirementKey)}
+                            className="text-[12px] text-[#3B82F6] hover:underline"
+                          >
+                            Change constraints
+                          </button>
+                        ) : null}
+                        {onRemoveRequirement ? (
+                          <button
+                            type="button"
+                            onClick={() => onRemoveRequirement(item.requirementKey)}
+                            className="text-[12px] text-[rgba(255,255,255,0.70)] hover:underline"
+                          >
+                            Remove item from design
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </li>
                 ))}
               </ul>
@@ -445,10 +495,51 @@ export const Step9aStoreDiscovery: React.FC<Step9aStoreDiscoveryProps> = ({
             <h3 className="text-[13px] font-medium text-[rgba(255,255,255,0.80)] mb-2">
               Unresolved items
             </h3>
-            <ul className="space-y-1 text-[13px] text-[rgba(255,255,255,0.55)]">
+            <ul className="space-y-3 text-[13px] text-[rgba(255,255,255,0.55)]">
               {unmatchedNotFound.map((item) => (
-                <li key={item.requirementKey}>
-                  {unmatchedRequirementDisplayLabel(item)}
+                <li key={item.requirementKey} className="space-y-2">
+                  <div>{unmatchedRequirementDisplayLabel(item)}</div>
+                  {onRetryRequirement || onChangeConstraints || onIncreaseBudget || onRemoveRequirement ? (
+                    <div className="flex flex-wrap gap-2">
+                      {onRetryRequirement && SHOPPING_RETRYABLE_REASONS.has(item.reason) ? (
+                        <button
+                          type="button"
+                          disabled={retryBusyKey === item.requirementKey}
+                          onClick={() => onRetryRequirement(item.requirementKey)}
+                          className="text-[12px] text-[#3B82F6] hover:underline disabled:opacity-40"
+                        >
+                          {retryBusyKey === item.requirementKey ? "Retrying…" : "Retry this item"}
+                        </button>
+                      ) : null}
+                      {onChangeConstraints ? (
+                        <button
+                          type="button"
+                          onClick={() => onChangeConstraints(item.requirementKey)}
+                          className="text-[12px] text-[#3B82F6] hover:underline"
+                        >
+                          Change constraints
+                        </button>
+                      ) : null}
+                      {onIncreaseBudget ? (
+                        <button
+                          type="button"
+                          onClick={() => onIncreaseBudget(item.requirementKey)}
+                          className="text-[12px] text-[#3B82F6] hover:underline"
+                        >
+                          Increase budget
+                        </button>
+                      ) : null}
+                      {onRemoveRequirement ? (
+                        <button
+                          type="button"
+                          onClick={() => onRemoveRequirement(item.requirementKey)}
+                          className="text-[12px] text-[rgba(255,255,255,0.70)] hover:underline"
+                        >
+                          Remove item from design
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </li>
               ))}
             </ul>
@@ -456,9 +547,40 @@ export const Step9aStoreDiscovery: React.FC<Step9aStoreDiscoveryProps> = ({
         ) : null}
 
         {showResults && unmatchedNotSearched.length > 0 ? (
-          <div className="text-[13px] text-[rgba(255,255,255,0.45)]">
-            {unmatchedNotSearched.length} additional requirement
-            {unmatchedNotSearched.length === 1 ? "" : "s"} were not searched (limit 10 per run).
+          <div className="space-y-2">
+            <div className="text-[13px] text-[rgba(255,255,255,0.45)]">
+              {unmatchedNotSearched.length} additional requirement
+              {unmatchedNotSearched.length === 1 ? "" : "s"} were not searched (limit 10 per run).
+            </div>
+            <ul className="space-y-3 text-[13px] text-[rgba(255,255,255,0.55)]">
+              {unmatchedNotSearched.map((item) => (
+                <li key={item.requirementKey} className="space-y-2">
+                  <div>{unmatchedRequirementDisplayLabel(item)}</div>
+                  {onChangeConstraints || onRemoveRequirement ? (
+                    <div className="flex flex-wrap gap-2">
+                      {onChangeConstraints ? (
+                        <button
+                          type="button"
+                          onClick={() => onChangeConstraints(item.requirementKey)}
+                          className="text-[12px] text-[#3B82F6] hover:underline"
+                        >
+                          Change constraints
+                        </button>
+                      ) : null}
+                      {onRemoveRequirement ? (
+                        <button
+                          type="button"
+                          onClick={() => onRemoveRequirement(item.requirementKey)}
+                          className="text-[12px] text-[rgba(255,255,255,0.70)] hover:underline"
+                        >
+                          Remove item from design
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
           </div>
         ) : null}
 

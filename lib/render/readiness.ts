@@ -1,5 +1,6 @@
 import { completeRoomGate, type CompleteRoomGate } from "@/lib/discovery/completeRoomGate";
 import type { UnmatchedRequirement } from "@/lib/discovery/itemSpecs";
+import { isEmptyDesignBrief, type DesignBriefDocument } from "@/lib/design-brief/schema";
 import { requiredExactFinishSlots } from "./finishes";
 import type { RoomRenderPreferences } from "./preferences";
 
@@ -95,4 +96,19 @@ export function productApprovalBlockMessage(gate: {
     return "Approve each product before generating a design.";
   }
   return `Approve each product before generating a design. Waiting on: ${gate.unconfirmedLabels.join(", ")}.`;
+}
+
+export function designBriefGenerateGate(
+  doc: DesignBriefDocument,
+  options?: { hasSucceededRender?: boolean }
+): { allowed: boolean; legacy: boolean } {
+  if (doc.completed) return { allowed: true, legacy: false };
+  if (isEmptyDesignBrief(doc) && options?.hasSucceededRender) {
+    return { allowed: true, legacy: true };
+  }
+  return { allowed: false, legacy: false };
+}
+
+export function designBriefBlockMessage(): string {
+  return "Complete Design Brief before generating a design.";
 }

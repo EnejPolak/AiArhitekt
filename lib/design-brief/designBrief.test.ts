@@ -20,7 +20,7 @@ import { projectRoomPreferencesToShoppingPreferences } from "@/lib/project-prefe
 import { EMPTY_PROJECT_ROOM_PREFERENCES } from "@/lib/project-preferences/types";
 import { resolveMixedDiscoveryMode, requirementsNeedingSearch, nextDiscoverySearchBatch } from "@/lib/design/mixedDiscovery";
 import { isLockedApprovedSelection, lockedApprovedRequirementKeys } from "@/lib/design/approvedLock";
-import { productApprovalGate, evaluateCompleteRoomReadiness } from "@/lib/render/readiness";
+import { productApprovalGate, evaluateCompleteRoomReadiness, designBriefGenerateGate, designBriefBlockMessage } from "@/lib/render/readiness";
 import { MAX_PRODUCT_DISCOVERY_ITEMS } from "@/lib/discovery/constants";
 import type { ProductSelectionView } from "@/lib/discovery/types";
 
@@ -636,5 +636,35 @@ describe("approved-product preservation", () => {
         locked.map((item) => ({ ...item, isConfirmed: false }))
       ).allowed
     ).toBe(false);
+  });
+});
+
+describe("design brief generate gate", () => {
+  it("blocks incomplete new-project briefs and allows completed briefs", () => {
+    const empty = parseDesignBriefAnswers({});
+    expect(isEmptyDesignBrief(empty)).toBe(true);
+    expect(designBriefGenerateGate(empty).allowed).toBe(false);
+    expect(designBriefGenerateGate(empty, { hasSucceededRender: true }).allowed).toBe(true);
+    expect(designBriefGenerateGate(empty, { hasSucceededRender: true }).legacy).toBe(true);
+
+    const started = {
+      ...empty,
+      currentQuestionId: "living.use",
+    };
+    expect(designBriefGenerateGate(started).allowed).toBe(false);
+    expect(designBriefGenerateGate(started, { hasSucceededRender: true }).allowed).toBe(false);
+
+    const completed = markBriefComplete(started);
+    expect(designBriefGenerateGate(completed).allowed).toBe(true);
+    expect(designBriefBlockMessage()).toBe("Complete Design Brief before generating a design.");
+  });
+
+  it("does not rewrite empty legacy briefs", () => {
+    const empty = parseDesignBriefAnswers(null);
+    expect(empty.completed).toBe(false);
+    expect(Object.keys(empty.answers)).toEqual([]);
+    const allowedLegacy = designBriefGenerateGate(empty, { hasSucceededRender: true });
+    expect(allowedLegacy).toEqual({ allowed: true, legacy: true });
+    expect(empty).toEqual(parseDesignBriefAnswers(null));
   });
 });

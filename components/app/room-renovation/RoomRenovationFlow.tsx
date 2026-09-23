@@ -21,6 +21,7 @@ import { toProjectProductShoppingState } from "@/lib/discovery/shoppingState";
 import {
   removeRequirementFromDesignAction,
   retryUnresolvedRequirementAction,
+  setProductConfirmed,
 } from "@/lib/discovery/actions";
 import {
   parseProjectLocation,
@@ -208,6 +209,7 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
     productDiscovery?.selections ?? []
   );
   const [retryBusyKey, setRetryBusyKey] = React.useState<string | null>(null);
+  const [confirmBusyId, setConfirmBusyId] = React.useState<string | null>(null);
   const [hasPersistedPhoto, setHasPersistedPhoto] = React.useState(
     Boolean(roomPhoto?.previewUrl || roomPhoto?.filename)
   );
@@ -476,6 +478,31 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
       }
     },
     [projectId]
+  );
+  const handleToggleConfirmed = React.useCallback(
+    async (selection: ProductSelectionView) => {
+      if (confirmBusyId) return;
+      setConfirmBusyId(selection.id);
+      try {
+        const result = await setProductConfirmed({
+          selectionId: selection.id,
+          confirmed: !selection.isConfirmed,
+        });
+        if (result.ok) {
+          setPersistedSelections((prev) =>
+            prev.map((item) => (item.id === result.selection.id ? result.selection : item))
+          );
+          setPreferenceSaveError(null);
+        } else {
+          setPreferenceSaveError(result.message);
+        }
+      } catch {
+        setPreferenceSaveError("Could not save product approval. Try again.");
+      } finally {
+        setConfirmBusyId(null);
+      }
+    },
+    [confirmBusyId]
   );
   const persistKeepExistingFloor = async () => {
     const saved = await persistRoomPreferences({ flooring: "keep", floorFinishMode: "keep_existing" });
@@ -766,6 +793,11 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
               setPersistedDiscovery(discovery);
               setPersistedSelections(selections);
             }}
+            onRetryRequirement={(requirementKey) => void handleRetryRequirement(requirementKey)}
+            onChangeConstraints={() => goToStepKey("store-discovery")}
+            onIncreaseBudget={() => goToStepKey("design-brief")}
+            onRemoveRequirement={(requirementKey) => void handleRemoveRequirement(requirementKey)}
+            retryBusyKey={retryBusyKey}
             onComplete={({ discovery, selections }) => {
               setPersistedDiscovery(discovery);
               setPersistedSelections(selections);
@@ -803,13 +835,26 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
             shoppingPreferences={shoppingPreferences}
             planOverrides={roomPrefs?.furnishingPlan ?? null}
             onRetryRequirement={(requirementKey) => void handleRetryRequirement(requirementKey)}
-            onChangeConstraints={() => goToStepKey("design-preferences")}
-            onIncreaseBudget={() => goToStepKey("budget-signal")}
+            onChangeConstraints={() => goToStepKey("store-discovery")}
+            onIncreaseBudget={() => goToStepKey("design-brief")}
             onRemoveRequirement={(requirementKey) => void handleRemoveRequirement(requirementKey)}
             onKeepExistingFloor={() => void persistKeepExistingFloor()}
             onSwitchWallToConceptColor={() => void persistWallFinishMode("concept_color")}
             onKeepExistingWalls={() => void persistWallFinishMode("keep_existing")}
             retryBusyKey={retryBusyKey}
+            onToggleConfirmed={(selection) => void handleToggleConfirmed(selection)}
+            confirmBusyId={confirmBusyId}
+            onBackToProducts={() => goToStepKey("store-discovery")}
+            onPreviewChange={(previewUrl) => {
+              if (!previewUrl) return;
+              setData((prev) =>
+                prev.selectedDesign === previewUrl
+                  ? prev
+                  : { ...prev, selectedDesign: previewUrl, generatedDesigns: [previewUrl] }
+              );
+            }}
+            designBrief={roomPrefs?.designBriefAnswers ?? null}
+            onCompleteBrief={() => goToStepKey("design-brief")}
             onContinue={() => {
               nextStep();
             }}
@@ -820,10 +865,11 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
           <Step9cShoppingList
             shoppingState={productShoppingState}
             onRetryRequirement={(requirementKey) => void handleRetryRequirement(requirementKey)}
-            onChangeConstraints={() => goToStepKey("design-preferences")}
-            onIncreaseBudget={() => goToStepKey("budget-signal")}
+            onChangeConstraints={() => goToStepKey("store-discovery")}
+            onIncreaseBudget={() => goToStepKey("design-brief")}
             onRemoveRequirement={(requirementKey) => void handleRemoveRequirement(requirementKey)}
             retryBusyKey={retryBusyKey}
+            onBack={() => goToStepKey("product-sourcing")}
             onContinue={() => {
               addAIMessage(
                 productShoppingState.foundSelections.length > 0
@@ -866,6 +912,7 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
             data={data}
             shoppingState={productShoppingState}
             onStartAnother={onComplete ?? (() => {})}
+            onBack={() => goToStepKey("product-sourcing")}
           />
         );
       default:

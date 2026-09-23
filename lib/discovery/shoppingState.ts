@@ -6,11 +6,16 @@ import type { ProductDiscoveryView, ProductSelectionView } from "./types";
  * Shopping-list / final-report inclusion:
  * - Found products = persisted READY selections. Unavailable FOUND-but-unrenderable
  *   rows are not shopping-list items.
- * - Missing requirements = unmatched `no_valid_product` / `search_interrupted`,
- *   plus unavailable selections that never became RENDER_READY.
- * - `not_searched` stays a separate limit note. `user_removed` is excluded.
+ * - Missing requirements = unmatched `no_valid_product` / `search_interrupted` /
+ *   `not_searched`, plus unavailable selections that never became RENDER_READY.
+ * - `not_searched` also keeps a separate limit note. `user_removed` is excluded.
  */
 export const SHOPPING_MISSING_REASONS = new Set<UnmatchedRequirement["reason"]>([
+  "no_valid_product",
+  "search_interrupted",
+  "not_searched",
+]);
+export const SHOPPING_RETRYABLE_REASONS = new Set<UnmatchedRequirement["reason"]>([
   "no_valid_product",
   "search_interrupted",
 ]);

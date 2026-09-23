@@ -205,6 +205,7 @@ export async function setProductConfirmed(input: {
 
     if (
       selection.isConfirmed &&
+      selection.referenceStatus !== "ready" &&
       (selection.hasReferenceImage || selection.productImageUrl || selection.productUrl)
     ) {
       try {

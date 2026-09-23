@@ -10,14 +10,18 @@ import { createPersistClient } from "@/lib/supabase/persist";
 import { PROJECT_ASSETS_BUCKET, RENDER_SIGNED_PREVIEW_TTL_SECONDS } from "./constants";
 import { RenderError, renderErrorMessage } from "./errors";
 import { generateRoomRender, prepareRenderSource } from "./generate";
-import { completeRoomBlockMessage } from "./readiness";
+import {
+  completeRoomBlockMessage,
+  designBriefBlockMessage,
+  designBriefGenerateGate,
+} from "./readiness";
 import { getProjectRoomPreferences } from "@/lib/project-preferences/queries";
 import { projectRoomPreferencesToRenderPreferences } from "@/lib/project-preferences/adapter";
 import { EMPTY_PROJECT_ROOM_PREFERENCES } from "@/lib/project-preferences/types";
 import { briefPlannerIntent, parseDesignBriefAnswers } from "@/lib/design-brief";
 import { listProjectProductReferenceAssets } from "@/lib/references/queries";
 import { overlayPromptSnapshotReferenceQuality } from "./report";
-import { listProjectRoomRenders, markCurrent } from "./queries";
+import { getLatestSucceededRender, listProjectRoomRenders, markCurrent } from "./queries";
 import { parseRoomRenderPath } from "./path";
 import type { MissingRenderReference, RoomRenderView } from "./types";
 
@@ -123,6 +127,7 @@ const READINESS_CODES = new Set([
   "no_confirmed_products",
   "reference_grounding_unavailable",
   "incomplete_room",
+  "incomplete_design_brief",
   "too_many_references",
 ]);
 
@@ -232,6 +237,13 @@ export async function generateRoomRenderAction(input: {
       stored ?? EMPTY_PROJECT_ROOM_PREFERENCES
     );
     const parsedBrief = parseDesignBriefAnswers(stored?.designBriefAnswers);
+    const latestSucceeded = await getLatestSucceededRender(supabase, project.id);
+    const briefGate = designBriefGenerateGate(parsedBrief, {
+      hasSucceededRender: Boolean(latestSucceeded),
+    });
+    if (!briefGate.allowed) {
+      throw new RenderError("incomplete_design_brief", designBriefBlockMessage());
+    }
     const plannerBrief = parsedBrief.completed ? briefPlannerIntent(parsedBrief) : null;
     const result = await generateRoomRender({
       userClient: supabase,

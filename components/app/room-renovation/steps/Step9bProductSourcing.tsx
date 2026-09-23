@@ -7,6 +7,7 @@ import type { RoomRenderPreferences } from "@/lib/render/preferences";
 import type { RoomAnalysisView } from "@/lib/analysis/types";
 import type { ShoppingPreferenceInput } from "@/lib/discovery/preferences";
 import type { FurnishingPlanOverrides } from "@/lib/discovery/furnishingPlan";
+import type { DesignBriefDocument } from "@/lib/design-brief";
 import { FinalRoomRenderPanel } from "../FinalRoomRenderPanel";
 import { wizardPanelClass } from "../wizardUi";
 
@@ -29,6 +30,12 @@ export interface Step9bProductSourcingProps {
   onSwitchWallToConceptColor?: () => void;
   onKeepExistingWalls?: () => void;
   retryBusyKey?: string | null;
+  onToggleConfirmed?: (selection: ProductSelectionView) => void;
+  confirmBusyId?: string | null;
+  onBackToProducts?: () => void;
+  onPreviewChange?: (previewUrl: string | null) => void;
+  designBrief?: DesignBriefDocument | null;
+  onCompleteBrief?: () => void;
 }
 
 export const Step9bProductSourcing: React.FC<Step9bProductSourcingProps> = ({
@@ -50,6 +57,12 @@ export const Step9bProductSourcing: React.FC<Step9bProductSourcingProps> = ({
   onSwitchWallToConceptColor,
   onKeepExistingWalls,
   retryBusyKey,
+  onToggleConfirmed,
+  confirmBusyId,
+  onBackToProducts,
+  onPreviewChange,
+  designBrief = null,
+  onCompleteBrief,
 }) => {
   return (
     <div className="flex justify-start mb-6">
@@ -75,14 +88,31 @@ export const Step9bProductSourcing: React.FC<Step9bProductSourcingProps> = ({
           onSwitchWallToConceptColor={onSwitchWallToConceptColor}
           onKeepExistingWalls={onKeepExistingWalls}
           retryBusyKey={retryBusyKey}
+          onToggleConfirmed={onToggleConfirmed}
+          confirmBusyId={confirmBusyId}
+          onPreviewChange={onPreviewChange}
+          designBrief={designBrief}
+          onCompleteBrief={onCompleteBrief}
         />
-        <button
-          type="button"
-          onClick={onContinue}
-          className="text-[14px] text-[rgba(0,230,204,0.85)] hover:text-[rgba(0,230,204,1)]"
-        >
-          Continue
-        </button>
+        <div className="flex flex-wrap gap-3">
+          {onBackToProducts ? (
+            <button
+              type="button"
+              data-testid="back-to-products"
+              onClick={onBackToProducts}
+              className="text-[14px] text-[rgba(255,255,255,0.70)] hover:text-white"
+            >
+              Back to products
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={onContinue}
+            className="text-[14px] text-[rgba(0,230,204,0.85)] hover:text-[rgba(0,230,204,1)]"
+          >
+            Continue
+          </button>
+        </div>
       </div>
     </div>
   );

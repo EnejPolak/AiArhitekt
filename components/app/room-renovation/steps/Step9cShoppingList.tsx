@@ -13,6 +13,7 @@ export interface Step9cShoppingListProps {
   onIncreaseBudget?: (requirementKey: string) => void;
   onRemoveRequirement?: (requirementKey: string) => void;
   retryBusyKey?: string | null;
+  onBack?: () => void;
 }
 
 export const Step9cShoppingList: React.FC<Step9cShoppingListProps> = ({
@@ -23,6 +24,7 @@ export const Step9cShoppingList: React.FC<Step9cShoppingListProps> = ({
   onIncreaseBudget,
   onRemoveRequirement,
   retryBusyKey,
+  onBack,
 }) => {
   return (
     <div className="flex justify-start mb-6">
@@ -38,13 +40,24 @@ export const Step9cShoppingList: React.FC<Step9cShoppingListProps> = ({
           onRemoveRequirement={onRemoveRequirement}
           retryBusyKey={retryBusyKey}
         />
-        <button
-          type="button"
-          onClick={onContinue}
-          className="text-[14px] text-[rgba(0,230,204,0.85)] hover:text-[rgba(0,230,204,1)]"
-        >
-          Continue
-        </button>
+        <div className="flex flex-wrap gap-3">
+          {onBack ? (
+            <button
+              type="button"
+              onClick={onBack}
+              className="text-[14px] text-[rgba(255,255,255,0.70)] hover:text-white"
+            >
+              Back to visualization
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={onContinue}
+            className="text-[14px] text-[rgba(0,230,204,0.85)] hover:text-[rgba(0,230,204,1)]"
+          >
+            Continue
+          </button>
+        </div>
       </div>
     </div>
   );

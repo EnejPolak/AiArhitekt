@@ -5,7 +5,16 @@ import {
   generateRoomRenderAction,
   loadRoomRenderState,
 } from "@/lib/render/actions";
-import { PRODUCT_FIDELITY_DISCLAIMER } from "@/lib/render/constants";
+import { PRODUCT_FIDELITY_DISCLAIMER, PHYSICAL_FIT_DISCLAIMER } from "@/lib/render/constants";
+import {
+  completeRoomBlockMessage,
+  designBriefBlockMessage,
+  designBriefGenerateGate,
+  evaluateCompleteRoomReadiness,
+  productApprovalBlockMessage,
+  productApprovalGate,
+} from "@/lib/render/readiness";
+import { EMPTY_DESIGN_BRIEF, type DesignBriefDocument } from "@/lib/design-brief";
 import {
   expectedRenderInventoryFromSnapshot,
   type ExpectedRenderInventoryItem,
@@ -19,7 +28,6 @@ import {
   requestedFloorFinishMode,
   requestedWallFinishMode,
 } from "@/lib/render/finishes";
-import { completeRoomBlockMessage, evaluateCompleteRoomReadiness, productApprovalBlockMessage, productApprovalGate } from "@/lib/render/readiness";
 import type { RoomAnalysisView } from "@/lib/analysis/types";
 import { normalizeFurnishingPlan, type FurnishingPlanOverrides } from "@/lib/discovery/furnishingPlan";
 import { inferFurnitureConceptFromText } from "@/lib/discovery/locales/concepts";
@@ -47,6 +55,11 @@ export interface FinalRoomRenderPanelProps {
   onSwitchWallToConceptColor?: () => void;
   onKeepExistingWalls?: () => void;
   retryBusyKey?: string | null;
+  onToggleConfirmed?: (selection: ProductSelectionView) => void;
+  confirmBusyId?: string | null;
+  onPreviewChange?: (previewUrl: string | null) => void;
+  designBrief?: DesignBriefDocument | null;
+  onCompleteBrief?: () => void;
 }
 
 export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
@@ -67,6 +80,11 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
   onSwitchWallToConceptColor,
   onKeepExistingWalls,
   retryBusyKey,
+  onToggleConfirmed,
+  confirmBusyId,
+  onPreviewChange,
+  designBrief = null,
+  onCompleteBrief,
 }) => {
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -142,6 +160,10 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
     void refresh();
   }, [refresh]);
 
+  React.useEffect(() => {
+    onPreviewChange?.(previewUrl);
+  }, [previewUrl]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const generate = async (force: boolean) => {
     if (inFlight.current) return;
     inFlight.current = true;
@@ -206,6 +228,13 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
     });
   }, [discovery, selections, unmatchedRequirements, preferences, analysis, shoppingPreferences, planOverrides]);
   const approval = React.useMemo(() => productApprovalGate(selections), [selections]);
+  const briefGate = React.useMemo(
+    () =>
+      designBriefGenerateGate(designBrief ?? EMPTY_DESIGN_BRIEF, {
+        hasSucceededRender: Boolean(hasCurrent) || Boolean(previewUrl),
+      }),
+    [designBrief, hasCurrent, previewUrl]
+  );
   const floorReady = selections.find(
     (item) => item.referenceStatus === "ready" && isFloorFinishRequirementKey(item.requirementKey)
   );
@@ -225,12 +254,14 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
     [discovery, selections]
   );
   const buttonLabel = hasCurrent && !stale ? "Regenerate design" : "Generate design";
-  const canGenerate = Boolean(completeRoom?.allowed) && approval.allowed;
-  const blockMessage = !approval.allowed
-    ? productApprovalBlockMessage(approval)
-    : completeRoom && !completeRoom.allowed
-      ? completeRoomBlockMessage(completeRoom)
-      : null;
+  const canGenerate = Boolean(completeRoom?.allowed) && approval.allowed && briefGate.allowed;
+  const blockMessage = !briefGate.allowed
+    ? designBriefBlockMessage()
+    : !approval.allowed
+      ? productApprovalBlockMessage(approval)
+      : completeRoom && !completeRoom.allowed
+        ? completeRoomBlockMessage(completeRoom)
+        : null;
 
   return (
     <div className="space-y-5">
@@ -272,6 +303,7 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
       </div>
 
       <p className="text-[13px] text-[rgba(255,255,255,0.55)]">{PRODUCT_FIDELITY_DISCLAIMER}</p>
+      <p className="text-[12px] text-[rgba(255,255,255,0.45)]">{PHYSICAL_FIT_DISCLAIMER}</p>
 
       {stale ? (
         <p className="text-[13px] text-[rgba(255,210,80,0.85)]">
@@ -287,6 +319,17 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
         <p className="text-[13px] text-[rgba(255,210,80,0.85)]" role="status">
           {blockMessage}
         </p>
+      ) : null}
+
+      {!briefGate.allowed && onCompleteBrief ? (
+        <button
+          type="button"
+          data-testid="complete-design-brief"
+          onClick={onCompleteBrief}
+          className="text-[14px] text-[rgba(0,230,204,0.85)] hover:text-[rgba(0,230,204,1)]"
+        >
+          Complete Design Brief
+        </button>
       ) : null}
 
       {error ? <p className="text-[13px] text-[rgba(255,140,140,0.9)]">{error}</p> : null}
@@ -393,6 +436,8 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
           onChangeConstraints={onChangeConstraints}
           onIncreaseBudget={onIncreaseBudget}
           onRemoveRequirement={onRemoveRequirement}
+          onToggleConfirmed={onToggleConfirmed}
+          confirmBusyId={confirmBusyId}
           retryBusyKey={retryBusyKey}
         />
       ) : null}
@@ -574,7 +619,7 @@ function ProductRow({
             rel="noreferrer"
             className="text-[12px] text-[rgba(0,230,204,0.85)]"
           >
-            Poglej izdelek
+            Open product
           </a>
         ) : null}
       </div>

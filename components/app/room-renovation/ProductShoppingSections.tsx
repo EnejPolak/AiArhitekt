@@ -1,8 +1,10 @@
 "use client";
 
 import * as React from "react";
+import type { ProductSelectionView } from "@/lib/discovery/types";
 import {
   formatVerifiedProductPrice,
+  SHOPPING_RETRYABLE_REASONS,
   type ProjectProductShoppingState,
 } from "@/lib/discovery/shoppingState";
 
@@ -13,6 +15,8 @@ export function ProductShoppingSections({
   onChangeConstraints,
   onIncreaseBudget,
   onRemoveRequirement,
+  onToggleConfirmed,
+  confirmBusyId,
   retryBusyKey,
 }: {
   state: ProjectProductShoppingState;
@@ -21,6 +25,8 @@ export function ProductShoppingSections({
   onChangeConstraints?: (requirementKey: string) => void;
   onIncreaseBudget?: (requirementKey: string) => void;
   onRemoveRequirement?: (requirementKey: string) => void;
+  onToggleConfirmed?: (selection: ProductSelectionView) => void;
+  confirmBusyId?: string | null;
   retryBusyKey?: string | null;
 }) {
   if (!state.hasDiscovery) {
@@ -77,13 +83,40 @@ export function ProductShoppingSections({
                         rel="noopener noreferrer"
                         className="text-[12px] text-[#3B82F6] hover:underline"
                       >
-                        Poglej izdelek
+                        Open product
                       </a>
                     ) : null}
                   </div>
-                  {selection.referenceStatus === "ready" ? (
+                  {onToggleConfirmed && selection.referenceStatus === "ready" ? (
+                    <form
+                      className="mt-2"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        onToggleConfirmed(selection);
+                      }}
+                    >
+                      <button
+                        type="submit"
+                        data-testid="use-in-design"
+                        aria-pressed={selection.isConfirmed}
+                        disabled={confirmBusyId === selection.id}
+                        className="text-[13px] text-[rgba(0,230,204,0.85)] hover:underline disabled:opacity-40"
+                      >
+                        {confirmBusyId === selection.id
+                          ? "Saving…"
+                          : selection.isConfirmed
+                            ? "Selected for design"
+                            : "Use in design"}
+                      </button>
+                    </form>
+                  ) : null}
+                  {selection.referenceStatus === "ready" && !selection.isConfirmed ? (
+                    <div className="text-[11px] text-[rgba(255,255,255,0.40)] mt-1">
+                      Ready reference — approve to use it in the design.
+                    </div>
+                  ) : selection.referenceStatus === "ready" && selection.isConfirmed ? (
                     <div className="text-[11px] text-[rgba(0,230,204,0.75)] mt-1">
-                      Visual reference · used in visualization
+                      Visual reference · approved for visualization
                     </div>
                   ) : selection.referenceStatus === "unavailable" ? (
                     <div className="text-[11px] text-[rgba(255,255,255,0.40)] mt-1">
@@ -116,7 +149,7 @@ export function ProductShoppingSections({
                 <div>We couldn&apos;t yet find a verified product for: {item.label}</div>
                 {onRetryRequirement || onChangeConstraints || onIncreaseBudget || onRemoveRequirement ? (
                   <div className="flex flex-wrap gap-2">
-                    {onRetryRequirement ? (
+                    {onRetryRequirement && SHOPPING_RETRYABLE_REASONS.has(item.reason) ? (
                       <button
                         type="button"
                         disabled={retryBusyKey === item.requirementKey}
