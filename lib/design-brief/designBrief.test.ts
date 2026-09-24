@@ -146,6 +146,24 @@ describe("conditional branching", () => {
     );
   });
 
+  it("excludes a TV console when the customer chooses wall-mounted minimal furniture", () => {
+    const questions = questionsForRoom("living-room");
+    let doc = cloneEmptyBrief("living-room");
+    doc = applyAnswer({
+      document: doc,
+      questions,
+      questionId: "living.tv",
+      answer: { questionId: "living.tv", mode: "value", value: "yes" },
+    });
+    doc = applyAnswer({
+      document: doc,
+      questions,
+      questionId: "living.mediaFurniture",
+      answer: { questionId: "living.mediaFurniture", mode: "value", value: "wall-mount" },
+    });
+    expect(briefPlannerIntent(doc).concepts.tv_console).toBe("exclude");
+  });
+
   it("does not treat unanswered questions as yes", () => {
     const doc = cloneEmptyBrief("living-room");
     const intent = briefPlannerIntent(doc);

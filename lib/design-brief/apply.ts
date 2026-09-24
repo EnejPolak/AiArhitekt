@@ -77,7 +77,12 @@ export function briefPlannerIntent(doc: DesignBriefDocument): BriefPlannerIntent
   if (tv) {
     if (isAiDecide(tv)) setConcept(concepts, "tv_console", "ai_decide");
     else if (isDeclined(tv) || tv.mode === "not_applicable") setConcept(concepts, "tv_console", "exclude");
-    else if (isAffirmative(tv) || tv.value === "yes") setConcept(concepts, "tv_console", "required");
+    else if (isAffirmative(tv) || tv.value === "yes") {
+      // Wall-mounted TV with minimal furniture does not require a console product.
+      const mediaFurniture = getAnswer(doc, "living.mediaFurniture")?.value;
+      if (mediaFurniture === "wall-mount") setConcept(concepts, "tv_console", "exclude");
+      else setConcept(concepts, "tv_console", "required");
+    }
   } else if (doc.roomType === "living-room" && !doc.completed) {
     setConcept(concepts, "tv_console", "needs_preference");
   } else if (doc.roomType === "living-room" && doc.completed && !tv) {
