@@ -140,10 +140,9 @@ export function selectionHasUsableExactProductImage(selection: {
   }
   const title = selection.productTitle;
   const spec = selection.itemSpec;
-  if (isUsableExactProductImageUrl(selection.productImageUrl, title, spec)) return true;
-  return (selection.imageEvidence ?? []).some(
-    (item) => item.exactProductAssociation && isUsableExactProductImageUrl(item.url, title, spec)
-  );
+  // The declared/cached product image is the visualization source of truth.
+  // Stale imageEvidence alone must not keep an invalid thumbnail READY.
+  return isUsableExactProductImageUrl(selection.productImageUrl, title, spec);
 }
 
 export function associateProductImage(input: {

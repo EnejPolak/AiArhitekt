@@ -198,7 +198,21 @@ export async function ensureProductReferenceAssets(
     };
 
     const declaredSizeByUrl = new Map<string, DeclaredImageSize>();
-    let evidence = mergeImageEvidence(selection.imageEvidence, [
+    const revalidatedExisting = (selection.imageEvidence ?? [])
+      .filter((item): item is NonNullable<typeof item> => Boolean(item?.url && item?.source))
+      .map((item) =>
+        associateProductImage({
+          url: item.url,
+          source: item.source,
+          productUrl: selection.productUrl,
+          merchantDomain: selection.retailerDomain,
+          sourcePageUrl: selection.productUrl,
+          productTitle: selection.productTitle,
+          itemSpec: selection.itemSpec,
+        })
+      )
+      .filter((item): item is ProductImageEvidence => Boolean(item));
+    let evidence = mergeImageEvidence(revalidatedExisting, [
       selection.productImageUrl
         ? associateProductImage({
             url: selection.productImageUrl,

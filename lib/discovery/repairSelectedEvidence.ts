@@ -134,7 +134,7 @@ export async function repairSelectedProductEvidence(input: {
       (asset != null &&
         !isUsableExactProductImageUrl(asset.sourceImageUrl, selection.productTitle, selection.itemSpec));
 
-    if (needsReferencePass && !report.categoryConflict) {
+    if (needsReferencePass) {
       const ensure = await ensureProductReferenceAssets({
         persistClient: input.persistClient,
         ownerUserId: input.ownerUserId,
