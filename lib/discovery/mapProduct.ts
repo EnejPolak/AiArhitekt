@@ -35,6 +35,8 @@ export type CanonicalSelectionFields = {
   retailerName: string | null;
   hasReferenceImage: boolean;
   imageEvidence?: ProductImageEvidence[];
+  /** Optional requirement/item identity used for exact-product image checks. */
+  itemSpec?: string | null;
 };
 
 export function mapCanonicalPickedToSelection(
@@ -62,6 +64,7 @@ export function mapCanonicalPickedToSelection(
             productUrl: parsed.data.url,
             merchantDomain: domain,
             sourcePageUrl: parsed.data.url,
+            productTitle: title,
           })
         : null,
     ]
@@ -122,6 +125,7 @@ export function mapTopCandidateToSelection(
             productUrl: candidate.url,
             merchantDomain: domain,
             sourcePageUrl: candidate.url,
+            productTitle: title,
           })
         : null,
     ]

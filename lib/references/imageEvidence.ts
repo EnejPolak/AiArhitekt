@@ -1,5 +1,4 @@
-import { normalizeDomainToRoot } from "@/lib/serp/domains";
-import { isCandidateProductImageUrl } from "./extractProductImages";
+import { isCandidateProductImageUrl } from "./imageUrlGuards";
 import type { ExtractedProductImage } from "./extractProductImages";
 
 export const PRODUCT_IMAGE_EVIDENCE_SOURCES = [
@@ -29,10 +28,23 @@ export type ProductReferenceFailureCode =
   | "merchant_blocked"
   | "invalid_image"
   | "association_unverified"
-  | "fetch_failed";
+  | "fetch_failed"
+  | "wrong_product";
 
 const BANNER_OR_CATEGORY =
-  /(?:^|[\/_-])(?:logo|favicon|sprite|placeholder|tracking|pixel|spacer|blank|icon|banner|hero|category|categories|promo|advert|flyout)(?:[-_/]|\b)/i;
+  /(?:^|[\/_-])(?:logo|favicon|sprite|placeholder|tracking|pixel|spacer|blank|icon|banner|hero|category|categories|promo|advert|flyout)(?:[-_/]|\b)|\/menu\//i;
+
+const DOCUMENT_OR_INSTRUCTION =
+  /(?:^|[\/_-])(?:legal[-_]?guarantee|instruction(?:s|[-_]?sheet)?|datasheet|packing(?:[-_]?list)?|user[-_]?manual|manual|notice)(?:[-_/]|\.|$)/i;
+
+const FURNITURE_CLASSES: Array<{ id: string; product: RegExp; url: RegExp }> = [
+  { id: "seating", product: /\b(sofa|couch|sectional|garnitur|sede[zž])/i, url: /(?:sofa|couch|sectional|garnitur|corner_sofas|sedezn)/i },
+  { id: "bed", product: /\b(bed|mattress|postelj)/i, url: /(?:(?:^|[\/_-])bed(?:[\/_-]|\.|$)|mattress|postelj)/i },
+  { id: "light", product: /\b(light|lamp|svetil|pendant)/i, url: /(?:light|lamp|svetil|pendant)/i },
+  { id: "curtain", product: /\b(curtain|zavesa|blackout|drape)/i, url: /(?:curtain|zavesa|blackout|drape)/i },
+  { id: "table", product: /\b(table|miza)/i, url: /(?:coffee[-_]?table|dining[-_]?table|klubsk|miza)/i },
+  { id: "rug", product: /\b(rug|carpet|preprog)/i, url: /(?:rug|carpet|preprog)/i },
+];
 
 export function parseProductImageEvidence(value: unknown): ProductImageEvidence[] {
   if (!Array.isArray(value)) return [];
@@ -77,27 +89,61 @@ export function enrichmentSourceToEvidenceSource(
   return null;
 }
 
-function sameMerchant(imageUrl: string, productUrl: string, merchantDomain: string | null): boolean {
-  try {
-    const imageHost = normalizeDomainToRoot(new URL(imageUrl).hostname);
-    const pageHost = normalizeDomainToRoot(new URL(productUrl).hostname);
-    const merchant = merchantDomain ? normalizeDomainToRoot(merchantDomain) : "";
-    if (!imageHost) return false;
-    if (pageHost && imageHost === pageHost) return true;
-    if (merchant && imageHost === merchant) return true;
-    return false;
-  } catch {
-    return false;
-  }
-}
-
 export function isRejectedGenericImageUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
-    return BANNER_OR_CATEGORY.test(parsed.pathname) || BANNER_OR_CATEGORY.test(parsed.search);
+    const haystack = `${parsed.pathname}${parsed.search}`;
+    return BANNER_OR_CATEGORY.test(haystack) || DOCUMENT_OR_INSTRUCTION.test(haystack);
   } catch {
     return true;
   }
+}
+
+export function imageConflictsProductIdentity(
+  url: string,
+  productTitle?: string | null,
+  itemSpec?: string | null
+): boolean {
+  const identity = `${productTitle ?? ""} ${itemSpec ?? ""}`.trim();
+  if (!identity) return false;
+  let path = url;
+  try {
+    path = `${new URL(url).pathname} ${new URL(url).search}`;
+  } catch {
+    /* use raw */
+  }
+  const productClass = FURNITURE_CLASSES.find((entry) => entry.product.test(identity));
+  if (!productClass) return false;
+  return FURNITURE_CLASSES.some(
+    (entry) => entry.id !== productClass.id && entry.url.test(path)
+  );
+}
+
+export function isUsableExactProductImageUrl(
+  url: string | null | undefined,
+  productTitle?: string | null,
+  itemSpec?: string | null
+): url is string {
+  if (!url || !isCandidateProductImageUrl(url) || isRejectedGenericImageUrl(url)) return false;
+  return !imageConflictsProductIdentity(url, productTitle, itemSpec);
+}
+
+export function selectionHasUsableExactProductImage(selection: {
+  productTitle: string;
+  itemSpec?: string | null;
+  productImageUrl?: string | null;
+  imageEvidence?: ProductImageEvidence[] | null;
+  referenceStatus?: string | null;
+}): boolean {
+  if (selection.referenceStatus === "unavailable" || selection.referenceStatus === "pending") {
+    return false;
+  }
+  const title = selection.productTitle;
+  const spec = selection.itemSpec;
+  if (isUsableExactProductImageUrl(selection.productImageUrl, title, spec)) return true;
+  return (selection.imageEvidence ?? []).some(
+    (item) => item.exactProductAssociation && isUsableExactProductImageUrl(item.url, title, spec)
+  );
 }
 
 export function associateProductImage(input: {
@@ -106,23 +152,25 @@ export function associateProductImage(input: {
   productUrl: string;
   merchantDomain: string | null;
   sourcePageUrl?: string | null;
+  productTitle?: string | null;
+  itemSpec?: string | null;
 }): ProductImageEvidence | null {
   if (!isCandidateProductImageUrl(input.url)) return null;
   if (isRejectedGenericImageUrl(input.url)) return null;
+  if (imageConflictsProductIdentity(input.url, input.productTitle, input.itemSpec)) return null;
 
   const pageUrl = input.sourcePageUrl ?? input.productUrl;
   const fromCanonicalPage = Boolean(pageUrl) && pageUrl === input.productUrl;
-  const merchantMatch = sameMerchant(input.url, input.productUrl, input.merchantDomain);
   const pageSourced =
     input.source === "json_ld_product" ||
     input.source === "open_graph" ||
     input.source === "twitter_card" ||
-    input.source === "merchant_gallery";
+    input.source === "merchant_gallery" ||
+    input.source === "existing_product_image_url";
 
-  const exactProductAssociation = pageSourced
-    ? fromCanonicalPage || merchantMatch
-    : merchantMatch;
-
+  // Same-merchant is not enough. The image must come from this product page,
+  // then still pass chrome / identity checks above.
+  const exactProductAssociation = pageSourced && fromCanonicalPage;
   if (!exactProductAssociation) return null;
 
   const confidence: ProductImageEvidence["confidence"] =

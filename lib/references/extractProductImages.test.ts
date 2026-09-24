@@ -124,4 +124,53 @@ describe("extractProductImageCandidates", () => {
     expect(candidates.some((item) => item.url.includes("related-product"))).toBe(false);
     expect(candidates.length).toBeGreaterThanOrEqual(1);
   });
+
+  it("skips navigation /menu/ thumbnails so later exact gallery images stay in the extract cap", () => {
+    const navIcons = Array.from(
+      { length: 30 },
+      (_, index) => `<img src="https://shop.example/i/menu/cat-${index}.jpg" width="64" height="64" />`
+    ).join("");
+    const html = `
+      <html>
+        <head>
+          <script type="application/ld+json">
+            {"@type":"Product","name":"Sofa","image":"https://shop.example/upload/catalog/sofa-main.jpg"}
+          </script>
+        </head>
+        <body>
+          ${navIcons}
+          <a data-fancybox="single-product" href="https://shop.example/upload/catalog/sofa-side.jpg">
+            <img src="https://shop.example/upload/catalog/sofa-side.jpg" />
+          </a>
+        </body>
+      </html>
+    `;
+    const candidates = extractProductImageCandidates(html, "https://shop.example/p/sofa");
+    expect(candidates.some((item) => item.url.includes("/i/menu/"))).toBe(false);
+    expect(candidates.map((item) => item.url)).toEqual([
+      "https://shop.example/upload/catalog/sofa-main.jpg",
+      "https://shop.example/upload/catalog/sofa-side.jpg",
+    ]);
+  });
+
+  it("reads gallery zoom attributes, preload image links, and image hrefs", () => {
+    const html = `
+      <html>
+        <head>
+          <link rel="preload" as="image" href="https://cdn.example/product-preload.jpg" />
+        </head>
+        <body>
+          <img data-zoom-image="https://cdn.example/product-zoom.jpg" src="https://cdn.example/product-thumb.jpg" />
+          <a href="https://cdn.example/product-gallery.jpg">photo</a>
+          <a href="https://shop.example/p/other-product">not an image</a>
+        </body>
+      </html>
+    `;
+    const candidates = extractProductImageCandidates(html, "https://shop.example/p/lamp");
+    expect(candidates.map((item) => item.url)).toEqual([
+      "https://cdn.example/product-zoom.jpg",
+      "https://cdn.example/product-gallery.jpg",
+      "https://cdn.example/product-preload.jpg",
+    ]);
+  });
 });

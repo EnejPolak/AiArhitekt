@@ -86,10 +86,13 @@ function identityRank(source: ProductImageEvidenceSource): number {
   return isPageSourcedEvidenceSource(source) ? 1 : 0;
 }
 
-/** Unknown declared size is treated as HIGH so undeclared CDN originals outrank explicit thumbnails. */
+/**
+ * Unknown declared size is treated as MEDIUM so undeclared CDN originals still
+ * outrank explicit thumbnails (< 400px) without starving larger declared images.
+ */
 export function rankingEdge(declared: DeclaredImageSize): number {
   const edge = longestEdge(declared.width, declared.height);
-  return edge > 0 ? edge : REFERENCE_QUALITY_HIGH_EDGE;
+  return edge > 0 ? edge : REFERENCE_QUALITY_MEDIUM_EDGE;
 }
 
 export function candidateCouldBeatCurrent(

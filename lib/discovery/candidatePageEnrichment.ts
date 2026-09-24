@@ -23,6 +23,9 @@ import {
 } from "@/lib/references/referenceQuality";
 import { ReferenceError } from "@/lib/references/errors";
 import type { AddressLookup } from "@/lib/references/ssrf";
+import { acquireMerchantEvidenceFromHtml } from "@/lib/productDiscovery/merchantEvidence";
+import { parseProductPageEnrichment } from "@/lib/serp/productPageEnrichment";
+import { isSameDirectProductPage } from "@/lib/references/imageUrlGuards";
 
 export type CandidatePageEnrichmentResult = {
   attempted: boolean;
@@ -89,6 +92,16 @@ export async function enrichRankedCandidateFromProductPage(
     };
   }
 
+  if (!isSameDirectProductPage(pageUrl, page.finalUrl)) {
+    return {
+      attempted: true,
+      htmlAvailable: false,
+      extractedCount: 0,
+      associatedCount: 0,
+      failureCode: "wrong_product",
+    };
+  }
+
   const extracted = extractProductImageCandidates(page.html, page.finalUrl || pageUrl);
   const associated: ProductImageEvidence[] = [];
   for (const item of extracted) {
@@ -98,6 +111,8 @@ export async function enrichRankedCandidateFromProductPage(
       productUrl: pageUrl,
       merchantDomain: product.retailerDomain,
       sourcePageUrl: pageUrl,
+      productTitle: product.productTitle,
+      itemSpec: product.itemSpec,
     });
     if (evidence) associated.push(evidence);
   }
@@ -109,6 +124,33 @@ export async function enrichRankedCandidateFromProductPage(
   const jsonLdName = parseJsonLdProductName(page.html);
   if (jsonLdName && (!product.productTitle || product.productTitle.length < 3)) {
     product.productTitle = jsonLdName;
+  }
+  if (product.price == null) {
+    const merchant = acquireMerchantEvidenceFromHtml(page.html, page.finalUrl || pageUrl);
+    const verified = merchant.verifiedPrice;
+    if (verified && Number.isFinite(verified.amount) && verified.amount > 0) {
+      const currency = verified.currency?.toUpperCase() ?? null;
+      if (currency && currency !== "EUR") {
+        /* keep price null — non-EUR is not a verified shopping-list amount */
+      } else {
+        product.price = verified.amount;
+        product.currency = "EUR";
+      }
+    }
+  }
+  // Multi-candidate path must recover ordinary European JSON-LD / itemprop / meta
+  // purchase prices even when the stricter merchantEvidence currency gate abstains.
+  if (product.price == null) {
+    const pagePrice = parseProductPageEnrichment(page.html, page.finalUrl || pageUrl);
+    if (
+      pagePrice.price != null &&
+      Number.isFinite(pagePrice.price) &&
+      pagePrice.price > 0 &&
+      (pagePrice.currency == null || pagePrice.currency === "EUR")
+    ) {
+      product.price = pagePrice.price;
+      product.currency = "EUR";
+    }
   }
 
   if (extracted.length > 0 && associated.length === 0) {
@@ -154,6 +196,8 @@ export async function downloadCandidateReferenceImage(
         productUrl: product.productUrl,
         merchantDomain: product.retailerDomain,
         sourcePageUrl: product.productUrl,
+        productTitle: product.productTitle,
+        itemSpec: product.itemSpec,
       })
     : null;
   const evidence = mergeImageEvidence(product.imageEvidence, [existing]);

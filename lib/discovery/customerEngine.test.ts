@@ -7,6 +7,7 @@ import { loadReusableRoomAnalysis } from "@/lib/analysis/analyze";
 import { claimProductDiscoverySlot } from "./claim";
 import { persistProductDiscoveryResult, getProjectProductDiscovery, getProjectProductSelections, appendProductDiscoverySelections } from "./queries";
 import { shoppingPreferenceHash } from "./preferenceHash";
+import { USABLE_PRODUCT_PNG } from "@/lib/references/imageFixtures";
 
 vi.mock("@/lib/serp/search", () => ({
   runCanonicalSerpSearch: vi.fn(async () => {
@@ -33,6 +34,33 @@ vi.mock("./queries", () => ({
   persistProductDiscoveryResult: vi.fn(),
   appendProductDiscoverySelections: vi.fn(),
 }));
+
+async function mockMerchantFetch(input: RequestInfo | URL): Promise<Response> {
+  const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+  if (url.includes("cdn.localhome.si") || /\.(?:jpe?g|png|webp)(?:$|[?#])/i.test(url)) {
+    return new Response(USABLE_PRODUCT_PNG, {
+      status: 200,
+      headers: { "content-type": "image/png" },
+    });
+  }
+  const id = url.match(/\/p\/([^/?#]+)/)?.[1] ?? "item";
+  const image = `https://cdn.localhome.si/${id}.jpg`;
+  return new Response(
+    `<html><script type="application/ld+json">{"@type":"Product","name":"${id}","image":"${image}","offers":{"@type":"Offer","price":"199","priceCurrency":"EUR"}}</script></html>`,
+    { status: 200, headers: { "content-type": "text/html" } }
+  );
+}
+
+function withMerchantPageFetch<T extends Record<string, unknown>>(options: T): T & {
+  fetch: typeof mockMerchantFetch;
+  lookup: () => Promise<{ address: string; family: 4 }>;
+} {
+  return {
+    ...options,
+    fetch: mockMerchantFetch,
+    lookup: async () => ({ address: "93.184.216.34", family: 4 as const }),
+  };
+}
 
 const runOpenAIProductDiscoveryMock = vi.mocked(runOpenAIProductDiscovery);
 const runCanonicalSerpSearchMock = vi.mocked(runCanonicalSerpSearch);
@@ -205,7 +233,7 @@ describe("customer discovery engine", () => {
       {} as never,
       projectId,
       "Ljubljana",
-      {
+      withMerchantPageFetch({
         ownerUserId: randomUUID(),
         persistClient: {} as never,
         geocodeAddress: async () => ({
@@ -242,7 +270,7 @@ describe("customer discovery engine", () => {
             meta: { radiusMeters: 50000, requestsMade: 0, cacheHits: 0, fallbacksUsed: 0 },
             places: [],
           }) as never,
-      }
+      })
     );
 
     expect(runOpenAIProductDiscoveryMock).toHaveBeenCalledTimes(2);
@@ -294,7 +322,7 @@ describe("customer discovery engine", () => {
       },
     }));
 
-    await discoverProjectProducts({} as never, projectId, "", {
+    await discoverProjectProducts({} as never, projectId, "", withMerchantPageFetch({
       ownerUserId: randomUUID(),
       persistClient: {} as never,
       preferences: { notes: liveNotes, flooring: "keep" },
@@ -334,7 +362,7 @@ describe("customer discovery engine", () => {
           meta: { radiusMeters: 25000, requestsMade: 0, cacheHits: 0, fallbacksUsed: 0 },
           places: [],
         }) as never,
-    });
+    }));
 
     expect(runOpenAIProductDiscoveryMock).toHaveBeenCalledTimes(4);
     const stepC = runOpenAIProductDiscoveryMock.mock.calls[0]?.[0];
@@ -372,7 +400,7 @@ describe("customer discovery engine", () => {
       },
     });
 
-    const result = await discoverProjectProducts({} as never, projectId, "Ljubljana", {
+    const result = await discoverProjectProducts({} as never, projectId, "Ljubljana", withMerchantPageFetch({
       ownerUserId: randomUUID(),
       persistClient: {} as never,
       geocodeAddress: async () => ({
@@ -409,7 +437,7 @@ describe("customer discovery engine", () => {
           meta: { radiusMeters: 50000, requestsMade: 0, cacheHits: 0, fallbacksUsed: 0 },
           places: [],
         }) as never,
-    });
+    }));
 
     expect(result.selections).toHaveLength(0);
     expect(result.discovery.unmatchedRequirements.length).toBeGreaterThan(0);
@@ -464,7 +492,7 @@ describe("customer discovery engine", () => {
       } as never;
     });
 
-    await discoverProjectProducts({} as never, projectId, "ignored", {
+    await discoverProjectProducts({} as never, projectId, "ignored", withMerchantPageFetch({
       ownerUserId: randomUUID(),
       persistClient: {} as never,
       projectLocation: {
@@ -477,7 +505,7 @@ describe("customer discovery engine", () => {
       },
       geocodeAddress,
       searchPlaces,
-    });
+    }));
 
     expect(geocodeAddress).not.toHaveBeenCalled();
     expect(searchPlaces).toHaveBeenCalledTimes(1);
@@ -538,13 +566,13 @@ describe("customer discovery engine", () => {
       places: [],
     }) as never);
 
-    await discoverProjectProducts({} as never, projectId, "Celje", {
+    await discoverProjectProducts({} as never, projectId, "Celje", withMerchantPageFetch({
       ownerUserId: randomUUID(),
       persistClient: {} as never,
       geocodeAddress,
       persistResolvedLocation,
       searchPlaces,
-    });
+    }));
 
     expect(geocodeAddress).toHaveBeenCalledTimes(1);
     expect(persistResolvedLocation).toHaveBeenCalledWith(
@@ -610,7 +638,7 @@ describe("customer discovery engine", () => {
       } as never;
     });
 
-    await discoverProjectProducts({} as never, projectId, "", {
+    await discoverProjectProducts({} as never, projectId, "", withMerchantPageFetch({
       ownerUserId: randomUUID(),
       persistClient: {} as never,
       projectLocation: {
@@ -623,7 +651,7 @@ describe("customer discovery engine", () => {
       },
       geocodeAddress,
       searchPlaces,
-    });
+    }));
 
     expect(geocodeAddress).toHaveBeenCalledTimes(1);
     expect(searchPlaces).toHaveBeenCalledTimes(1);
@@ -633,12 +661,12 @@ describe("customer discovery engine", () => {
     const geocodeAddress = vi.fn();
     const searchPlaces = vi.fn();
     await expect(
-      discoverProjectProducts({} as never, projectId, "  ", {
+      discoverProjectProducts({} as never, projectId, "  ", withMerchantPageFetch({
         ownerUserId: randomUUID(),
         persistClient: {} as never,
         geocodeAddress,
         searchPlaces,
-      })
+      }))
     ).rejects.toMatchObject({ code: "location_required" });
     expect(geocodeAddress).not.toHaveBeenCalled();
     expect(searchPlaces).not.toHaveBeenCalled();
@@ -654,12 +682,12 @@ describe("customer discovery engine", () => {
     }));
     const searchPlaces = vi.fn();
     await expect(
-      discoverProjectProducts({} as never, projectId, "Nowhere", {
+      discoverProjectProducts({} as never, projectId, "Nowhere", withMerchantPageFetch({
         ownerUserId: randomUUID(),
         persistClient: {} as never,
         geocodeAddress,
         searchPlaces,
-      })
+      }))
     ).rejects.toMatchObject({ code: "location_invalid" });
     expect(geocodeAddress).toHaveBeenCalledTimes(1);
     expect(searchPlaces).not.toHaveBeenCalled();
@@ -773,7 +801,7 @@ describe("customer discovery engine", () => {
       places: [],
     }) as never);
 
-    const reused = await discoverProjectProducts({} as never, projectId, "Celje", {
+    const reused = await discoverProjectProducts({} as never, projectId, "Celje", withMerchantPageFetch({
       ownerUserId: randomUUID(),
       persistClient: {} as never,
       projectLocation: {
@@ -786,7 +814,7 @@ describe("customer discovery engine", () => {
       },
       geocodeAddress,
       searchPlaces,
-    });
+    }));
     expect(reused.reused).toBe(true);
     expect(searchPlaces).not.toHaveBeenCalled();
 
@@ -814,7 +842,7 @@ describe("customer discovery engine", () => {
       },
     ] as never);
 
-    const radiusChanged = await discoverProjectProducts({} as never, projectId, "Celje", {
+    const radiusChanged = await discoverProjectProducts({} as never, projectId, "Celje", withMerchantPageFetch({
       ownerUserId: randomUUID(),
       persistClient: {} as never,
       projectLocation: {
@@ -827,13 +855,13 @@ describe("customer discovery engine", () => {
       },
       geocodeAddress,
       searchPlaces,
-    });
+    }));
     expect(radiusChanged.reused).toBe(false);
     expect(searchPlaces).toHaveBeenCalledTimes(1);
     expect(geocodeAddress).not.toHaveBeenCalled();
 
     searchPlaces.mockClear();
-    const locationChanged = await discoverProjectProducts({} as never, projectId, "Ljubljana", {
+    const locationChanged = await discoverProjectProducts({} as never, projectId, "Ljubljana", withMerchantPageFetch({
       ownerUserId: randomUUID(),
       persistClient: {} as never,
       projectLocation: {
@@ -846,7 +874,7 @@ describe("customer discovery engine", () => {
       },
       geocodeAddress,
       searchPlaces,
-    });
+    }));
     expect(locationChanged.reused).toBe(false);
     expect(searchPlaces).toHaveBeenCalledTimes(1);
     expect(geocodeAddress).not.toHaveBeenCalled();
@@ -1001,7 +1029,7 @@ describe("customer discovery engine", () => {
       },
     }));
 
-    const result = await discoverProjectProducts({} as never, projectId, "Celje", {
+    const result = await discoverProjectProducts({} as never, projectId, "Celje", withMerchantPageFetch({
       ownerUserId: randomUUID(),
       persistClient: {} as never,
       projectLocation: {
@@ -1040,7 +1068,7 @@ describe("customer discovery engine", () => {
           meta: { radiusMeters: 10000, requestsMade: 0, cacheHits: 0, fallbacksUsed: 0 },
           places: [],
         }) as never,
-    });
+    }));
 
     expect(result.reused).toBe(false);
     expect(persistMock).not.toHaveBeenCalled();

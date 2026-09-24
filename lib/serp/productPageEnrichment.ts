@@ -1,5 +1,11 @@
 import { TTLCache } from "@/lib/cache";
 import { assertPublicHttpUrl, type AddressLookup } from "@/lib/references/ssrf";
+import {
+  extractHtmlProductPrices,
+  extractLabeledHtmlPrices,
+  parsePriceNumber,
+  selectVerifiedPurchasePrice,
+} from "@/lib/productDiscovery/merchantPurchasePrice";
 import { normalizeDomainToRoot } from "./domains";
 import { parsePriceFromAny, type PriceValue } from "./enrich";
 
@@ -31,17 +37,6 @@ const enrichmentCache = new TTLCache<ProductPageEnrichment>(ENRICHMENT_CACHE_TTL
 const REJECT_IMAGE_URL =
   /(?:^|\/)logo|favicon|sprite|placeholder|tracking|pixel|spacer|blank\.(?:gif|png)/i;
 const REJECT_IMAGE_EXT = /\.(?:svg|ico)(?:$|[?#])/i;
-
-function parsePriceNumber(raw: string): number | null {
-  const normalized = raw.trim().replace(/\s+/g, "");
-  const match = normalized.match(/^(\d{1,6})(?:[.,](\d{1,2}))?$/);
-  if (!match) return null;
-  const whole = match[1];
-  const fraction = match[2] ?? "00";
-  const num = Number.parseFloat(`${whole}.${fraction}`);
-  if (!Number.isFinite(num) || num <= 0 || num >= 100_000) return null;
-  return num;
-}
 
 function parseJsonLdBlocks(html: string): unknown[] {
   const blocks: unknown[] = [];
@@ -85,14 +80,15 @@ function isProductType(typeValue: unknown): boolean {
 function readJsonLdOfferPrice(offer: unknown): number | null {
   if (!offer || typeof offer !== "object") return null;
   const record = offer as Record<string, unknown>;
-  const candidates = [record.price, record.lowPrice, record.highPrice];
-  for (const candidate of candidates) {
-    if (typeof candidate === "number" && candidate > 0) return candidate;
-    if (typeof candidate === "string") {
-      const parsed = parsePriceNumber(candidate.replace(/[^\d.,]/g, ""));
-      if (parsed != null) return parsed;
-    }
-  }
+  const type = record["@type"];
+  const isAggregate =
+    typeof type === "string"
+      ? /aggregateoffer/i.test(type)
+      : Array.isArray(type) && type.some((item) => typeof item === "string" && /aggregateoffer/i.test(item));
+  if (isAggregate) return null;
+  const candidate = record.price;
+  if (typeof candidate === "number") return parsePriceNumber(candidate);
+  if (typeof candidate === "string") return parsePriceNumber(candidate);
   return null;
 }
 
@@ -156,7 +152,7 @@ function parseItempropPrice(html: string): number | null {
 function parseMetaProductPrice(html: string): number | null {
   const content = parseMetaContent(html, "product:price:amount");
   if (!content) return null;
-  return parsePriceNumber(content.replace(/[^\d.,]/g, ""));
+  return parsePriceNumber(content);
 }
 
 function parseDataPrice(html: string): number | null {
@@ -214,55 +210,53 @@ export function parseProductPageEnrichment(html: string, baseUrl: string): Produ
         ? "twitter"
         : null;
 
-  if (jsonLd.price != null || jsonLd.image) {
-    return {
-      price: jsonLd.price,
-      currency: jsonLd.price != null ? "EUR" : null,
-      image: resolvedImage,
-      priceSource: jsonLd.price != null ? "jsonld" : null,
-      imageSource: resolvedImageSource,
-    };
+  let price = jsonLd.price;
+  let priceSource: EnrichmentPriceSource = jsonLd.price != null ? "jsonld" : null;
+
+  if (price == null) {
+    const metaPrice = parseMetaProductPrice(html);
+    if (metaPrice != null) {
+      price = metaPrice;
+      priceSource = "meta";
+    }
+  }
+  if (price == null) {
+    const itempropPrice = parseItempropPrice(html);
+    if (itempropPrice != null) {
+      price = itempropPrice;
+      priceSource = "itemprop";
+    }
+  }
+  if (price == null) {
+    const dataPrice = parseDataPrice(html);
+    if (dataPrice != null) {
+      price = dataPrice;
+      priceSource = "html";
+    }
+  }
+  if (price == null) {
+    const selected = selectVerifiedPurchasePrice(
+      [...extractLabeledHtmlPrices(html), ...extractHtmlProductPrices(html)],
+      { requireCurrency: false }
+    );
+    if (selected.verified && selected.verified.kind !== "installment") {
+      price = selected.verified.amount;
+      priceSource = "html";
+    }
+  }
+  if (price == null) {
+    const visible = parseVisibleEurPrice(html);
+    if (visible?.value != null) {
+      price = visible.value;
+      priceSource = "html";
+    }
   }
 
-  const metaPrice = parseMetaProductPrice(html);
-  if (metaPrice != null) {
-    return {
-      price: metaPrice,
-      currency: "EUR",
-      image: resolvedImage,
-      priceSource: "meta",
-      imageSource: resolvedImageSource,
-    };
-  }
-
-  const itempropPrice = parseItempropPrice(html);
-  if (itempropPrice != null) {
-    return {
-      price: itempropPrice,
-      currency: "EUR",
-      image: resolvedImage,
-      priceSource: "itemprop",
-      imageSource: resolvedImageSource,
-    };
-  }
-
-  const dataPrice = parseDataPrice(html);
-  if (dataPrice != null) {
-    return {
-      price: dataPrice,
-      currency: "EUR",
-      image: resolvedImage,
-      priceSource: "html",
-      imageSource: resolvedImageSource,
-    };
-  }
-
-  const visible = parseVisibleEurPrice(html);
   return {
-    price: visible?.value ?? null,
-    currency: visible ? "EUR" : null,
+    price,
+    currency: price != null ? "EUR" : null,
     image: resolvedImage,
-    priceSource: visible ? "html" : null,
+    priceSource,
     imageSource: resolvedImageSource,
   };
 }

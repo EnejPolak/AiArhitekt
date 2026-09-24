@@ -48,6 +48,25 @@ describe("reference quality ranking", () => {
     expect(ranked[0]?.url).toContain("1200x1200");
   });
 
+  it("ranks a declared 415px page image above an undeclared thumbnail URL", () => {
+    const ranked = rankExactProductEvidence(
+      [
+        evidence("https://cdn.shop.example/pr00Q/image.jpeg", "merchant_gallery"),
+        evidence("https://cdn.shop.example/prZZB/image.jpeg", "merchant_gallery"),
+      ],
+      new Map([["https://cdn.shop.example/prZZB/image.jpeg", { width: 415, height: 415 }]])
+    );
+    expect(ranked[0]?.url).toContain("prZZB");
+  });
+
+  it("still ranks an undeclared original above an explicit 265px thumbnail", () => {
+    const ranked = rankExactProductEvidence([
+      evidence("https://cdn.shop.example/cache/265x265/sofa.jpg", "json_ld_product", "high"),
+      evidence("https://cdn.shop.example/upload/catalog/sofa.jpg", "merchant_gallery"),
+    ]);
+    expect(ranked[0]?.url).toContain("/upload/catalog/sofa.jpg");
+  });
+
   it("never prefers a larger search-evidence image over a weaker exact page association", () => {
     const ranked = rankExactProductEvidence([
       evidence("https://cdn.shop.example/cache/265x265/sofa.jpg", "json_ld_product", "high"),

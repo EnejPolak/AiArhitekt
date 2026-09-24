@@ -8,6 +8,7 @@ import type { FetchLike } from "./fetchImage";
 import { ReferenceError, referenceErrorMessage } from "./errors";
 import { parseDeclaredSizeFromUrl, type DeclaredImageSize } from "./referenceQuality";
 import { assertPublicHttpUrl, type AddressLookup } from "./ssrf";
+import { isCandidateProductImageUrl } from "./imageUrlGuards";
 
 export type ProductImageSource = "jsonld" | "schema" | "og" | "twitter" | "gallery";
 
@@ -19,12 +20,15 @@ export type ExtractedProductImage = {
 };
 
 const REJECT_IMAGE_URL =
-  /(?:^|\/)(?:logo|favicon|sprite|placeholder|tracking|pixel|spacer|blank|icon)(?:[-_/]|\b)|\.(?:svg|ico)(?:$|[?#])/i;
+  /(?:^|\/)(?:logo|favicon|sprite|placeholder|tracking|pixel|spacer|blank|icon)(?:[-_/]|\b)|\/menu\/|(?:legal[-_]?guarantee|instruction(?:s|[-_]?sheet)?|datasheet|packing(?:[-_]?list)?|user[-_]?manual)|(?:^|\/)notice|\.(?:svg|ico)(?:$|[?#])/i;
 const REJECT_IMAGE_EXT = /\.(?:svg|ico|gif)(?:$|[?#])/i;
+const CANDIDATE_IMAGE_PATH = /\.(?:jpe?g|png|webp)(?:$|[?#])/i;
 /** Unresolved HTML/JS template leftovers, not fetchable image resources. */
 const REJECT_UNRESOLVED_TEMPLATE = /[(){}]|\$\{|\{\{|<%/;
 const REJECT_GALLERY_CHROME =
   /(?:\b|_)(?:related[-_]?product|recommend(?:ed|ation)?|upsell|cross[-_]?sell|breadcrumb|minicart|newsletter|nav(?:igation)?)(?:\b|_)/i;
+
+export { isCandidateProductImageUrl };
 
 function resolveAbsoluteHttpUrl(raw: string | null | undefined, baseUrl: string): string | null {
   if (!raw?.trim()) return null;
@@ -37,25 +41,6 @@ function resolveAbsoluteHttpUrl(raw: string | null | undefined, baseUrl: string)
     return resolved.toString();
   } catch {
     return null;
-  }
-}
-
-export function isCandidateProductImageUrl(url: string | null | undefined): url is string {
-  if (!url) return false;
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
-    if (REJECT_IMAGE_URL.test(parsed.pathname) || REJECT_IMAGE_EXT.test(parsed.pathname)) return false;
-    if (REJECT_IMAGE_URL.test(parsed.search)) return false;
-    if (
-      REJECT_UNRESOLVED_TEMPLATE.test(parsed.pathname) ||
-      REJECT_UNRESOLVED_TEMPLATE.test(parsed.search)
-    ) {
-      return false;
-    }
-    return true;
-  } catch {
-    return false;
   }
 }
 
@@ -208,7 +193,16 @@ function parseGalleryImages(html: string): TaggedImage[] {
       continue;
     }
     const size = tagPixelSize(tag);
-    const src = htmlAttr(tag, ["data-src", "data-original", "data-lazy-src", "src"]);
+    const src = htmlAttr(tag, [
+      "data-zoom-image",
+      "data-large",
+      "data-full",
+      "data-image",
+      "data-src",
+      "data-original",
+      "data-lazy-src",
+      "src",
+    ]);
     if (src) values.push({ raw: src, width: size.width, height: size.height });
     const srcset = htmlAttr(tag, ["srcset"]);
     if (srcset) {
@@ -221,6 +215,33 @@ function parseGalleryImages(html: string): TaggedImage[] {
         });
       }
     }
+  }
+  return values;
+}
+
+function parseGalleryAnchorImages(html: string): TaggedImage[] {
+  const values: TaggedImage[] = [];
+  const tags = html.match(/<a\b[^>]*>/gi) ?? [];
+  for (const tag of tags) {
+    if (REJECT_GALLERY_CHROME.test(tag)) continue;
+    const href = htmlAttr(tag, ["href"]);
+    if (!href || !CANDIDATE_IMAGE_PATH.test(href)) continue;
+    values.push({ raw: href, width: null, height: null });
+  }
+  return values;
+}
+
+function parsePreloadImages(html: string): TaggedImage[] {
+  const values: TaggedImage[] = [];
+  const tags = html.match(/<link\b[^>]*>/gi) ?? [];
+  for (const tag of tags) {
+    const rel = htmlAttr(tag, ["rel"]);
+    const as = htmlAttr(tag, ["as"]);
+    if (!rel || !as) continue;
+    if (!/\bpreload\b/i.test(rel) || !/\bimage\b/i.test(as)) continue;
+    const href = htmlAttr(tag, ["href"]);
+    if (!href) continue;
+    values.push({ raw: href, width: null, height: null });
   }
   return values;
 }
@@ -303,6 +324,14 @@ export function extractProductImageCandidates(
   }
 
   for (const image of parseGalleryImages(html)) {
+    pushUnique(ordered, seen, image.raw, pageUrl, "gallery", image.width, image.height);
+  }
+
+  for (const image of parseGalleryAnchorImages(html)) {
+    pushUnique(ordered, seen, image.raw, pageUrl, "gallery", image.width, image.height);
+  }
+
+  for (const image of parsePreloadImages(html)) {
     pushUnique(ordered, seen, image.raw, pageUrl, "gallery", image.width, image.height);
   }
 

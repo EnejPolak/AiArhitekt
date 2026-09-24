@@ -102,6 +102,26 @@ describe("multi-candidate merchant page image acquisition", () => {
     ).toBe("json_ld_product");
   });
 
+  it("recovers European JSON-LD purchase price when merchantEvidence abstains", async () => {
+    const html = `<html><script type="application/ld+json">{"@type":"Product","name":"Preproga","offers":{"@type":"http://schema.org/Offer","price":199,"priceCurrency":"EUR"},"image":"https://cdn.example-retailer.si/rug.jpg"}</script></html>`;
+    const item = candidate({
+      url: "https://www.example-retailer.si/p/rug",
+      title: "Preproga TRIOMPHE",
+      image: "https://cdn.example-retailer.si/rug.jpg",
+    });
+    item.product.price = null;
+    item.product.currency = null;
+    item.product.itemSpec = "rug";
+
+    await enrichRankedCandidateFromProductPage(item, {
+      fetch: async () => new Response(html, { status: 200, headers: { "content-type": "text/html" } }),
+      lookup: publicLookup,
+    });
+
+    expect(item.product.price).toBe(199);
+    expect(item.product.currency).toBe("EUR");
+  });
+
   it("D. successful page parse with no usable product image is no_image", async () => {
     const item = candidate({ url: "https://www.example-retailer.si/p/sofa", image: null });
     const verdict = await evaluateCandidateRenderReadyWithFetch(item, {

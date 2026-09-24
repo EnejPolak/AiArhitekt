@@ -5,13 +5,15 @@ import { acquireProductReferenceAsset, isReusableReferenceAsset } from "./acquir
 import { MAX_PRODUCT_REFERENCE_EVALUATE } from "./constants";
 import {
   extractProductImageCandidates,
-  fetchProductPageHtml,
+  fetchProductPageHtmlResult,
 } from "./extractProductImages";
+import { isSameDirectProductPage } from "./imageUrlGuards";
 import type { FetchLike } from "./fetchImage";
 import {
   associateProductImage,
   evidenceCandidateUrls,
   extractedSourceToEvidenceSource,
+  isUsableExactProductImageUrl,
   mergeImageEvidence,
   type ProductImageEvidence,
   type ProductReferenceFailureCode,
@@ -103,7 +105,7 @@ function evaluationList(
 ): ProductImageEvidence[] {
   const ranked = rankExactProductEvidence(evidence, declaredSizeByUrl);
   const pageSourced = ranked.filter((item) => isPageSourcedEvidenceSource(item.source));
-  return (pageSourced.length > 0 ? pageSourced : ranked).slice(0, MAX_PRODUCT_REFERENCE_EVALUATE);
+  return pageSourced.length > 0 ? pageSourced : ranked;
 }
 
 export async function ensureProductReferenceAssets(
@@ -121,8 +123,17 @@ export async function ensureProductReferenceAssets(
     const reusableExisting = isReusableReferenceAsset(existing, input.projectId, selection.id)
       ? existing
       : null;
-    if (reusableExisting && !replaceIfHigherQuality) {
-      assetsBySelectionId.set(selection.id, reusableExisting);
+    const reusableUsable =
+      reusableExisting &&
+      isUsableExactProductImageUrl(
+        reusableExisting.sourceImageUrl,
+        selection.productTitle,
+        selection.itemSpec
+      )
+        ? reusableExisting
+        : null;
+    if (reusableUsable && !replaceIfHigherQuality) {
+      assetsBySelectionId.set(selection.id, reusableUsable);
       reusedCount += 1;
       await markSelectionReference(input.persistClient, selection, { status: "ready" });
       continue;
@@ -158,9 +169,12 @@ export async function ensureProductReferenceAssets(
       const urls = evaluationList(evidence, declaredSizeByUrl);
       let best = current;
       let lastError: unknown = null;
+      let evaluated = 0;
       for (const item of urls) {
         const declared = declaredForEvidence(item, declaredSizeByUrl);
         if (best && !candidateCouldBeatCurrent(declared, best)) continue;
+        if (evaluated >= MAX_PRODUCT_REFERENCE_EVALUATE) break;
+        evaluated += 1;
         try {
           const saved = await tryAcquire(item.url);
           fetchedCount += 1;
@@ -192,21 +206,27 @@ export async function ensureProductReferenceAssets(
             productUrl: selection.productUrl,
             merchantDomain: selection.retailerDomain,
             sourcePageUrl: selection.productUrl,
+            productTitle: selection.productTitle,
+            itemSpec: selection.itemSpec,
           })
         : null,
     ]);
 
     let htmlBlocked = false;
     let htmlAttempted = false;
+    let categoryRedirect = false;
     htmlAttempted = true;
-    const html = await fetchProductPageHtml(selection.productUrl, {
+    const page = await fetchProductPageHtmlResult(selection.productUrl, {
       fetch: input.fetch,
       lookup: input.lookup,
     });
-    if (!html) {
+    if (!page.ok) {
+      htmlBlocked = true;
+    } else if (!isSameDirectProductPage(selection.productUrl, page.finalUrl)) {
+      categoryRedirect = true;
       htmlBlocked = true;
     } else {
-      const extracted = extractProductImageCandidates(html, selection.productUrl);
+      const extracted = extractProductImageCandidates(page.html, page.finalUrl);
       const associated = extracted.map((item) => {
         declaredSizeByUrl.set(item.url, {
           width: item.declaredWidth,
@@ -218,12 +238,14 @@ export async function ensureProductReferenceAssets(
           productUrl: selection.productUrl,
           merchantDomain: selection.retailerDomain,
           sourcePageUrl: selection.productUrl,
+          productTitle: selection.productTitle,
+          itemSpec: selection.itemSpec,
         });
       });
       evidence = mergeImageEvidence(evidence, associated);
     }
 
-    let result = await acquireBest(evidence, declaredSizeByUrl, reusableExisting);
+    let result = await acquireBest(evidence, declaredSizeByUrl, reusableUsable);
     if (result.saved) {
       assetsBySelectionId.set(selection.id, result.saved);
       await markSelectionReference(input.persistClient, selection, {
@@ -284,21 +306,37 @@ export async function ensureProductReferenceAssets(
       continue;
     }
 
-    if (reusableExisting) {
-      assetsBySelectionId.set(selection.id, reusableExisting);
-      reusedCount += 1;
+    // Prefer a newly acquired exact-product image. If none, keep only a
+    // previously cached asset that still passes exact-product usability.
+    const keepUsable =
+      (result.best &&
+      isUsableExactProductImageUrl(
+        result.best.sourceImageUrl,
+        selection.productTitle,
+        selection.itemSpec
+      )
+        ? result.best
+        : null) ?? reusableUsable;
+    if (keepUsable) {
+      assetsBySelectionId.set(selection.id, keepUsable);
+      if (keepUsable === reusableUsable) reusedCount += 1;
       await markSelectionReference(input.persistClient, selection, {
         status: "ready",
+        rescueAttempted,
         imageEvidence: evidence,
-        productImageUrl: reusableExisting.sourceImageUrl,
+        productImageUrl: keepUsable.sourceImageUrl,
       });
       continue;
     }
 
+    // Never keep an invalid cached asset as READY — wrong product / legal chrome
+    // must fail closed even when bytes were previously persisted.
     let failureCode: ProductReferenceFailureCode = "no_image";
-    if (associationRejected > 0 && evidence.length === 0) failureCode = "association_unverified";
+    if (categoryRedirect) failureCode = "wrong_product";
+    else if (associationRejected > 0 && evidence.length === 0) failureCode = "association_unverified";
     else if (result.lastError) failureCode = failureFromAcquire(result.lastError);
     else if (htmlBlocked && htmlAttempted) failureCode = "merchant_blocked";
+    else if (reusableExisting) failureCode = "association_unverified";
 
     failedSelectionIds.push(selection.id);
     await markSelectionReference(input.persistClient, selection, {

@@ -31,18 +31,24 @@ vi.mock("./extractProductImages", async (importOriginal) => {
   return {
     ...actual,
     fetchProductPageHtml: vi.fn(),
+    fetchProductPageHtmlResult: vi.fn(),
     extractProductImageCandidates: vi.fn(),
   };
 });
 
 import { getProductReferenceAssetBySelection } from "./queries";
 import { acquireProductReferenceAsset } from "./acquire";
-import { fetchProductPageHtml, extractProductImageCandidates } from "./extractProductImages";
+import {
+  fetchProductPageHtml,
+  fetchProductPageHtmlResult,
+  extractProductImageCandidates,
+} from "./extractProductImages";
 import type { ProductReferenceAssetView } from "./types";
 
 const getAsset = vi.mocked(getProductReferenceAssetBySelection);
 const acquire = vi.mocked(acquireProductReferenceAsset);
 const fetchHtml = vi.mocked(fetchProductPageHtml);
+const fetchHtmlResult = vi.mocked(fetchProductPageHtmlResult);
 const extractHtml = vi.mocked(extractProductImageCandidates);
 
 const PROJECT = "11111111-1111-4111-8111-111111111111";
@@ -121,6 +127,13 @@ describe("product reference image acquisition", () => {
     vi.clearAllMocks();
     getAsset.mockResolvedValue(null);
     fetchHtml.mockResolvedValue(null);
+    fetchHtmlResult.mockImplementation(async (pageUrl: string) => {
+      const html = await fetchHtml(pageUrl);
+      if (html == null) {
+        return { ok: false as const, reason: "fetch_failed" as const, detail: "network_error" as const };
+      }
+      return { ok: true as const, html, finalUrl: pageUrl };
+    });
     extractHtml.mockReturnValue([]);
     acquire.mockReset();
   });
@@ -141,7 +154,8 @@ describe("product reference image acquisition", () => {
       []
     );
     expect(mapped?.productImageUrl).toBe("https://cdn.shop.example/asa.png");
-    expect(mapped?.imageEvidence?.some((item) => item.url === mapped.productImageUrl)).toBe(true);
+    // Step C imageUrl is only a claim — exact association requires page-sourced evidence.
+    expect(mapped?.imageEvidence ?? []).toEqual([]);
   });
 
   it("JSON-LD image becomes a reference candidate", () => {
@@ -258,6 +272,7 @@ describe("product reference image acquisition", () => {
 
   it("banner/logo URLs are rejected", () => {
     expect(isRejectedGenericImageUrl("https://cdn.shop.example/logo.png")).toBe(true);
+    expect(isRejectedGenericImageUrl("https://cdn.shop.example/i/menu/corner_sofas.jpg")).toBe(true);
     expect(isRejectedGenericImageUrl("https://cdn.shop.example/banner/hero.jpg")).toBe(true);
     expect(isRejectedGenericImageUrl("https://www.shop.example/media/wysiwyg/storitve-flyout-image.jpg")).toBe(
       true
@@ -495,6 +510,72 @@ describe("product reference image acquisition", () => {
     expect(acquire.mock.calls[0]?.[0]?.sourceImageUrl).toBe(large);
     expect(result.assetsBySelectionId.get(SELECTION)?.width).toBe(1200);
     expect(result.reusedCount).toBe(0);
+  });
+
+  it("replaceIfHigherQuality evaluates a declared MEDIUM image before undeclared thumbnails", async () => {
+    const thumbnail = "https://cdn.shop.example/pr00Q/image.jpeg";
+    const medium = "https://cdn.shop.example/prZZB/image.jpeg";
+    getAsset.mockResolvedValue(asset(thumbnail, 150, 150));
+    fetchHtml.mockResolvedValue("<html></html>");
+    extractHtml.mockReturnValue([
+      { url: thumbnail, source: "gallery", declaredWidth: null, declaredHeight: null },
+      { url: medium, source: "schema", declaredWidth: 415, declaredHeight: 415 },
+    ]);
+    acquire.mockImplementation(async (input) =>
+      asset(
+        input.sourceImageUrl,
+        input.sourceImageUrl.includes("prZZB") ? 415 : 150,
+        input.sourceImageUrl.includes("prZZB") ? 415 : 150
+      )
+    );
+    const persist = persistClient();
+    const result = await ensureProductReferenceAssets({
+      persistClient: persist.client as never,
+      ownerUserId: "user",
+      projectId: PROJECT,
+      selections: [selection()],
+      replaceIfHigherQuality: true,
+    });
+    expect(acquire.mock.calls[0]?.[0]?.sourceImageUrl).toBe(medium);
+    expect(result.assetsBySelectionId.get(SELECTION)?.width).toBe(415);
+    expect(result.reusedCount).toBe(0);
+  });
+
+  it("does not spend the evaluate budget on declared images that cannot beat the current cache", async () => {
+    const current = "https://cdn.shop.example/cache/150x150/lamp.jpg";
+    const thumbs = Array.from(
+      { length: 8 },
+      (_, index) => `https://cdn.shop.example/cache/64x64/nav-${index}.jpg`
+    );
+    const original = "https://cdn.shop.example/upload/catalog/lamp.jpg";
+    getAsset.mockResolvedValue(asset(current, 150, 150));
+    fetchHtml.mockResolvedValue("<html></html>");
+    extractHtml.mockReturnValue([
+      ...thumbs.map((url) => ({
+        url,
+        source: "gallery" as const,
+        declaredWidth: 64,
+        declaredHeight: 64,
+      })),
+      { url: original, source: "jsonld" as const, declaredWidth: null, declaredHeight: null },
+    ]);
+    acquire.mockImplementation(async (input) =>
+      asset(
+        input.sourceImageUrl,
+        input.sourceImageUrl.includes("/upload/") ? 2000 : 64,
+        input.sourceImageUrl.includes("/upload/") ? 1333 : 64
+      )
+    );
+    const persist = persistClient();
+    const result = await ensureProductReferenceAssets({
+      persistClient: persist.client as never,
+      ownerUserId: "user",
+      projectId: PROJECT,
+      selections: [selection()],
+      replaceIfHigherQuality: true,
+    });
+    expect(acquire.mock.calls.map((call) => call[0]?.sourceImageUrl)).toEqual([original]);
+    expect(result.assetsBySelectionId.get(SELECTION)?.width).toBe(2000);
   });
 
   it("keeps a LOW-quality exact-product reference READY", async () => {

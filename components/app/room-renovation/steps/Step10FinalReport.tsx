@@ -5,14 +5,26 @@ import { RoomRenovationData } from "../RoomRenovationFlow";
 import { ProductShoppingSections } from "../ProductShoppingSections";
 import type { ProjectProductShoppingState } from "@/lib/discovery/shoppingState";
 import { formatVerifiedProductPrice } from "@/lib/discovery/shoppingState";
+import type { UnmatchedRequirement } from "@/lib/discovery/itemSpecs";
+import type { ProductDiscoveryView, ProductSelectionView } from "@/lib/discovery/types";
 import { loadRoomRenderState } from "@/lib/render/actions";
 import { PHYSICAL_FIT_DISCLAIMER, PRODUCT_FIDELITY_DISCLAIMER } from "@/lib/render/constants";
+import {
+  finalReportHeadline,
+  resolveFinalReportProjectState,
+  type FinalReportProjectState,
+} from "@/lib/render/finalReportState";
+import type { RoomRenderPreferences } from "@/lib/render/preferences";
 import { renderHonestyReportFromSnapshot, type RenderHonestyReport } from "@/lib/render/report";
 
 export interface Step10FinalReportProps {
   projectId: string;
   data: RoomRenovationData;
   shoppingState: ProjectProductShoppingState;
+  discovery: ProductDiscoveryView | null;
+  selections: ProductSelectionView[];
+  unmatched: UnmatchedRequirement[];
+  preferences: RoomRenderPreferences;
   onStartAnother: () => void;
   onBack?: () => void;
 }
@@ -21,6 +33,10 @@ export const Step10FinalReport: React.FC<Step10FinalReportProps> = ({
   projectId,
   data,
   shoppingState,
+  discovery,
+  selections,
+  unmatched,
+  preferences,
   onStartAnother,
   onBack,
 }) => {
@@ -34,6 +50,9 @@ export const Step10FinalReport: React.FC<Step10FinalReportProps> = ({
   const [previewUrl, setPreviewUrl] = React.useState<string | null>(data.selectedDesign);
   const [honestyReport, setHonestyReport] = React.useState<RenderHonestyReport | null>(null);
   const [loadError, setLoadError] = React.useState<string | null>(null);
+  const [processing, setProcessing] = React.useState(false);
+  const [generationFailed, setGenerationFailed] = React.useState(false);
+  const [hasSucceededRender, setHasSucceededRender] = React.useState(Boolean(data.selectedDesign));
 
   React.useEffect(() => {
     let cancelled = false;
@@ -46,6 +65,15 @@ export const Step10FinalReport: React.FC<Step10FinalReportProps> = ({
       }
       setLoadError(null);
       if (result.previewUrl) setPreviewUrl(result.previewUrl);
+      setProcessing(Boolean(result.processing));
+      setHasSucceededRender(Boolean(result.previewUrl || result.latestSucceeded));
+      setGenerationFailed(
+        Boolean(
+          (result.renders ?? []).some((row) => row.status === "failed") &&
+            !result.latestSucceeded &&
+            !result.previewUrl
+        )
+      );
       const snapshot =
         result.currentRender?.promptSnapshot ?? result.latestSucceeded?.promptSnapshot ?? null;
       setHonestyReport(renderHonestyReportFromSnapshot(snapshot));
@@ -56,9 +84,29 @@ export const Step10FinalReport: React.FC<Step10FinalReportProps> = ({
     };
   }, [projectId]);
 
+  const projectState: FinalReportProjectState = resolveFinalReportProjectState({
+    hasSucceededRender,
+    processing,
+    generationFailed,
+    discovery,
+    selections,
+    unmatched,
+    preferences,
+  });
+  const headline = finalReportHeadline(projectState);
+  const needsProductWork =
+    !hasSucceededRender &&
+    (projectState === "incomplete_requirements" ||
+      projectState === "waiting_approval" ||
+      projectState === "ready_to_generate" ||
+      projectState === "generation_failed");
+
   return (
     <div className="space-y-6 mt-8">
       <div className="rounded-[16px] px-4 py-4 sm:px-6 sm:py-5 bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.08)] min-w-0">
+        <p className="text-[14px] text-white mb-3" data-testid="final-report-headline">
+          {headline}
+        </p>
         <h3 className="text-[16px] font-medium text-white mb-3">Selected Design</h3>
         {previewUrl ? (
           <img
@@ -73,6 +121,18 @@ export const Step10FinalReport: React.FC<Step10FinalReportProps> = ({
         <p className="text-[12px] text-[rgba(255,255,255,0.45)] mt-1">{PHYSICAL_FIT_DISCLAIMER}</p>
         {loadError ? (
           <p className="text-[12px] text-[rgba(255,140,140,0.9)] mt-2">{loadError}</p>
+        ) : null}
+        {needsProductWork && onBack ? (
+          <button
+            type="button"
+            data-testid="complete-required-products"
+            onClick={onBack}
+            className="mt-4 px-4 py-2 rounded-lg border border-[rgba(0,230,204,0.35)] text-[rgba(0,230,204,0.95)] text-[13px] font-medium hover:bg-[rgba(0,230,204,0.08)] transition-colors"
+          >
+            {projectState === "incomplete_requirements"
+              ? "Complete required products"
+              : "Back to product review"}
+          </button>
         ) : null}
       </div>
 
@@ -146,13 +206,15 @@ export const Step10FinalReport: React.FC<Step10FinalReportProps> = ({
             <div className="flex flex-wrap justify-between gap-x-3 gap-y-1 text-[14px]">
               <span className="min-w-0 text-[rgba(255,255,255,0.70)]">Materials (estimate):</span>
               <span className="shrink-0 text-white">
-                {formatCurrency(data.costEstimate.materials.min)} - {formatCurrency(data.costEstimate.materials.max)}
+                {formatCurrency(data.costEstimate.materials.min)} -{" "}
+                {formatCurrency(data.costEstimate.materials.max)}
               </span>
             </div>
             <div className="flex flex-wrap justify-between gap-x-3 gap-y-1 text-[14px]">
               <span className="min-w-0 text-[rgba(255,255,255,0.70)]">Furniture (estimate):</span>
               <span className="shrink-0 text-white">
-                {formatCurrency(data.costEstimate.furniture.min)} - {formatCurrency(data.costEstimate.furniture.max)}
+                {formatCurrency(data.costEstimate.furniture.min)} -{" "}
+                {formatCurrency(data.costEstimate.furniture.max)}
               </span>
             </div>
             <div className="flex flex-wrap justify-between gap-x-3 gap-y-1 text-[14px]">
@@ -259,7 +321,7 @@ export const Step10FinalReport: React.FC<Step10FinalReportProps> = ({
             onClick={onBack}
             className="px-6 py-3 rounded-lg border border-[rgba(255,255,255,0.15)] text-white text-[14px] font-medium hover:bg-[rgba(255,255,255,0.05)] transition-colors"
           >
-            Back to visualization
+            {needsProductWork ? "Back to product review" : "Back to visualization"}
           </button>
         ) : null}
         <p className="px-6 py-3 text-[13px] text-[rgba(255,255,255,0.55)]">

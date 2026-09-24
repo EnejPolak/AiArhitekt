@@ -1,4 +1,6 @@
+import { selectionHasUsableExactProductImage } from "@/lib/references/imageEvidence";
 import { unmatchedRequirementDisplayLabel } from "./requirementLabels";
+import { selectionConflictsRequirementCategory } from "./requirementCategory";
 import type { UnmatchedRequirement } from "./itemSpecs";
 import type { ProductDiscoveryView, ProductSelectionView } from "./types";
 
@@ -18,6 +20,7 @@ export const SHOPPING_MISSING_REASONS = new Set<UnmatchedRequirement["reason"]>(
 export const SHOPPING_RETRYABLE_REASONS = new Set<UnmatchedRequirement["reason"]>([
   "no_valid_product",
   "search_interrupted",
+  "not_searched",
 ]);
 
 export type MissingShoppingRequirement = {
@@ -60,8 +63,24 @@ export function toProjectProductShoppingState(
   discovery: ProductDiscoveryView | null,
   selections: ProductSelectionView[]
 ): ProjectProductShoppingState {
+  const categoryConflict = discovery
+    ? selections.filter((item) => selectionConflictsRequirementCategory(item))
+    : [];
+  const unusableReady = discovery
+    ? selections.filter(
+        (item) =>
+          item.referenceStatus === "ready" &&
+          !selectionHasUsableExactProductImage(item) &&
+          !selectionConflictsRequirementCategory(item)
+      )
+    : [];
   const foundSelections = discovery
-    ? selections.filter((item) => item.referenceStatus !== "unavailable")
+    ? selections.filter(
+        (item) =>
+          item.referenceStatus !== "unavailable" &&
+          !selectionConflictsRequirementCategory(item) &&
+          !(item.referenceStatus === "ready" && !selectionHasUsableExactProductImage(item))
+      )
     : [];
   const unmatched = discovery?.unmatchedRequirements ?? [];
   const missingRequirements = [
@@ -83,6 +102,20 @@ export function toProjectProductShoppingState(
         label: item.productTitle,
         reason: "no_valid_product" as const,
       })),
+    ...unusableReady.map((item) => ({
+      requirementKey: item.requirementKey,
+      requirementType: item.requirementType,
+      itemSpec: item.itemSpec,
+      label: item.productTitle,
+      reason: "no_valid_product" as const,
+    })),
+    ...categoryConflict.map((item) => ({
+      requirementKey: item.requirementKey,
+      requirementType: item.requirementType,
+      itemSpec: item.itemSpec,
+      label: item.productTitle,
+      reason: "no_valid_product" as const,
+    })),
   ];
   const notSearchedCount = unmatched.filter((item) => item.reason === "not_searched").length;
 

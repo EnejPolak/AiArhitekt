@@ -37,6 +37,7 @@ import {
   isWallFinishRequirementKey,
 } from "@/lib/render/finishes";
 import { inferLegacyFloorFinishMode, inferLegacyWallFinishMode, keepExistingWallsFromWallFinishMode } from "@/lib/render/preferences";
+import { selectionHasUsableExactProductImage } from "@/lib/references/imageEvidence";
 
 export interface RoomRenovationData {
   roomType: "kitchen" | "bathroom" | "bedroom" | "living-room" | "other" | null;
@@ -644,7 +645,14 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
       "product-sourcing": "Review the persisted products. Confirm the ones to use in the future design.",
       "shopping-list": "Building a final shopping list that stays within your total budget…",
       contractors: "Do you want me to find local contractors (painters, flooring, assembly) within 50 km?",
-      "final-report": "Your renovation project is ready.",
+      "final-report":
+        productShoppingState.missingRequirements.length > 0 ||
+        persistedSelections.some(
+          (item) =>
+            item.referenceStatus === "ready" && !selectionHasUsableExactProductImage(item)
+        )
+          ? "This project is incomplete. Finish required products before a final visualization."
+          : "Required products are ready. Generate a visualization from product review to finish.",
     };
 
     const key = ROOM_STEP_KEYS[currentStep];
@@ -911,6 +919,22 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
             projectId={projectId}
             data={data}
             shoppingState={productShoppingState}
+            discovery={persistedDiscovery}
+            selections={persistedSelections}
+            unmatched={persistedDiscovery?.unmatchedRequirements ?? []}
+            preferences={{
+              selectedStyles: data.selectedStyles,
+              budgetLevel: data.budgetLevel,
+              wallMainColor: data.preferences?.wallMainColor ?? "",
+              wallAccentColor: data.preferences?.wallAccentColor ?? "",
+              flooring: data.preferences?.flooring ?? "keep",
+              underfloorHeating: data.preferences?.underfloorHeating ?? false,
+              bedType: data.preferences?.bedType ?? "none",
+              keepExistingWalls: data.preferences?.keepExistingWalls ?? EMPTY_PROJECT_ROOM_PREFERENCES.keepExistingWalls,
+              wallFinishMode: data.preferences?.wallFinishMode ?? EMPTY_PROJECT_ROOM_PREFERENCES.wallFinishMode,
+              floorFinishMode: data.preferences?.floorFinishMode ?? EMPTY_PROJECT_ROOM_PREFERENCES.floorFinishMode,
+              notes: data.preferences?.notes ?? "",
+            }}
             onStartAnother={onComplete ?? (() => {})}
             onBack={() => goToStepKey("product-sourcing")}
           />

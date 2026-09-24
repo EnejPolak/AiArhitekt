@@ -34,7 +34,14 @@ import { inferFurnitureConceptFromText } from "@/lib/discovery/locales/concepts"
 import type { ShoppingPreferenceInput } from "@/lib/discovery/preferences";
 import type { ProductDiscoveryView, ProductSelectionView } from "@/lib/discovery/types";
 import type { UnmatchedRequirement } from "@/lib/discovery/itemSpecs";
-import { formatVerifiedProductPrice, toProjectProductShoppingState } from "@/lib/discovery/shoppingState";
+import {
+  formatVerifiedProductPrice,
+  toProjectProductShoppingState,
+} from "@/lib/discovery/shoppingState";
+import {
+  unusableReferenceLabels,
+  visualizationReadySelections,
+} from "@/lib/render/finalReportState";
 import { ProductShoppingSections } from "./ProductShoppingSections";
 
 export interface FinalRoomRenderPanelProps {
@@ -200,9 +207,9 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
 
   const completeRoom = React.useMemo(() => {
     if (!discovery) return null;
-    const readyRequirementKeys = selections
-      .filter((item) => item.referenceStatus === "ready")
-      .map((item) => item.requirementKey);
+    const readyRequirementKeys = visualizationReadySelections(selections).map(
+      (item) => item.requirementKey
+    );
     const plan = analysis
       ? normalizeFurnishingPlan({
           analysisRequirements: analysis.designRequirements,
@@ -222,12 +229,15 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
         displayLabel: item.displayLabel,
         concept: item.concept,
       })),
-      readyPlanConcepts: selections
-        .filter((item) => item.referenceStatus === "ready")
-        .map((item) => inferFurnitureConceptFromText(item.itemSpec)),
+      readyPlanConcepts: visualizationReadySelections(selections).map((item) =>
+        inferFurnitureConceptFromText(item.itemSpec)
+      ),
     });
   }, [discovery, selections, unmatchedRequirements, preferences, analysis, shoppingPreferences, planOverrides]);
-  const approval = React.useMemo(() => productApprovalGate(selections), [selections]);
+  const approval = React.useMemo(
+    () => productApprovalGate(visualizationReadySelections(selections)),
+    [selections]
+  );
   const briefGate = React.useMemo(
     () =>
       designBriefGenerateGate(designBrief ?? EMPTY_DESIGN_BRIEF, {
@@ -254,14 +264,25 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
     [discovery, selections]
   );
   const buttonLabel = hasCurrent && !stale ? "Regenerate design" : "Generate design";
+  const unusableLabels = unusableReferenceLabels(selections);
   const canGenerate = Boolean(completeRoom?.allowed) && approval.allowed && briefGate.allowed;
   const blockMessage = !briefGate.allowed
     ? designBriefBlockMessage()
     : !approval.allowed
       ? productApprovalBlockMessage(approval)
       : completeRoom && !completeRoom.allowed
-        ? completeRoomBlockMessage(completeRoom)
-        : null;
+        ? completeRoomBlockMessage({
+            ...completeRoom,
+            unresolvedLabels: [
+              ...completeRoom.unresolvedLabels,
+              ...unusableLabels.map(
+                (label) => `${label} needs a usable exact-product photo before it can be visualized.`
+              ),
+            ],
+          })
+        : unusableLabels.length > 0
+          ? `${unusableLabels.join(", ")} need a usable exact-product photo before Generate.`
+          : null;
 
   return (
     <div className="space-y-5">

@@ -2,6 +2,7 @@ import type { ProductSelectionView } from "@/lib/discovery/types";
 import type { ProductReferenceAssetView } from "@/lib/references/types";
 import { MAX_RENDER_REFERENCE_IMAGES } from "./constants";
 import { parseProductReferencePath } from "@/lib/references/path";
+import { isUsableExactProductImageUrl } from "@/lib/references/imageEvidence";
 
 const SOFA_BED = /\b(sofa|couch|sectional|loveseat|bed|mattress)\b/;
 const DINING_TABLE = /\bdining\s*-?\s*table\b/;
@@ -56,6 +57,11 @@ export function isValidReferenceForSelection(
   if (!parsed) return false;
   if (parsed.projectId !== selection.projectId) return false;
   if (parsed.selectionId !== selection.id) return false;
+  if (
+    !isUsableExactProductImageUrl(asset.sourceImageUrl, selection.productTitle, selection.itemSpec)
+  ) {
+    return false;
+  }
   return true;
 }
 

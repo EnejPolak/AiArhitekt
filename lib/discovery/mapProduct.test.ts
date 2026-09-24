@@ -67,16 +67,10 @@ describe("canonical SERP product mapping", () => {
     expect(mapCanonicalPickedToSelection(picked({ title: "   " }), [store])).toBeNull();
   });
 
-  it("preserves an associated merchant image as image evidence", () => {
+  it("keeps Step C imageUrl as a claim only — not exact-product evidence", () => {
     const mapped = mapCanonicalPickedToSelection(picked(), [store]);
     expect(mapped?.productImageUrl).toBe("https://cdn.localhome.si/sofa.jpg");
-    expect(mapped?.imageEvidence).toEqual([
-      expect.objectContaining({
-        url: "https://cdn.localhome.si/sofa.jpg",
-        source: "search_evidence",
-        exactProductAssociation: true,
-      }),
-    ]);
+    expect(mapped?.imageEvidence).toEqual([]);
   });
 
   it("does not treat an off-merchant model image as exact-product evidence", () => {

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import {
-  associateProductImage,
+  isUsableExactProductImageUrl,
   type ProductReferenceFailureCode,
 } from "@/lib/references/imageEvidence";
 import type { FetchLike } from "@/lib/references/fetchImage";
@@ -103,20 +103,19 @@ export function evaluateCandidateRenderReady(
     return { ready: false, failureCode: "wrong_product" };
   }
   const imageUrl = product.productImageUrl;
-  if (!imageUrl) {
-    return { ready: false, failureCode: "no_image" };
-  }
-  const associated = associateProductImage({
-    url: imageUrl,
-    source: "search_evidence",
-    productUrl: product.productUrl,
-    merchantDomain: product.retailerDomain,
-    sourcePageUrl: product.productUrl,
-  });
   const evidence = (product as CanonicalSelectionFields).imageEvidence ?? [];
-  const evidenceReady = evidence.some((item) => item.exactProductAssociation);
-  if (!associated && !evidenceReady) {
-    return { ready: false, failureCode: "association_unverified" };
+  const evidenceReady = evidence.some(
+    (item) =>
+      item.exactProductAssociation &&
+      isUsableExactProductImageUrl(item.url, product.productTitle, product.itemSpec)
+  );
+  // Step C / existing imageUrl claims are not enough offline. Page-sourced
+  // exact-product evidence (JSON-LD / OG / gallery) must be present.
+  if (!evidenceReady) {
+    return {
+      ready: false,
+      failureCode: imageUrl ? "association_unverified" : "no_image",
+    };
   }
   return { ready: true, cachedBytesValid: false };
 }

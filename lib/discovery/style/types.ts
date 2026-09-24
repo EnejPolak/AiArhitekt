@@ -62,6 +62,8 @@ export type RankedProductCandidate = {
     retailerDomain: string;
     retailerName: string | null;
     hasReferenceImage: boolean;
+    itemSpec?: string | null;
+    imageEvidence?: import("@/lib/references/imageEvidence").ProductImageEvidence[];
   };
   hardValid: boolean;
   hardGateReasons: string[];

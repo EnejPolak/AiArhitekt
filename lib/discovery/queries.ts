@@ -296,6 +296,39 @@ export async function setSelectionConfirmed(
   return mapped;
 }
 
+/**
+ * Persist a verified EUR purchase price for an owned selection.
+ * Does not invent amounts — callers must supply merchant-validated values.
+ */
+export async function updateOwnedSelectionVerifiedPrice(
+  client: Client,
+  input: {
+    selectionId: string;
+    projectId: string;
+    price: number;
+    currency: "EUR";
+  }
+): Promise<ProductSelectionView> {
+  if (!Number.isFinite(input.price) || input.price <= 0) {
+    throw new DiscoveryError("invalid_input", discoveryErrorMessage("invalid_input"));
+  }
+  const { data, error } = await client
+    .from("project_product_selections")
+    .update({ price: input.price, currency: input.currency })
+    .eq("id", input.selectionId)
+    .eq("project_id", input.projectId)
+    .select("*")
+    .single();
+  if (error || !data) {
+    throw mapDiscoveryDbError(error);
+  }
+  const mapped = asSelection(data);
+  if (!mapped) {
+    throw new DiscoveryError("failed", discoveryErrorMessage("failed"));
+  }
+  return mapped;
+}
+
 export async function updateDiscoveryUnmatchedRequirements(
   persistClient: Client,
   discoveryId: string,

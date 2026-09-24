@@ -284,3 +284,42 @@ export async function removeRequirementFromDesignAction(input: {
     return fromCaught(error);
   }
 }
+
+const repairEvidenceInputSchema = z.object({
+  projectId: projectIdInputSchema.shape.projectId,
+  priceSelectionIds: z.array(z.string().uuid()).max(12).optional(),
+  reevaluateReferenceIds: z.array(z.string().uuid()).max(12).optional(),
+});
+
+/**
+ * Authenticated bounded re-enrichment for already-selected products.
+ * Price + reference only. No Step C / Places / Images.
+ */
+export async function repairSelectedProductEvidenceAction(input: {
+  projectId: string;
+  priceSelectionIds?: string[];
+  reevaluateReferenceIds?: string[];
+}): Promise<
+  | { ok: true; merchantFetches: number; reports: import("./repairSelectedEvidence").SelectionRepairReport[] }
+  | DiscoveryActionFail
+> {
+  const parsed = repairEvidenceInputSchema.safeParse(input);
+  if (!parsed.success) return fail("invalid_input");
+
+  try {
+    const { project } = await requireOwnedRoomProject(parsed.data.projectId);
+    const persistClient = createPersistClient();
+    const { repairSelectedProductEvidence } = await import("./repairSelectedEvidence");
+    const result = await repairSelectedProductEvidence({
+      persistClient,
+      ownerUserId: project.user_id,
+      projectId: parsed.data.projectId,
+      priceSelectionIds: parsed.data.priceSelectionIds,
+      reevaluateReferenceIds: parsed.data.reevaluateReferenceIds,
+      fetch: globalThis.fetch,
+    });
+    return { ok: true, merchantFetches: result.merchantFetches, reports: result.reports };
+  } catch (error) {
+    return fromCaught(error);
+  }
+}

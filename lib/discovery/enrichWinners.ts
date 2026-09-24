@@ -82,6 +82,7 @@ function mergeEnrichmentIntoProduct(
           productUrl: product.productUrl,
           merchantDomain: product.retailerDomain,
           sourcePageUrl: product.productUrl,
+          productTitle: product.productTitle,
         })
       : null;
 

@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { selectionHasUsableExactProductImage } from "@/lib/references/imageEvidence";
 import type { ProductSelectionView } from "@/lib/discovery/types";
 import {
   formatVerifiedProductPrice,
@@ -54,7 +55,8 @@ export function ProductShoppingSections({
               className="border border-[rgba(255,255,255,0.10)] rounded-lg p-3"
             >
               <div className="flex items-start gap-3">
-                {selection.productImageUrl ? (
+                {selection.productImageUrl &&
+                selectionHasUsableExactProductImage(selection) ? (
                   <img
                     src={selection.productImageUrl}
                     alt=""
@@ -87,7 +89,9 @@ export function ProductShoppingSections({
                       </a>
                     ) : null}
                   </div>
-                  {onToggleConfirmed && selection.referenceStatus === "ready" ? (
+                  {onToggleConfirmed &&
+                  selection.referenceStatus === "ready" &&
+                  selectionHasUsableExactProductImage(selection) ? (
                     <form
                       className="mt-2"
                       onSubmit={(event) => {
@@ -110,13 +114,22 @@ export function ProductShoppingSections({
                       </button>
                     </form>
                   ) : null}
-                  {selection.referenceStatus === "ready" && !selection.isConfirmed ? (
+                  {selection.referenceStatus === "ready" &&
+                  selectionHasUsableExactProductImage(selection) &&
+                  !selection.isConfirmed ? (
                     <div className="text-[11px] text-[rgba(255,255,255,0.40)] mt-1">
                       Ready reference — approve to use it in the design.
                     </div>
-                  ) : selection.referenceStatus === "ready" && selection.isConfirmed ? (
+                  ) : selection.referenceStatus === "ready" &&
+                    selectionHasUsableExactProductImage(selection) &&
+                    selection.isConfirmed ? (
                     <div className="text-[11px] text-[rgba(0,230,204,0.75)] mt-1">
                       Visual reference · approved for visualization
+                    </div>
+                  ) : selection.referenceStatus === "ready" &&
+                    !selectionHasUsableExactProductImage(selection) ? (
+                    <div className="text-[11px] text-[rgba(255,210,80,0.85)] mt-1">
+                      Found product · photo is not a usable exact-product reference
                     </div>
                   ) : selection.referenceStatus === "unavailable" ? (
                     <div className="text-[11px] text-[rgba(255,255,255,0.40)] mt-1">
@@ -183,7 +196,7 @@ export function ProductShoppingSections({
                         onClick={() => onRemoveRequirement(item.requirementKey)}
                         className="text-[12px] text-[rgba(255,255,255,0.70)] hover:underline"
                       >
-                        Remove item from design
+                        Remove from design
                       </button>
                     ) : null}
                   </div>
@@ -204,7 +217,9 @@ export function ProductShoppingSections({
       {state.knownProductTotal != null ? (
         <div className="pt-3 border-t border-[rgba(255,255,255,0.1)]">
           <div className="flex justify-between text-[16px] font-medium">
-            <span className="text-white">Known product total</span>
+            <span className="text-white">
+              Known product total{state.knownProductTotalIsPartial ? " (PARTIAL)" : ""}
+            </span>
             <span className="text-white">
               {formatVerifiedProductPrice(state.knownProductTotal, "EUR")}
             </span>

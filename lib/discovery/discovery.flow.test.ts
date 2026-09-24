@@ -22,10 +22,28 @@ import { expireLocalProductDiscoveryCooldown } from "./localCooldownSetup";
 import { getProjectProductDiscovery, getProjectProductSelections } from "./queries";
 import { isCurrentProductDiscovery } from "./stale";
 import { shoppingPreferenceHash } from "./preferenceHash";
+import { USABLE_PRODUCT_PNG } from "@/lib/references/imageFixtures";
 
 vi.mock("@/lib/analysis/openai", () => ({
   analyzeRoomImage: vi.fn(),
 }));
+
+async function mockMerchantFetch(input: RequestInfo | URL): Promise<Response> {
+  const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+  if (url.includes("cdn.localhome.si") || /\.(?:jpe?g|png|webp)(?:$|[?#])/i.test(url)) {
+    return new Response(USABLE_PRODUCT_PNG, {
+      status: 200,
+      headers: { "content-type": "image/png" },
+    });
+  }
+  const id = url.match(/\/p\/(\d+)/)?.[1] ?? "1";
+  const image = `https://cdn.localhome.si/${id}.jpg`;
+  // Image association only — leave price absent so Step C / SERP null prices stay null.
+  return new Response(
+    `<html><script type="application/ld+json">{"@type":"Product","name":"Item ${id}","image":"${image}"}</script></html>`,
+    { status: 200, headers: { "content-type": "text/html" } }
+  );
+}
 
 vi.mock("@/lib/references/ensure", () => ({
   ensureProductReferenceAssets: vi.fn(async () => ({
@@ -261,11 +279,14 @@ describe("product discovery pipeline (local, mocked providers)", () => {
       geocodeAddress?: Parameters<typeof discoverProjectProducts>[3]["geocodeAddress"];
       searchPlaces?: Parameters<typeof discoverProjectProducts>[3]["searchPlaces"];
       searchSerp?: Parameters<typeof discoverProjectProducts>[3]["searchSerp"];
+      fetch?: Parameters<typeof discoverProjectProducts>[3]["fetch"];
     } = {}
   ) {
     return {
       ownerUserId: userA.user.id,
       persistClient: persist,
+      fetch: mockMerchantFetch,
+      lookup: async () => ({ address: "93.184.216.34", family: 4 as const }),
       ...extra,
     };
   }
