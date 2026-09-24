@@ -110,7 +110,7 @@ describe("render reference order", () => {
     expect(ordered.map((item) => item.imageIndex)).toEqual([2, 3, 4, 5]);
   });
 
-  it("keeps the highest-priority products when more than the render limit exist", () => {
+  it("blocks when more than the render limit exist — never silently keeps only six", () => {
     const confirmed = Array.from({ length: 11 }, (_, index) =>
       selection({
         id: `aaaaaaaa-aaaa-4aaa-8aaa-${(index + 1).toString().padStart(12, "0")}`,
@@ -125,7 +125,6 @@ describe("render reference order", () => {
     const result = orderRenderReferences(confirmed, assets);
     expect(result.tooMany).toBe(true);
     expect(result.truncated).toBe(true);
-    expect(result.ordered).toHaveLength(6);
-    expect(result.ordered.map((item) => item.imageIndex)).toEqual([2, 3, 4, 5, 6, 7]);
+    expect(result.ordered).toHaveLength(0);
   });
 });

@@ -13,10 +13,13 @@ import {
   evaluateCompleteRoomReadiness,
   productApprovalBlockMessage,
   productApprovalGate,
+  referenceCapacityGate,
+  tooManyReferencesBlockMessage,
 } from "@/lib/render/readiness";
 import { EMPTY_DESIGN_BRIEF, type DesignBriefDocument } from "@/lib/design-brief";
 import {
   expectedRenderInventoryFromSnapshot,
+  selectionsForRenderInventory,
   type ExpectedRenderInventoryItem,
 } from "@/lib/render/inventory";
 import { renderHonestyReportFromSnapshot, referenceQualityDiagnostic, type RenderHonestyReport } from "@/lib/render/report";
@@ -207,9 +210,6 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
 
   const completeRoom = React.useMemo(() => {
     if (!discovery) return null;
-    const readyRequirementKeys = visualizationReadySelections(selections).map(
-      (item) => item.requirementKey
-    );
     const plan = analysis
       ? normalizeFurnishingPlan({
           analysisRequirements: analysis.designRequirements,
@@ -219,25 +219,46 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
           planOverrides,
         })
       : null;
+    const requiredKeys = plan?.required.map((item) => item.requirementKey) ?? [];
+    const inventoryReady = visualizationReadySelections(
+      selectionsForRenderInventory(selections, requiredKeys, []).included
+    );
     return evaluateCompleteRoomReadiness({
       searchedItemCount: discovery.searchedItemCount,
       unmatched: unmatchedRequirements,
-      readyRequirementKeys,
+      readyRequirementKeys: inventoryReady.map((item) => item.requirementKey),
       preferences,
       requiredPlanItems: plan?.required.map((item) => ({
         requirementKey: item.requirementKey,
         displayLabel: item.displayLabel,
         concept: item.concept,
       })),
-      readyPlanConcepts: visualizationReadySelections(selections).map((item) =>
+      readyPlanConcepts: inventoryReady.map((item) =>
         inferFurnitureConceptFromText(item.itemSpec)
       ),
     });
   }, [discovery, selections, unmatchedRequirements, preferences, analysis, shoppingPreferences, planOverrides]);
+  const inventorySelections = React.useMemo(() => {
+    const plan = analysis
+      ? normalizeFurnishingPlan({
+          analysisRequirements: analysis.designRequirements,
+          observation: analysis.analysis,
+          analysisId: analysis.id,
+          preferences: shoppingPreferences,
+          planOverrides,
+        })
+      : null;
+    const requiredKeys = plan?.required.map((item) => item.requirementKey) ?? [];
+    return selectionsForRenderInventory(selections, requiredKeys, []).included;
+  }, [analysis, shoppingPreferences, planOverrides, selections]);
   const approval = React.useMemo(
-    () => productApprovalGate(visualizationReadySelections(selections)),
-    [selections]
+    () => productApprovalGate(visualizationReadySelections(inventorySelections)),
+    [inventorySelections]
   );
+  const capacity = React.useMemo(() => {
+    const readyCount = visualizationReadySelections(inventorySelections).length;
+    return referenceCapacityGate(readyCount);
+  }, [inventorySelections]);
   const briefGate = React.useMemo(
     () =>
       designBriefGenerateGate(designBrief ?? EMPTY_DESIGN_BRIEF, {
@@ -264,12 +285,18 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
     [discovery, selections]
   );
   const buttonLabel = hasCurrent && !stale ? "Regenerate design" : "Generate design";
-  const unusableLabels = unusableReferenceLabels(selections);
-  const canGenerate = Boolean(completeRoom?.allowed) && approval.allowed && briefGate.allowed;
+  const unusableLabels = unusableReferenceLabels(inventorySelections);
+  const canGenerate =
+    Boolean(completeRoom?.allowed) &&
+    approval.allowed &&
+    briefGate.allowed &&
+    capacity.allowed;
   const blockMessage = !briefGate.allowed
     ? designBriefBlockMessage()
     : !approval.allowed
       ? productApprovalBlockMessage(approval)
+      : !capacity.allowed
+        ? tooManyReferencesBlockMessage(capacity.candidateCount)
       : completeRoom && !completeRoom.allowed
         ? completeRoomBlockMessage({
             ...completeRoom,

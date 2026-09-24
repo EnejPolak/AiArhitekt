@@ -115,12 +115,22 @@ export function orderRenderReferences(
   });
 
   const truncated = ready.length > MAX_RENDER_REFERENCE_IMAGES;
-  const limited = ready.slice(0, MAX_RENDER_REFERENCE_IMAGES);
+  // Never silently discard valid product references to fit the budget.
+  // Callers must block Generate when tooMany is true (ordered is empty).
+  if (truncated) {
+    return {
+      missing,
+      truncated: true,
+      tooMany: true,
+      ordered: [],
+    };
+  }
+
   return {
     missing,
-    truncated,
-    tooMany: truncated,
-    ordered: limited.map((item, index) => ({
+    truncated: false,
+    tooMany: false,
+    ordered: ready.map((item, index) => ({
       ...item,
       imageIndex: index + 2,
     })),

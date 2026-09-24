@@ -4,8 +4,15 @@ export const ROOM_RENDER_MODEL = "gpt-image-1.5";
 export const ROOM_RENDER_GUARD_OPERATION = "room_render";
 export const ROOM_RENDER_COOLDOWN_SECONDS = 120;
 export const ROOM_RENDER_TIMEOUT_MS = 120_000;
-/** Max selected products whose primary images are sent to the image model. */
-export const MAX_RENDER_REFERENCE_IMAGES = 6;
+/**
+ * Max product reference images sent with the room photo (images 2..N).
+ * OpenAI gpt-image-1.5 edits allow up to 16 total input images (room + refs).
+ * Product policy: at most 10 product references (see docs/BACKEND.md).
+ * Never silently drop required product refs to fit this budget — block Generate instead.
+ */
+export const MAX_RENDER_REFERENCE_IMAGES = 10;
+/** Provider ceiling for total images.edit inputs (room photo + product refs). */
+export const MAX_PROVIDER_EDIT_IMAGES = 16;
 /** Stored candidates per product; the renderer sends one primary image each. */
 export const MAX_RENDER_REFERENCE_IMAGES_PER_PRODUCT = 1;
 export const MAX_RENDER_OUTPUT_BYTES = 15 * 1024 * 1024;

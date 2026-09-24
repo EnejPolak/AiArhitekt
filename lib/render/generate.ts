@@ -26,12 +26,19 @@ import { isOpenAiImageRenderEnabled } from "./env";
 import { RenderError, renderErrorMessage } from "./errors";
 import { buildRenderSourceFingerprint } from "./fingerprint";
 import { orderRenderReferences, type OrderedRenderReference } from "./order";
+import { selectionsForRenderInventory } from "./inventory";
 import { editRoomImageWithOpenAI, type RoomImageEditFn, type RoomImageEditFile } from "./openai";
 import { buildRoomRenderPath } from "./path";
 import { completeRoomRender, failRoomRender, insertProcessingRoomRender } from "./persist";
 import { canonicalRenderPreferences, type RoomRenderPreferences } from "./preferences";
 import { buildRoomRenderPrompt } from "./prompt";
-import { completeRoomBlockMessage, evaluateCompleteRoomReadiness, productApprovalBlockMessage, productApprovalGate } from "./readiness";
+import {
+  completeRoomBlockMessage,
+  evaluateCompleteRoomReadiness,
+  productApprovalBlockMessage,
+  productApprovalGate,
+  tooManyReferencesBlockMessage,
+} from "./readiness";
 import { normalizeFurnishingPlan } from "@/lib/discovery/furnishingPlan";
 import { inferFurnitureConceptFromText } from "@/lib/discovery/locales/concepts";
 import { getProjectRoomPreferences } from "@/lib/project-preferences/queries";
@@ -75,9 +82,14 @@ export type PreparedRenderSource = {
   analysis: NonNullable<Awaited<ReturnType<typeof getProjectRoomAnalysis>>>;
   discovery: NonNullable<Awaited<ReturnType<typeof getProjectProductDiscovery>>>;
   selections: Awaited<ReturnType<typeof getProjectProductSelections>>;
+  /** Selections in the effective render inventory (plan required + retained extras). */
+  inventorySelections: Awaited<ReturnType<typeof getProjectProductSelections>>;
   confirmed: Awaited<ReturnType<typeof getProjectProductSelections>>;
   ordered: OrderedRenderReference[];
   missing: Array<{ selectionId: string; productTitle: string }>;
+  tooManyReferences: boolean;
+  referenceCandidateCount: number;
+  excludedFromRender: Array<{ selectionId: string; productTitle: string; reason: string }>;
   completeRoom: CompleteRoomGate;
   fingerprint: string;
   preferences: RoomRenderPreferences;
@@ -147,13 +159,38 @@ export async function prepareRenderSource(
     throw new RenderError("no_confirmed_products", renderErrorMessage("no_confirmed_products"));
   }
 
+  const storedPrefs = await getProjectRoomPreferences(userClient, projectId);
+  const shopping = projectRoomPreferencesToShoppingPreferences(storedPrefs);
+  const plan = normalizeFurnishingPlan({
+    analysisRequirements: analysis.design_requirements,
+    observation: analysis.analysis,
+    analysisId: analysis.id,
+    preferences: shopping,
+    planOverrides: storedPrefs?.furnishingPlan ?? null,
+  });
+  const requiredKeys = plan.required.map((item) => item.requirementKey);
+  // No explicitly retained extras for MVP — stale historical keys (e.g. old tv-console)
+  // stay persisted but are excluded from the render inventory.
+  const inventory = selectionsForRenderInventory(selections, requiredKeys, []);
+  const inventorySelections = inventory.included;
+
   const assets = await listProjectProductReferenceAssets(userClient, projectId);
   const assetsBySelectionId = new Map(assets.map((asset) => [asset.selectionId, asset]));
-  const orderedResult = orderRenderReferences(selections, assetsBySelectionId);
+  const orderedResult = orderRenderReferences(inventorySelections, assetsBySelectionId);
   const missing = orderedResult.missing.map((item) => ({
     selectionId: item.id,
     productTitle: item.productTitle,
   }));
+
+  const readyInventoryCount = inventorySelections.filter((selection) => {
+    if (selection.referenceStatus === "unavailable" || selection.referenceStatus === "pending") {
+      return false;
+    }
+    if (selection.referenceStatus != null && selection.referenceStatus !== "ready") return false;
+    const asset = assetsBySelectionId.get(selection.id);
+    return Boolean(asset && asset.sizeBytes > 0);
+  }).length;
+  const candidateCount = orderedResult.tooMany ? readyInventoryCount : orderedResult.ordered.length;
 
   const fingerprint = buildRenderSourceFingerprint({
     roomUploadId: photo.id,
@@ -165,27 +202,22 @@ export async function prepareRenderSource(
     references: orderedResult.ordered,
   });
 
-  const storedPrefs = await getProjectRoomPreferences(userClient, projectId);
-  const shopping = projectRoomPreferencesToShoppingPreferences(storedPrefs);
-  const plan = normalizeFurnishingPlan({
-    analysisRequirements: analysis.design_requirements,
-    observation: analysis.analysis,
-    analysisId: analysis.id,
-    preferences: shopping,
-    planOverrides: storedPrefs?.furnishingPlan ?? null,
-  });
+  const readyForPlanKeys = orderedResult.tooMany
+    ? inventorySelections.filter((item) => item.referenceStatus === "ready")
+    : orderedResult.ordered.map((item) => item.selection);
+
   const completeRoom = evaluateCompleteRoomReadiness({
     searchedItemCount: discovery.searchedItemCount,
     unmatched: discovery.unmatchedRequirements,
-    readyRequirementKeys: orderedResult.ordered.map((item) => item.selection.requirementKey),
+    readyRequirementKeys: readyForPlanKeys.map((item) => item.requirementKey),
     preferences,
     requiredPlanItems: plan.required.map((item) => ({
       requirementKey: item.requirementKey,
       displayLabel: item.displayLabel,
       concept: item.concept,
     })),
-    readyPlanConcepts: orderedResult.ordered.map((item) =>
-      inferFurnitureConceptFromText(item.selection.itemSpec)
+    readyPlanConcepts: readyForPlanKeys.map((item) =>
+      inferFurnitureConceptFromText(item.itemSpec)
     ),
   });
 
@@ -194,9 +226,17 @@ export async function prepareRenderSource(
     analysis,
     discovery,
     selections,
-    confirmed: selections.filter((item) => item.isConfirmed),
+    inventorySelections,
+    confirmed: inventorySelections.filter((item) => item.isConfirmed),
     ordered: orderedResult.ordered,
     missing,
+    tooManyReferences: orderedResult.tooMany,
+    referenceCandidateCount: candidateCount,
+    excludedFromRender: inventory.excluded.map((item) => ({
+      selectionId: item.selection.id,
+      productTitle: item.selection.productTitle,
+      reason: item.reason,
+    })),
     completeRoom,
     fingerprint,
     preferences,
@@ -234,7 +274,19 @@ export async function generateRoomRender(
           : source.missing,
     });
   }
-  const approval = productApprovalGate(source.selections);
+  if (source.tooManyReferences) {
+    throw new RenderError(
+      "too_many_references",
+      tooManyReferencesBlockMessage(source.referenceCandidateCount),
+      {
+        missingReferences: source.inventorySelections.map((item) => ({
+          selectionId: item.id,
+          productTitle: item.productTitle,
+        })),
+      }
+    );
+  }
+  const approval = productApprovalGate(source.inventorySelections);
   if (!approval.allowed) {
     throw new RenderError("no_confirmed_products", productApprovalBlockMessage(approval), {
       missingReferences: approval.unconfirmedLabels.map((title) => ({

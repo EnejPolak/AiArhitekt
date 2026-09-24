@@ -14,6 +14,7 @@ import {
   completeRoomBlockMessage,
   designBriefBlockMessage,
   designBriefGenerateGate,
+  tooManyReferencesBlockMessage,
 } from "./readiness";
 import { getProjectRoomPreferences } from "@/lib/project-preferences/queries";
 import { projectRoomPreferencesToRenderPreferences } from "@/lib/project-preferences/adapter";
@@ -177,6 +178,24 @@ export async function loadRoomRenderState(input: {
               : source.missing,
           readinessCode: "incomplete_room",
           readinessMessage: completeRoomBlockMessage(source.completeRoom),
+        };
+      }
+      if (source.tooManyReferences) {
+        return {
+          ok: true,
+          fingerprint: source.fingerprint,
+          currentRender: null,
+          latestSucceeded,
+          processing,
+          stale: Boolean(latestSucceeded),
+          previewUrl: await signedPreview(supabase, latestSucceeded),
+          renders: markCurrent(renders, source.fingerprint),
+          missingReferences: source.inventorySelections.map((item) => ({
+            selectionId: item.id,
+            productTitle: item.productTitle,
+          })),
+          readinessCode: "too_many_references",
+          readinessMessage: tooManyReferencesBlockMessage(source.referenceCandidateCount),
         };
       }
       const marked = markCurrent(renders, source.fingerprint).map((row) =>

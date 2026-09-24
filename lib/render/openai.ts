@@ -3,6 +3,7 @@ import {
   ROOM_RENDER_INPUT_FIDELITY,
   ROOM_RENDER_MODEL,
   ROOM_RENDER_TIMEOUT_MS,
+  MAX_PROVIDER_EDIT_IMAGES,
 } from "./constants";
 import { getOpenAiImageQuality, getOpenAiImageSize, isOpenAiImageRenderEnabled } from "./env";
 import { RenderError, mapRenderProviderFailure, renderErrorMessage } from "./errors";
@@ -47,6 +48,9 @@ export async function editRoomImageWithOpenAI(
   }
   if (input.images.length < 2) {
     throw new RenderError("invalid_input", renderErrorMessage("invalid_input"));
+  }
+  if (input.images.length > MAX_PROVIDER_EDIT_IMAGES) {
+    throw new RenderError("too_many_references", renderErrorMessage("too_many_references"));
   }
 
   const openai = new OpenAI({

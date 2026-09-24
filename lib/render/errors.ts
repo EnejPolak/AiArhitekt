@@ -69,7 +69,7 @@ export function renderErrorMessage(code: RenderErrorCode): string {
     case "incomplete_design_brief":
       return "Complete Design Brief before generating a design.";
     case "too_many_references":
-      return "Too many confirmed product references for one generation.";
+      return "Too many confirmed product references for one generation. Reduce approved products, then try again.";
     case "render_disabled":
       return "Room visualization is temporarily unavailable.";
     case "provider_unconfigured":

@@ -110,7 +110,7 @@ describe("loadRenderReadySelectedProductsFromState", () => {
     expect(snapshot[0]?.referenceAssetId).toBe(`asset-${sofa.id}`);
   });
 
-  it("caps render references at the explicit product limit", () => {
-    expect(MAX_RENDER_REFERENCE_IMAGES).toBe(6);
+  it("caps render references at the documented product limit", () => {
+    expect(MAX_RENDER_REFERENCE_IMAGES).toBe(10);
   });
 });

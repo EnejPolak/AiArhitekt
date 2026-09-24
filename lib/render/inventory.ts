@@ -43,6 +43,44 @@ export function isReadyShoppableSelection(
   return true;
 }
 
+export type RenderInventoryExclusionReason =
+  | "not_in_effective_plan"
+  | "not_explicitly_retained";
+
+export type RenderInventoryExclusion = {
+  selection: ProductSelectionView;
+  reason: RenderInventoryExclusionReason;
+};
+
+/**
+ * Render inventory = effective required plan keys + explicitly retained extras.
+ * Historical selections outside that set are excluded (not deleted).
+ */
+export function selectionsForRenderInventory(
+  selections: ProductSelectionView[],
+  requiredRequirementKeys: string[],
+  retainedExtraKeys: string[] = []
+): {
+  included: ProductSelectionView[];
+  excluded: RenderInventoryExclusion[];
+} {
+  const required = new Set(requiredRequirementKeys.filter(Boolean));
+  const retained = new Set(retainedExtraKeys.filter(Boolean));
+  const included: ProductSelectionView[] = [];
+  const excluded: RenderInventoryExclusion[] = [];
+  for (const selection of selections) {
+    if (required.has(selection.requirementKey) || retained.has(selection.requirementKey)) {
+      included.push(selection);
+      continue;
+    }
+    excluded.push({
+      selection,
+      reason: retained.size > 0 ? "not_explicitly_retained" : "not_in_effective_plan",
+    });
+  }
+  return { included, excluded };
+}
+
 export function overlayInventoryQualityFromAssets<T extends { selectionId: string }>(
   items: T[],
   assetsBySelectionId: Map<string, ProductReferenceAssetView>

@@ -1,6 +1,7 @@
 import { completeRoomGate, type CompleteRoomGate } from "@/lib/discovery/completeRoomGate";
 import type { UnmatchedRequirement } from "@/lib/discovery/itemSpecs";
 import { isEmptyDesignBrief, type DesignBriefDocument } from "@/lib/design-brief/schema";
+import { MAX_RENDER_REFERENCE_IMAGES } from "./constants";
 import { requiredExactFinishSlots } from "./finishes";
 import type { RoomRenderPreferences } from "./preferences";
 
@@ -65,6 +66,26 @@ export function completeRoomBlockMessage(gate: CompleteRoomGate): string {
     return `Generate is blocked. Ready ${gate.readySlots}/${gate.requiredSlots} required items.`;
   }
   return `Generate is blocked. ${details.join(" ")}`;
+}
+
+export function referenceCapacityGate(candidateCount: number): {
+  allowed: boolean;
+  capacity: number;
+  candidateCount: number;
+} {
+  return {
+    allowed: candidateCount <= MAX_RENDER_REFERENCE_IMAGES,
+    capacity: MAX_RENDER_REFERENCE_IMAGES,
+    candidateCount,
+  };
+}
+
+export function tooManyReferencesBlockMessage(candidateCount: number): string {
+  return (
+    `This design has ${candidateCount} product references, but one visualization supports at most ` +
+    `${MAX_RENDER_REFERENCE_IMAGES}. Unconfirm or remove products until ${MAX_RENDER_REFERENCE_IMAGES} ` +
+    `or fewer remain approved for the design, then generate again. No required product was silently dropped.`
+  );
 }
 
 export function productApprovalGate(
