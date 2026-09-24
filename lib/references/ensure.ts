@@ -79,11 +79,17 @@ async function markSelectionReference(
     row.product_image_url = patch.productImageUrl;
     row.has_reference_image = true;
   }
-  await client
+  const { error } = await client
     .from("project_product_selections")
     .update(row as never)
     .eq("id", selection.id)
     .eq("project_id", selection.projectId);
+  if (error) {
+    throw new ReferenceError(
+      "failed",
+      `Failed to update reference status for ${selection.id}: ${error.message}`
+    );
+  }
 }
 
 function failureFromAcquire(error: unknown): ProductReferenceFailureCode {
@@ -345,8 +351,9 @@ export async function ensureProductReferenceAssets(
 
     // Never keep an invalid cached asset as READY — wrong product / legal chrome
     // must fail closed even when bytes were previously persisted.
+    // Persist only constraint-allowed failure codes (see project_product_selections_reference_failure_ok).
     let failureCode: ProductReferenceFailureCode = "no_image";
-    if (categoryRedirect) failureCode = "wrong_product";
+    if (categoryRedirect) failureCode = "association_unverified";
     else if (associationRejected > 0 && evidence.length === 0) failureCode = "association_unverified";
     else if (result.lastError) failureCode = failureFromAcquire(result.lastError);
     else if (htmlBlocked && htmlAttempted) failureCode = "merchant_blocked";
