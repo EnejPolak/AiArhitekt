@@ -722,8 +722,18 @@ describe("product-conditioned room render (local, mocked OpenAI)", () => {
 
   it("blocks an incomplete room when one required reference fetch fails", async () => {
     vi.stubEnv("OPENAI_IMAGE_RENDER_ENABLED", "true");
-    const seeded = await seedProject(userA.client, userA.user.id);
+    // Plan owns required slots: analysis must include every selection key we expect
+    // Generate to treat as required (sofa ready + floor lamp missing → incomplete_room).
+    const sofaAndLampRequirements = designRequirementsForFurniture([
+      requiredFurnitureNeed("sofa", {
+        placementNotes: "back wall",
+        constraints: ["must not block the door"],
+      }),
+      requiredFurnitureNeed("floor lamp"),
+    ]);
+    const seeded = await seedProject(userA.client, userA.user.id, sofaAndLampRequirements);
     const persist = persistClient();
+    const preferenceFingerprint = shoppingPreferenceFingerprint(PREFS);
     const extra = await persist.rpc("replace_project_product_discovery_result", {
       p_owner_user_id: userA.user.id,
       p_project_id: seeded.projectId,
@@ -737,22 +747,15 @@ describe("product-conditioned room render (local, mocked OpenAI)", () => {
         searched_item_count: 2,
         not_searched_count: 0,
         allowlist_domains: ["localhome.si"],
-        unmatched_requirements: [
-          {
-            requirementType: "furniture",
-            requirementKey: "furniture:rug:3",
-            itemSpec: "rug",
-            reason: "no_valid_product",
-          },
-        ],
-        source_preferences: shoppingPreferenceFingerprint(PREFS).snapshot,
-        source_preferences_hash: shoppingPreferenceFingerprint(PREFS).hash,
+        unmatched_requirements: [],
+        source_preferences: preferenceFingerprint.snapshot,
+        source_preferences_hash: preferenceFingerprint.hash,
       } as unknown as Json,
       p_selections: [
         {
           requirement_type: "furniture",
           requirement_key: "furniture:sofa:0",
-          requirement_snapshot: validRoomAnalysisResult.designRequirements.furnitureNeeds[0],
+          requirement_snapshot: sofaAndLampRequirements.furnitureNeeds[0],
           item_spec: "sofa",
           product_title: "Modern beige sofa",
           product_url: "https://www.localhome.si/p/1",
@@ -765,8 +768,8 @@ describe("product-conditioned room render (local, mocked OpenAI)", () => {
         },
         {
           requirement_type: "furniture",
-          requirement_key: "furniture:floor-lamp:2",
-          requirement_snapshot: { category: "floor lamp", quantity: 1, placementNotes: null, constraints: [] },
+          requirement_key: "furniture:floor-lamp:0",
+          requirement_snapshot: sofaAndLampRequirements.furnitureNeeds[1],
           item_spec: "floor lamp",
           product_title: "Black floor lamp",
           product_url: "https://www.localhome.si/p/2",
@@ -785,7 +788,13 @@ describe("product-conditioned room render (local, mocked OpenAI)", () => {
       .select("id, requirement_key")
       .eq("project_id", seeded.projectId);
     const sofa = rows.data?.find((row) => row.requirement_key === "furniture:sofa:0");
+    const lamp = rows.data?.find((row) => row.requirement_key === "furniture:floor-lamp:0");
     expect(sofa).toBeTruthy();
+    expect(lamp).toBeTruthy();
+    await userA.client
+      .from("project_product_selections")
+      .update({ is_confirmed: true })
+      .in("id", [sofa!.id, lamp!.id]);
     await acquireProductReferenceAsset({
       persistClient: persist,
       ownerUserId: userA.user.id,

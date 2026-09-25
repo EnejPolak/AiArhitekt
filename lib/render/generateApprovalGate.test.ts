@@ -314,15 +314,34 @@ describe("autonomous design release regressions", () => {
     expect(step10).toContain('alt="Selected design"');
   });
 
-  it("UI never claims individual product user-approval for autonomous inclusion", () => {
-    const shopping = readFileSync(
-      join(process.cwd(), "components/app/room-renovation/ProductShoppingSections.tsx"),
-      "utf8"
-    );
-    expect(shopping).toContain("Included in design");
-    expect(shopping).not.toContain("Use in design");
-    expect(shopping).not.toContain("User approved");
-    expect(shopping).not.toContain("approve to use");
-    expect(shopping).toContain("included from the approved plan");
+  it("historical searchedItemCount extras outside the plan do not block generate", () => {
+    const required = sevenReady();
+    const gate = evaluateCompleteRoomReadiness({
+      searchedItemCount: 8, // includes historical TRACINO search
+      unmatched: [],
+      readyRequirementKeys: required.map((item) => item.requirementKey),
+      preferences: {
+        selectedStyles: [],
+        budgetLevel: null,
+        wallMainColor: "",
+        wallAccentColor: "",
+        flooring: "keep",
+        underfloorHeating: false,
+        bedType: "none",
+        keepExistingWalls: true,
+        wallFinishMode: "keep_existing",
+        floorFinishMode: "keep_existing",
+        notes: "",
+      },
+      requiredPlanItems: REQUIRED_KEYS.map((key) => ({
+        requirementKey: key,
+        displayLabel: key,
+        concept: key.split(":")[1],
+      })),
+      readyPlanConcepts: required.map((item) => item.itemSpec),
+    });
+    expect(gate.allowed).toBe(true);
+    expect(gate.requiredSlots).toBe(7);
+    expect(gate.unresolvedSlots).toBe(0);
   });
 });

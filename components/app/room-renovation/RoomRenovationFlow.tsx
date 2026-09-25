@@ -442,12 +442,8 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
     });
   }, [roomPrefs, persistedDiscovery?.sourcePreferences, data.selectedStyles, data.preferences]);
 
-  const productShoppingState = React.useMemo(() => {
-    // Shopping list / final report must match the effective render inventory —
-    // historical extras outside the approved plan (e.g. TRACINO) stay out.
-    if (!currentAnalysis) {
-      return toProjectProductShoppingState(persistedDiscovery, persistedSelections);
-    }
+  const effectivePlanItems = React.useMemo(() => {
+    if (!currentAnalysis) return [] as Array<{ requirementKey: string; displayLabel: string; concept?: string }>;
     const plan = normalizeFurnishingPlan({
       analysisRequirements: currentAnalysis.designRequirements,
       observation: currentAnalysis.analysis,
@@ -455,15 +451,27 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
       preferences: shoppingPreferences,
       planOverrides: roomPrefs?.furnishingPlan ?? null,
     });
-    const requiredKeys = plan.required.map((item) => item.requirementKey);
+    return plan.required.map((item) => ({
+      requirementKey: item.requirementKey,
+      displayLabel: item.displayLabel,
+      concept: item.concept,
+    }));
+  }, [currentAnalysis, shoppingPreferences, roomPrefs?.furnishingPlan]);
+
+  const productShoppingState = React.useMemo(() => {
+    // Shopping list / final report must match the effective render inventory —
+    // historical extras outside the approved plan (e.g. TRACINO) stay out.
+    if (!currentAnalysis) {
+      return toProjectProductShoppingState(persistedDiscovery, persistedSelections);
+    }
+    const requiredKeys = effectivePlanItems.map((item) => item.requirementKey);
     const { included } = selectionsForRenderInventory(persistedSelections, requiredKeys, []);
     return toProjectProductShoppingState(persistedDiscovery, included);
   }, [
     currentAnalysis,
     persistedDiscovery,
     persistedSelections,
-    shoppingPreferences,
-    roomPrefs?.furnishingPlan,
+    effectivePlanItems,
   ]);
   const goToStepKey = React.useCallback(
     (key: RoomStepKey) => {
@@ -909,7 +917,7 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
             data={data}
             shoppingState={productShoppingState}
             discovery={persistedDiscovery}
-            selections={persistedSelections}
+            selections={productShoppingState.foundSelections}
             unmatched={persistedDiscovery?.unmatchedRequirements ?? []}
             preferences={{
               selectedStyles: data.selectedStyles,
@@ -924,6 +932,7 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
               floorFinishMode: data.preferences?.floorFinishMode ?? EMPTY_PROJECT_ROOM_PREFERENCES.floorFinishMode,
               notes: data.preferences?.notes ?? "",
             }}
+            requiredPlanItems={effectivePlanItems}
             onStartAnother={onComplete ?? (() => {})}
             onBack={() => goToStepKey("product-sourcing")}
           />

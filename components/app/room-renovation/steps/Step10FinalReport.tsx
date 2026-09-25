@@ -25,6 +25,7 @@ export interface Step10FinalReportProps {
   selections: ProductSelectionView[];
   unmatched: UnmatchedRequirement[];
   preferences: RoomRenderPreferences;
+  requiredPlanItems?: Array<{ requirementKey: string; displayLabel: string; concept?: string }>;
   onStartAnother: () => void;
   onBack?: () => void;
 }
@@ -37,6 +38,7 @@ export const Step10FinalReport: React.FC<Step10FinalReportProps> = ({
   selections,
   unmatched,
   preferences,
+  requiredPlanItems,
   onStartAnother,
   onBack,
 }) => {
@@ -92,6 +94,7 @@ export const Step10FinalReport: React.FC<Step10FinalReportProps> = ({
     selections,
     unmatched,
     preferences,
+    requiredPlanItems,
   });
   const headline = finalReportHeadline(projectState);
   const needsProductWork =

@@ -13,8 +13,13 @@ export function evaluateCompleteRoomReadiness(input: {
   requiredPlanItems?: Array<{ requirementKey: string; displayLabel: string; concept?: string }>;
   readyPlanConcepts?: string[];
 }): CompleteRoomGate {
+  const planItems = input.requiredPlanItems ?? [];
+  const planIsSourceOfTruth = planItems.length > 0;
+  // Historical discovery may have searched extras that are no longer in the
+  // approved plan (e.g. TRACINO). When the effective plan is known, it owns
+  // required product slots — do not inflate from searchedItemCount.
   const product = completeRoomGate({
-    searchedItemCount: input.searchedItemCount,
+    searchedItemCount: planIsSourceOfTruth ? planItems.length : input.searchedItemCount,
     unmatched: input.unmatched,
     readyRequirementKeys: input.readyRequirementKeys,
   });
@@ -35,7 +40,7 @@ export function evaluateCompleteRoomReadiness(input: {
     (input.readyPlanConcepts ?? []).filter((concept) => concept && concept !== "other")
   );
   const seenConcepts = new Set<string>();
-  const missingPlan = (input.requiredPlanItems ?? []).filter((item) => {
+  const missingPlan = planItems.filter((item) => {
     if (!item.requirementKey || readyKeys.has(item.requirementKey)) return false;
     if (item.concept && item.concept !== "other" && readyConcepts.has(item.concept)) return false;
     const dedupe = item.concept && item.concept !== "other" ? item.concept : item.requirementKey;
@@ -47,15 +52,23 @@ export function evaluateCompleteRoomReadiness(input: {
     (item) =>
       `${item.displayLabel} is required for a complete room. Find products for it before generating.`
   );
-  const requiredSlots = product.requiredSlots + requiredFinishSlots + missingPlan.length;
+  // When the plan drives product.requiredSlots, missing plan rows are already
+  // reflected in product.unresolvedSlots — do not double-count them.
+  const extraMissingPlan = planIsSourceOfTruth ? 0 : missingPlan.length;
+  const requiredSlots = product.requiredSlots + requiredFinishSlots + extraMissingPlan;
   const readySlots = product.readySlots + readyFinishSlots;
-  const unresolvedSlots = product.unresolvedSlots + unresolvedFinishes.length + missingPlan.length;
+  const unresolvedSlots =
+    product.unresolvedSlots + unresolvedFinishes.length + extraMissingPlan;
   return {
     requiredSlots,
     readySlots,
     unresolvedSlots,
     allowed: product.requiredSlots > 0 && unresolvedSlots === 0,
-    unresolvedLabels: [...product.unresolvedLabels, ...finishLabels, ...planLabels],
+    unresolvedLabels: [
+      ...product.unresolvedLabels,
+      ...finishLabels,
+      ...(planIsSourceOfTruth || extraMissingPlan > 0 ? planLabels : []),
+    ],
   };
 }
 
