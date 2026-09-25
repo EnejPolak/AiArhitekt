@@ -21,7 +21,6 @@ export interface Step9bProductSourcingProps {
   analysis?: RoomAnalysisView | null;
   shoppingPreferences?: ShoppingPreferenceInput | null;
   planOverrides?: FurnishingPlanOverrides | null;
-  onContinue: () => void;
   onRetryRequirement?: (requirementKey: string) => void;
   onChangeConstraints?: (requirementKey: string) => void;
   onIncreaseBudget?: (requirementKey: string) => void;
@@ -30,8 +29,6 @@ export interface Step9bProductSourcingProps {
   onSwitchWallToConceptColor?: () => void;
   onKeepExistingWalls?: () => void;
   retryBusyKey?: string | null;
-  onToggleConfirmed?: (selection: ProductSelectionView) => void;
-  confirmBusyId?: string | null;
   onBackToProducts?: () => void;
   onPreviewChange?: (previewUrl: string | null) => void;
   designBrief?: DesignBriefDocument | null;
@@ -48,7 +45,6 @@ export const Step9bProductSourcing: React.FC<Step9bProductSourcingProps> = ({
   analysis = null,
   shoppingPreferences = null,
   planOverrides = null,
-  onContinue,
   onRetryRequirement,
   onChangeConstraints,
   onIncreaseBudget,
@@ -57,8 +53,6 @@ export const Step9bProductSourcing: React.FC<Step9bProductSourcingProps> = ({
   onSwitchWallToConceptColor,
   onKeepExistingWalls,
   retryBusyKey,
-  onToggleConfirmed,
-  confirmBusyId,
   onBackToProducts,
   onPreviewChange,
   designBrief = null,
@@ -68,7 +62,9 @@ export const Step9bProductSourcing: React.FC<Step9bProductSourcingProps> = ({
     <div className="flex justify-start mb-6">
       <div className={`${wizardPanelClass} space-y-4`}>
         <div className="text-[15px] text-[rgba(255,255,255,0.85)] leading-relaxed">
-          Generate a room visualization from your selected products. The shopping list stays the real persisted selections — not anything read from the image.
+          Generate a room visualization from your selected products. Ready products with valid
+          references are included automatically — revise the selection with Back to products if
+          needed.
         </div>
         <FinalRoomRenderPanel
           projectId={projectId}
@@ -88,31 +84,11 @@ export const Step9bProductSourcing: React.FC<Step9bProductSourcingProps> = ({
           onSwitchWallToConceptColor={onSwitchWallToConceptColor}
           onKeepExistingWalls={onKeepExistingWalls}
           retryBusyKey={retryBusyKey}
-          onToggleConfirmed={onToggleConfirmed}
-          confirmBusyId={confirmBusyId}
           onPreviewChange={onPreviewChange}
           designBrief={designBrief}
           onCompleteBrief={onCompleteBrief}
+          onBackToProducts={onBackToProducts}
         />
-        <div className="flex flex-wrap gap-3">
-          {onBackToProducts ? (
-            <button
-              type="button"
-              data-testid="back-to-products"
-              onClick={onBackToProducts}
-              className="text-[14px] text-[rgba(255,255,255,0.70)] hover:text-white"
-            >
-              Back to products
-            </button>
-          ) : null}
-          <button
-            type="button"
-            onClick={onContinue}
-            className="text-[14px] text-[rgba(0,230,204,0.85)] hover:text-[rgba(0,230,204,1)]"
-          >
-            Continue
-          </button>
-        </div>
       </div>
     </div>
   );

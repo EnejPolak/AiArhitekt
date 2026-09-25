@@ -61,14 +61,21 @@ describe("render helpers", () => {
     expect(step10).toContain("PDF export is not available yet");
   });
 
-  it("exposes approval, back navigation, and brief completion on Generate", () => {
+  it("exposes generate CTA, back navigation, and brief completion without manual product approval", () => {
     const generate = readFileSync(join(process.cwd(), "components/app/room-renovation/steps/Step9bProductSourcing.tsx"), "utf8");
     const panel = readFileSync(join(process.cwd(), "components/app/room-renovation/FinalRoomRenderPanel.tsx"), "utf8");
+    const shopping = readFileSync(join(process.cwd(), "components/app/room-renovation/ProductShoppingSections.tsx"), "utf8");
     const flow = readFileSync(join(process.cwd(), "components/app/room-renovation/RoomRenovationFlow.tsx"), "utf8");
     expect(generate).toContain("Back to products");
-    expect(panel).toContain("onToggleConfirmed");
+    expect(generate).not.toContain("onContinue");
+    expect(generate).not.toContain(">Continue<");
+    expect(panel).toContain('data-testid="generate-design"');
+    expect(panel).not.toContain("onToggleConfirmed");
     expect(panel).toContain("Complete Design Brief");
-    expect(flow).toContain("setProductConfirmed");
+    expect(shopping).not.toContain("Use in design");
+    expect(shopping).toContain("included-in-visualization");
+    expect(shopping).toContain("Included in design");
+    expect(flow).not.toContain("setProductConfirmed");
     expect(flow).not.toContain("generateRoomRender(");
     const confirm = readFileSync(join(process.cwd(), "lib/discovery/actions.ts"), "utf8");
     const confirmFn = confirm.slice(confirm.indexOf("export async function setProductConfirmed"));

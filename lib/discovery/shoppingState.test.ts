@@ -206,6 +206,34 @@ describe("toProjectProductShoppingState", () => {
     expect(state.notSearchedCount).toBe(1);
   });
 
+  it("marks unavailable and category-conflict selections as replaceable missing requirements", () => {
+    const florida = selection({
+      id: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+      requirementKey: "furniture:ceiling-light:0",
+      itemSpec: "ceiling light",
+      productTitle: "Florida LED",
+      referenceStatus: "unavailable",
+    });
+    const biohort = selection({
+      id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      requirementKey: "furniture:storage:0",
+      itemSpec: "storage",
+      productTitle: "Biohort Omara za opremo",
+      productUrl: "https://example.com/biohort",
+      referenceStatus: "ready",
+    });
+    const state = toProjectProductShoppingState(discovery(), [productA, florida, biohort]);
+    expect(state.foundSelections.map((item) => item.productTitle)).toEqual(["Product A"]);
+    const floridaMissing = state.missingRequirements.find(
+      (item) => item.requirementKey === "furniture:ceiling-light:0"
+    );
+    const biohortMissing = state.missingRequirements.find(
+      (item) => item.requirementKey === "furniture:storage:0"
+    );
+    expect(floridaMissing?.replaceable).toBe(true);
+    expect(biohortMissing?.replaceable).toBe(true);
+  });
+
   it("returns an empty read-only state when discovery is missing", () => {
     const state = toProjectProductShoppingState(null, [productA]);
     expect(state.hasDiscovery).toBe(false);

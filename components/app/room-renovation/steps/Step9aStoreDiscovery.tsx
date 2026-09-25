@@ -3,7 +3,6 @@
 import * as React from "react";
 import {
   discoverProjectProductsAction,
-  setProductConfirmed,
 } from "@/lib/discovery/actions";
 import type { ProductDiscoveryView, ProductSelectionView } from "@/lib/discovery/types";
 import {
@@ -242,27 +241,6 @@ export const Step9aStoreDiscovery: React.FC<Step9aStoreDiscoveryProps> = ({
     }
   };
 
-  const toggleConfirm = async (selection: ProductSelectionView) => {
-    if (inFlight.current) return;
-    const next = !selection.isConfirmed;
-    const result = await setProductConfirmed({
-      selectionId: selection.id,
-      confirmed: next,
-    });
-    if (!result.ok) {
-      setError(result.message);
-      setErrorCode(result.code);
-      return;
-    }
-    setSelections((prev) => {
-      const next = prev.map((item) => (item.id === result.selection.id ? result.selection : item));
-      if (discovery) {
-        onDiscoveryUpdated?.({ discovery, selections: next });
-      }
-      return next;
-    });
-  };
-
   const unmatchedNotFound =
     discovery?.unmatchedRequirements.filter(
       (item) => item.reason === "no_valid_product" || item.reason === "search_interrupted"
@@ -452,19 +430,15 @@ export const Step9aStoreDiscovery: React.FC<Step9aStoreDiscoveryProps> = ({
                       <div className="text-[12px] text-[rgba(255,255,255,0.50)] mt-1 break-words">
                         {selection.retailerName ?? selection.retailerDomain}
                       </div>
-                      {selection.referenceStatus === "ready" && !selection.isConfirmed ? (
+                      {selection.referenceStatus === "ready" ? (
                         <div className="text-[11px] text-[rgba(255,255,255,0.40)] mt-1">
-                          Ready reference — approve to use it in the design.
+                          Ready product reference
                         </div>
-                      ) : selection.referenceStatus === "ready" && selection.isConfirmed ? (
-                        <div className="text-[11px] text-[rgba(255,255,255,0.40)] mt-1">
-                          Locked approved product
-                        </div>
-                      ) : !selection.isConfirmed ? (
+                      ) : (
                         <div className="text-[11px] text-[rgba(255,255,255,0.40)] mt-1">
                           Waiting for a verified merchant reference.
                         </div>
-                      ) : null}
+                      )}
                       <div className="flex flex-wrap gap-3 mt-3">
                         <a
                           href={selection.productUrl}
@@ -474,13 +448,6 @@ export const Step9aStoreDiscovery: React.FC<Step9aStoreDiscoveryProps> = ({
                         >
                           Open product
                         </a>
-                        <button
-                          type="button"
-                          onClick={() => void toggleConfirm(selection)}
-                          className="text-[13px] text-[rgba(0,230,204,0.85)] hover:text-[rgba(0,230,204,1)]"
-                        >
-                          {selection.isConfirmed ? "Selected for design" : "Use in design"}
-                        </button>
                       </div>
                     </div>
                   </div>

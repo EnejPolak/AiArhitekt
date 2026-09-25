@@ -29,6 +29,8 @@ export type MissingShoppingRequirement = {
   itemSpec: string;
   label: string;
   reason: UnmatchedRequirement["reason"];
+  /** True when a prior selection must be unlocked before another product can be found. */
+  replaceable: boolean;
 };
 
 export type ProjectProductShoppingState = {
@@ -42,6 +44,19 @@ export type ProjectProductShoppingState = {
   knownProductTotalIsPartial: boolean;
   allNotFound: boolean;
 };
+
+/** Persisted selection that cannot satisfy RENDER_READY / category for its requirement. */
+export function isUnusablePersistedSelection(selection: ProductSelectionView): boolean {
+  if (selection.referenceStatus === "unavailable") return true;
+  if (selectionConflictsRequirementCategory(selection)) return true;
+  if (
+    selection.referenceStatus === "ready" &&
+    !selectionHasUsableExactProductImage(selection)
+  ) {
+    return true;
+  }
+  return false;
+}
 
 export function formatVerifiedProductPrice(
   price: number | null,
@@ -92,6 +107,7 @@ export function toProjectProductShoppingState(
         itemSpec: item.itemSpec,
         label: unmatchedRequirementDisplayLabel(item),
         reason: item.reason,
+        replaceable: false,
       })),
     ...selections
       .filter((item) => item.referenceStatus === "unavailable")
@@ -101,6 +117,7 @@ export function toProjectProductShoppingState(
         itemSpec: item.itemSpec,
         label: item.productTitle,
         reason: "no_valid_product" as const,
+        replaceable: true,
       })),
     ...unusableReady.map((item) => ({
       requirementKey: item.requirementKey,
@@ -108,6 +125,7 @@ export function toProjectProductShoppingState(
       itemSpec: item.itemSpec,
       label: item.productTitle,
       reason: "no_valid_product" as const,
+      replaceable: true,
     })),
     ...categoryConflict.map((item) => ({
       requirementKey: item.requirementKey,
@@ -115,6 +133,7 @@ export function toProjectProductShoppingState(
       itemSpec: item.itemSpec,
       label: item.productTitle,
       reason: "no_valid_product" as const,
+      replaceable: true,
     })),
   ];
   const notSearchedCount = unmatched.filter((item) => item.reason === "not_searched").length;

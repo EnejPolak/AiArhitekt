@@ -11,8 +11,6 @@ import {
   designBriefBlockMessage,
   designBriefGenerateGate,
   evaluateCompleteRoomReadiness,
-  productApprovalBlockMessage,
-  productApprovalGate,
   referenceCapacityGate,
   tooManyReferencesBlockMessage,
 } from "@/lib/render/readiness";
@@ -65,11 +63,10 @@ export interface FinalRoomRenderPanelProps {
   onSwitchWallToConceptColor?: () => void;
   onKeepExistingWalls?: () => void;
   retryBusyKey?: string | null;
-  onToggleConfirmed?: (selection: ProductSelectionView) => void;
-  confirmBusyId?: string | null;
   onPreviewChange?: (previewUrl: string | null) => void;
   designBrief?: DesignBriefDocument | null;
   onCompleteBrief?: () => void;
+  onBackToProducts?: () => void;
 }
 
 export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
@@ -90,11 +87,10 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
   onSwitchWallToConceptColor,
   onKeepExistingWalls,
   retryBusyKey,
-  onToggleConfirmed,
-  confirmBusyId,
   onPreviewChange,
   designBrief = null,
   onCompleteBrief,
+  onBackToProducts,
 }) => {
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -251,10 +247,6 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
     const requiredKeys = plan?.required.map((item) => item.requirementKey) ?? [];
     return selectionsForRenderInventory(selections, requiredKeys, []).included;
   }, [analysis, shoppingPreferences, planOverrides, selections]);
-  const approval = React.useMemo(
-    () => productApprovalGate(visualizationReadySelections(inventorySelections)),
-    [inventorySelections]
-  );
   const capacity = React.useMemo(() => {
     const readyCount = visualizationReadySelections(inventorySelections).length;
     return referenceCapacityGate(readyCount);
@@ -280,23 +272,24 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
     wallPaintReady?.requirementKey;
   const changeFloorRequested = requestedFloorFinishMode(preferences) === "exact_product";
   const exactWallRequested = requestedWallFinishMode(preferences) === "exact_product";
+  // Scope shopping cards to the effective render inventory so excluded extras
+  // (e.g. TRACINO / stale tv-console) are not presented as visualization inputs.
   const shoppingState = React.useMemo(
-    () => toProjectProductShoppingState(discovery, selections),
-    [discovery, selections]
+    () => toProjectProductShoppingState(discovery, inventorySelections),
+    [discovery, inventorySelections]
   );
   const buttonLabel = hasCurrent && !stale ? "Regenerate design" : "Generate design";
   const unusableLabels = unusableReferenceLabels(inventorySelections);
+  const readyInventoryCount = visualizationReadySelections(inventorySelections).length;
   const canGenerate =
     Boolean(completeRoom?.allowed) &&
-    approval.allowed &&
     briefGate.allowed &&
-    capacity.allowed;
+    capacity.allowed &&
+    unusableLabels.length === 0;
   const blockMessage = !briefGate.allowed
     ? designBriefBlockMessage()
-    : !approval.allowed
-      ? productApprovalBlockMessage(approval)
-      : !capacity.allowed
-        ? tooManyReferencesBlockMessage(capacity.candidateCount)
+    : !capacity.allowed
+      ? tooManyReferencesBlockMessage(capacity.candidateCount)
       : completeRoom && !completeRoom.allowed
         ? completeRoomBlockMessage({
             ...completeRoom,
@@ -484,20 +477,37 @@ export const FinalRoomRenderPanel: React.FC<FinalRoomRenderPanelProps> = ({
           onChangeConstraints={onChangeConstraints}
           onIncreaseBudget={onIncreaseBudget}
           onRemoveRequirement={onRemoveRequirement}
-          onToggleConfirmed={onToggleConfirmed}
-          confirmBusyId={confirmBusyId}
           retryBusyKey={retryBusyKey}
+          showVisualizationInclusion
         />
       ) : null}
 
-      <button
-        type="button"
-        disabled={busy || !canGenerate}
-        onClick={() => void generate(hasCurrent && !stale)}
-        className="text-[14px] text-[rgba(0,230,204,0.85)] hover:text-[rgba(0,230,204,1)] disabled:opacity-40 disabled:cursor-not-allowed"
-      >
-        {busy ? "Working…" : buttonLabel}
-      </button>
+      <div className="space-y-3 pt-1">
+        <p className="text-[13px] text-[rgba(255,255,255,0.65)]">
+          {readyInventoryCount > 0
+            ? `All ${readyInventoryCount} selected ready product${readyInventoryCount === 1 ? "" : "s"} will be included in this visualization.`
+            : "Selected products need usable references before Generate design is available."}
+        </p>
+        <button
+          type="button"
+          data-testid="generate-design"
+          disabled={busy || !canGenerate}
+          onClick={() => void generate(hasCurrent && !stale)}
+          className="w-full px-6 py-4 rounded-lg bg-[#3B82F6] text-white text-[16px] font-medium hover:bg-[#2563EB] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {busy ? "Working…" : buttonLabel}
+        </button>
+        {onBackToProducts ? (
+          <button
+            type="button"
+            data-testid="back-to-products"
+            onClick={onBackToProducts}
+            className="w-full text-center text-[13px] text-[rgba(255,255,255,0.55)] hover:text-[rgba(255,255,255,0.85)]"
+          >
+            Back to products
+          </button>
+        ) : null}
+      </div>
 
       {honestyReport ? (
         <div className="space-y-5">

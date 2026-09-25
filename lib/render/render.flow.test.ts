@@ -9,6 +9,7 @@ import { LOCAL_ANON_JWT, LOCAL_SERVICE_ROLE_JWT, localSupabaseApiUrl } from "@/l
 import { PROJECT_UPLOADS_BUCKET } from "@/lib/uploads/constants";
 import { buildRoomPhotoPath } from "@/lib/uploads/path";
 import { validRoomAnalysisResult } from "@/lib/analysis/fixtures";
+import type { DesignRequirements } from "@/lib/analysis/schema";
 import { acquireProductReferenceAsset } from "@/lib/references/acquire";
 import { PROJECT_ASSETS_BUCKET } from "@/lib/references/constants";
 import { createSolidPng } from "@/lib/references/imageFixtures";
@@ -91,7 +92,39 @@ type ProductSeed = {
   bytes: Uint8Array;
 };
 
-async function seedProject(client: Client, userId: string) {
+function requiredFurnitureNeed(
+  category: string,
+  extra: Partial<DesignRequirements["furnitureNeeds"][number]> = {}
+): DesignRequirements["furnitureNeeds"][number] {
+  return {
+    category,
+    quantity: 1,
+    placementNotes: null,
+    constraints: [],
+    rationale: `Required ${category} for render flow fixtures.`,
+    role: "required_for_render",
+    ...extra,
+  };
+}
+
+/** Analysis furniture needs must match seeded selection keys (plan.required). */
+function designRequirementsForFurniture(
+  furnitureNeeds: DesignRequirements["furnitureNeeds"]
+): DesignRequirements {
+  return {
+    ...validRoomAnalysisResult.designRequirements,
+    furnitureNeeds,
+    // Architectural finishes are gated separately; keep flooring preference "keep"
+    // so material rows are not required for complete-room readiness.
+    materialNeeds: [],
+  };
+}
+
+async function seedProject(
+  client: Client,
+  userId: string,
+  designRequirements: DesignRequirements = validRoomAnalysisResult.designRequirements
+) {
   const created = await client
     .from("projects")
     .insert({
@@ -133,7 +166,7 @@ async function seedProject(client: Client, userId: string) {
       provider: "openai",
       model: "gpt-4o",
       analysis: validRoomAnalysisResult.analysis,
-      design_requirements: validRoomAnalysisResult.designRequirements,
+      design_requirements: designRequirements,
     })
     .select("id, updated_at")
     .single();
@@ -232,11 +265,69 @@ function sofaOnly(): ProductSeed[] {
       requirementKey: "furniture:sofa:0",
       itemSpec: "sofa",
       productTitle: "Modern beige sofa",
-      snapshot: validRoomAnalysisResult.designRequirements.furnitureNeeds[0],
+      snapshot: requiredFurnitureNeed("sofa", {
+        placementNotes: "back wall",
+        constraints: ["must not block the door"],
+        rationale: "Primary seating; the existing sofa is marked for replacement.",
+      }),
       bytes: productPng(0x21),
     },
   ];
 }
+
+function sofaCoffeeTableLampSeeds(bytes: {
+  sofa: Uint8Array;
+  table: Uint8Array;
+  lamp: Uint8Array;
+}): ProductSeed[] {
+  return [
+    {
+      requirementType: "furniture",
+      requirementKey: "furniture:sofa:0",
+      itemSpec: "sofa",
+      productTitle: "Modern beige sofa",
+      snapshot: requiredFurnitureNeed("sofa", {
+        placementNotes: "back wall",
+        constraints: ["must not block the door"],
+      }),
+      bytes: bytes.sofa,
+    },
+    {
+      requirementType: "furniture",
+      requirementKey: "furniture:coffee-table:0",
+      itemSpec: "coffee table",
+      productTitle: "Oak coffee table",
+      snapshot: requiredFurnitureNeed("coffee table"),
+      bytes: bytes.table,
+    },
+    {
+      requirementType: "furniture",
+      requirementKey: "furniture:floor-lamp:0",
+      itemSpec: "floor lamp",
+      productTitle: "Black floor lamp",
+      snapshot: requiredFurnitureNeed("floor lamp"),
+      bytes: bytes.lamp,
+    },
+  ];
+}
+
+const SOFA_COFFEE_LAMP_REQUIREMENTS = designRequirementsForFurniture([
+  requiredFurnitureNeed("sofa", {
+    placementNotes: "back wall",
+    constraints: ["must not block the door"],
+  }),
+  requiredFurnitureNeed("coffee table"),
+  requiredFurnitureNeed("floor lamp"),
+]);
+
+const SOFA_COFFEE_REQUIREMENTS = designRequirementsForFurniture([
+  requiredFurnitureNeed("sofa", {
+    placementNotes: "back wall",
+    constraints: ["must not block the door"],
+  }),
+  requiredFurnitureNeed("coffee table"),
+]);
+
 
 describe("product-conditioned room render (local, mocked OpenAI)", () => {
   let userA: { client: Client; user: User };
@@ -288,50 +379,19 @@ describe("product-conditioned room render (local, mocked OpenAI)", () => {
     const sofaBytes = productPng(0x31);
     const tableBytes = productPng(0x32);
     const lampBytes = productPng(0x33);
-    const floorBytes = productPng(0x34);
-    const seeded = await seedProject(userA.client, userA.user.id);
-    await persistProducts(userA, seeded, [
-      {
-        requirementType: "furniture",
-        requirementKey: "furniture:sofa:0",
-        itemSpec: "sofa",
-        productTitle: "Modern beige sofa",
-        snapshot: validRoomAnalysisResult.designRequirements.furnitureNeeds[0],
-        bytes: sofaBytes,
-      },
-      {
-        requirementType: "furniture",
-        requirementKey: "furniture:coffee-table:1",
-        itemSpec: "coffee table",
-        productTitle: "Oak coffee table",
-        snapshot: { category: "coffee table", quantity: 1, placementNotes: null, constraints: [] },
-        bytes: tableBytes,
-      },
-      {
-        requirementType: "furniture",
-        requirementKey: "furniture:floor-lamp:2",
-        itemSpec: "floor lamp",
-        productTitle: "Black floor lamp",
-        snapshot: { category: "floor lamp", quantity: 1, placementNotes: null, constraints: [] },
-        bytes: lampBytes,
-      },
-      {
-        requirementType: "material",
-        requirementKey: "material:floor:wood-look-flooring:0",
-        itemSpec: "wood-look flooring",
-        productTitle: "Matte oak flooring",
-        snapshot: validRoomAnalysisResult.designRequirements.materialNeeds[0],
-        bytes: floorBytes,
-      },
-    ]);
+    const seeded = await seedProject(userA.client, userA.user.id, SOFA_COFFEE_LAMP_REQUIREMENTS);
+    await persistProducts(
+      userA,
+      seeded,
+      sofaCoffeeTableLampSeeds({ sofa: sofaBytes, table: tableBytes, lamp: lampBytes })
+    );
 
     const edit = vi.fn<RoomImageEditFn>(async (input) => {
-      expect(input.images).toHaveLength(5);
+      expect(input.images).toHaveLength(4);
       expect(Buffer.from(input.images[0].bytes).equals(Buffer.from(ROOM_JPEG))).toBe(true);
       expect(Buffer.from(input.images[1].bytes).equals(Buffer.from(sofaBytes))).toBe(true);
       expect(Buffer.from(input.images[2].bytes).equals(Buffer.from(tableBytes))).toBe(true);
       expect(Buffer.from(input.images[3].bytes).equals(Buffer.from(lampBytes))).toBe(true);
-      expect(Buffer.from(input.images[4].bytes).equals(Buffer.from(floorBytes))).toBe(true);
       expect(input.prompt).toContain("IMAGE A (Image 1)");
       expect(input.prompt).toContain("exact selected furniture reference");
       expect(input.images.every((image) => !image.filename.includes("http"))).toBe(true);
@@ -566,15 +626,15 @@ describe("product-conditioned room render (local, mocked OpenAI)", () => {
 
   it("changing persisted products makes the previous render stale without auto-generating", async () => {
     vi.stubEnv("OPENAI_IMAGE_RENDER_ENABLED", "true");
-    const seeded = await seedProject(userA.client, userA.user.id);
+    const seeded = await seedProject(userA.client, userA.user.id, SOFA_COFFEE_REQUIREMENTS);
     const products = [
       ...sofaOnly(),
       {
         requirementType: "furniture" as const,
-        requirementKey: "furniture:coffee-table:1",
+        requirementKey: "furniture:coffee-table:0",
         itemSpec: "coffee table",
         productTitle: "Oak coffee table",
-        snapshot: { category: "coffee table", quantity: 1, placementNotes: null, constraints: [] },
+        snapshot: requiredFurnitureNeed("coffee table"),
         bytes: productPng(0x41),
       },
     ];

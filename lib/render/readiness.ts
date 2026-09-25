@@ -83,28 +83,27 @@ export function referenceCapacityGate(candidateCount: number): {
 export function tooManyReferencesBlockMessage(candidateCount: number): string {
   return (
     `This design has ${candidateCount} product references, but one visualization supports at most ` +
-    `${MAX_RENDER_REFERENCE_IMAGES}. Unconfirm or remove products until ${MAX_RENDER_REFERENCE_IMAGES} ` +
-    `or fewer remain approved for the design, then generate again. No required product was silently dropped.`
+    `${MAX_RENDER_REFERENCE_IMAGES}. Remove products until ${MAX_RENDER_REFERENCE_IMAGES} ` +
+    `or fewer remain in the design inventory, then generate again. No required product was silently dropped.`
   );
 }
 
+/**
+ * Legacy gate kept for call-site compatibility.
+ * Generate no longer requires per-product `isConfirmed` approval — persisted
+ * final-selection rows with ready references are included automatically.
+ */
 export function productApprovalGate(
-  selections: Array<{
+  _selections: Array<{
     isConfirmed: boolean;
     requirementType: "furniture" | "material";
     referenceStatus?: string;
     productTitle: string;
   }>
 ): { allowed: boolean; unconfirmedLabels: string[] } {
-  const unconfirmed = selections.filter(
-    (item) =>
-      item.requirementType === "furniture" &&
-      item.referenceStatus === "ready" &&
-      !item.isConfirmed
-  );
   return {
-    allowed: unconfirmed.length === 0,
-    unconfirmedLabels: unconfirmed.map((item) => item.productTitle),
+    allowed: true,
+    unconfirmedLabels: [],
   };
 }
 
@@ -113,10 +112,7 @@ export function productApprovalBlockMessage(gate: {
   unconfirmedLabels: string[];
 }): string {
   if (gate.allowed) return "";
-  if (gate.unconfirmedLabels.length === 0) {
-    return "Approve each product before generating a design.";
-  }
-  return `Approve each product before generating a design. Waiting on: ${gate.unconfirmedLabels.join(", ")}.`;
+  return "Selected products must have usable references before generating a design.";
 }
 
 export function designBriefGenerateGate(

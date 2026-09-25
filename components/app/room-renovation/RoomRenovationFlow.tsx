@@ -18,10 +18,11 @@ import type { RoomAnalysisView } from "@/lib/analysis/types";
 import type { ProductDiscoveryView, ProductSelectionView } from "@/lib/discovery/types";
 import { DEFAULT_DISCOVERY_RADIUS_KM } from "@/lib/discovery/constants";
 import { toProjectProductShoppingState } from "@/lib/discovery/shoppingState";
+import { normalizeFurnishingPlan } from "@/lib/discovery/furnishingPlan";
+import { selectionsForRenderInventory } from "@/lib/render/inventory";
 import {
   removeRequirementFromDesignAction,
   retryUnresolvedRequirementAction,
-  setProductConfirmed,
 } from "@/lib/discovery/actions";
 import {
   parseProjectLocation,
@@ -210,7 +211,6 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
     productDiscovery?.selections ?? []
   );
   const [retryBusyKey, setRetryBusyKey] = React.useState<string | null>(null);
-  const [confirmBusyId, setConfirmBusyId] = React.useState<string | null>(null);
   const [hasPersistedPhoto, setHasPersistedPhoto] = React.useState(
     Boolean(roomPhoto?.previewUrl || roomPhoto?.filename)
   );
@@ -442,10 +442,29 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
     });
   }, [roomPrefs, persistedDiscovery?.sourcePreferences, data.selectedStyles, data.preferences]);
 
-  const productShoppingState = React.useMemo(
-    () => toProjectProductShoppingState(persistedDiscovery, persistedSelections),
-    [persistedDiscovery, persistedSelections]
-  );
+  const productShoppingState = React.useMemo(() => {
+    // Shopping list / final report must match the effective render inventory —
+    // historical extras outside the approved plan (e.g. TRACINO) stay out.
+    if (!currentAnalysis) {
+      return toProjectProductShoppingState(persistedDiscovery, persistedSelections);
+    }
+    const plan = normalizeFurnishingPlan({
+      analysisRequirements: currentAnalysis.designRequirements,
+      observation: currentAnalysis.analysis,
+      analysisId: currentAnalysis.id,
+      preferences: shoppingPreferences,
+      planOverrides: roomPrefs?.furnishingPlan ?? null,
+    });
+    const requiredKeys = plan.required.map((item) => item.requirementKey);
+    const { included } = selectionsForRenderInventory(persistedSelections, requiredKeys, []);
+    return toProjectProductShoppingState(persistedDiscovery, included);
+  }, [
+    currentAnalysis,
+    persistedDiscovery,
+    persistedSelections,
+    shoppingPreferences,
+    roomPrefs?.furnishingPlan,
+  ]);
   const goToStepKey = React.useCallback(
     (key: RoomStepKey) => {
       const index = stepIndexFromKey("room-renovation", key);
@@ -479,31 +498,6 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
       }
     },
     [projectId]
-  );
-  const handleToggleConfirmed = React.useCallback(
-    async (selection: ProductSelectionView) => {
-      if (confirmBusyId) return;
-      setConfirmBusyId(selection.id);
-      try {
-        const result = await setProductConfirmed({
-          selectionId: selection.id,
-          confirmed: !selection.isConfirmed,
-        });
-        if (result.ok) {
-          setPersistedSelections((prev) =>
-            prev.map((item) => (item.id === result.selection.id ? result.selection : item))
-          );
-          setPreferenceSaveError(null);
-        } else {
-          setPreferenceSaveError(result.message);
-        }
-      } catch {
-        setPreferenceSaveError("Could not save product approval. Try again.");
-      } finally {
-        setConfirmBusyId(null);
-      }
-    },
-    [confirmBusyId]
   );
   const persistKeepExistingFloor = async () => {
     const saved = await persistRoomPreferences({ flooring: "keep", floorFinishMode: "keep_existing" });
@@ -642,7 +636,7 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
       location: "To find products in local stores near you, share your location.",
       "store-discovery":
         "When you are ready, I will search nearby stores for real products from the room analysis. This does not generate a render.",
-      "product-sourcing": "Review the persisted products. Confirm the ones to use in the future design.",
+      "product-sourcing": "Review the selected products, then generate your room visualization.",
       "shopping-list": "Building a final shopping list that stays within your total budget…",
       contractors: "Do you want me to find local contractors (painters, flooring, assembly) within 50 km?",
       "final-report":
@@ -850,8 +844,6 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
             onSwitchWallToConceptColor={() => void persistWallFinishMode("concept_color")}
             onKeepExistingWalls={() => void persistWallFinishMode("keep_existing")}
             retryBusyKey={retryBusyKey}
-            onToggleConfirmed={(selection) => void handleToggleConfirmed(selection)}
-            confirmBusyId={confirmBusyId}
             onBackToProducts={() => goToStepKey("store-discovery")}
             onPreviewChange={(previewUrl) => {
               if (!previewUrl) return;
@@ -863,9 +855,6 @@ export const RoomRenovationFlow: React.FC<RoomRenovationFlowProps> = ({
             }}
             designBrief={roomPrefs?.designBriefAnswers ?? null}
             onCompleteBrief={() => goToStepKey("design-brief")}
-            onContinue={() => {
-              nextStep();
-            }}
           />
         );
       case "shopping-list":

@@ -35,8 +35,6 @@ import { buildRoomRenderPrompt } from "./prompt";
 import {
   completeRoomBlockMessage,
   evaluateCompleteRoomReadiness,
-  productApprovalBlockMessage,
-  productApprovalGate,
   tooManyReferencesBlockMessage,
 } from "./readiness";
 import { normalizeFurnishingPlan } from "@/lib/discovery/furnishingPlan";
@@ -286,15 +284,8 @@ export async function generateRoomRender(
       }
     );
   }
-  const approval = productApprovalGate(source.inventorySelections);
-  if (!approval.allowed) {
-    throw new RenderError("no_confirmed_products", productApprovalBlockMessage(approval), {
-      missingReferences: approval.unconfirmedLabels.map((title) => ({
-        selectionId: "",
-        productTitle: title,
-      })),
-    });
-  }
+  // Persisted final-selection inventory with ready references is included
+  // automatically — `isConfirmed` is not a generate gate.
   if (source.ordered.length === 0) {
     throw new RenderError(
       "reference_grounding_unavailable",

@@ -1,7 +1,7 @@
 import { selectionHasUsableExactProductImage } from "@/lib/references/imageEvidence";
 import { selectionConflictsRequirementCategory } from "@/lib/discovery/requirementCategory";
 import type { ProductDiscoveryView, ProductSelectionView } from "@/lib/discovery/types";
-import { evaluateCompleteRoomReadiness, productApprovalGate } from "./readiness";
+import { evaluateCompleteRoomReadiness } from "./readiness";
 import type { RoomRenderPreferences } from "./preferences";
 import type { UnmatchedRequirement } from "@/lib/discovery/itemSpecs";
 
@@ -47,8 +47,7 @@ export function resolveFinalReportProjectState(input: {
     readyPlanConcepts: ready.map((item) => item.itemSpec),
   });
   if (!completeRoom.allowed) return "incomplete_requirements";
-  const approval = productApprovalGate(ready);
-  if (!approval.allowed) return "waiting_approval";
+  // Manual per-product approval is no longer required for generate.
   return "ready_to_generate";
 }
 
@@ -63,7 +62,8 @@ export function finalReportHeadline(state: FinalReportProjectState): string {
     case "ready_to_generate":
       return "Required products are ready. Generate a visualization to finish.";
     case "waiting_approval":
-      return "Approve each product before generating a design.";
+      // Retained for older persisted UI states; generate no longer waits on confirm.
+      return "Required products are ready. Generate a visualization to finish.";
     default:
       return "This project is incomplete. Finish required products before a final visualization.";
   }

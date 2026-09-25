@@ -447,8 +447,8 @@ describe("autonomous interior design workflow", () => {
     ).toEqual(["furniture:window-treatment:0"]);
   });
 
-  it("blocks render until each READY furniture product is approved", () => {
-    const blocked = productApprovalGate([
+  it("does not require per-product confirmation once READY furniture exists", () => {
+    const unconfirmed = productApprovalGate([
       {
         isConfirmed: false,
         requirementType: "furniture",
@@ -456,9 +456,9 @@ describe("autonomous interior design workflow", () => {
         productTitle: "Taremo II",
       },
     ]);
-    expect(blocked.allowed).toBe(false);
-    expect(blocked.unconfirmedLabels).toEqual(["Taremo II"]);
-    const allowed = productApprovalGate([
+    expect(unconfirmed.allowed).toBe(true);
+    expect(unconfirmed.unconfirmedLabels).toEqual([]);
+    const confirmed = productApprovalGate([
       {
         isConfirmed: true,
         requirementType: "furniture",
@@ -466,7 +466,7 @@ describe("autonomous interior design workflow", () => {
         productTitle: "Taremo II",
       },
     ]);
-    expect(allowed.allowed).toBe(true);
+    expect(confirmed.allowed).toBe(true);
   });
 
   it("blocks generate when a required living-room category has no READY product yet", () => {

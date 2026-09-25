@@ -653,7 +653,7 @@ describe("approved-product preservation", () => {
       productApprovalGate(
         locked.map((item) => ({ ...item, isConfirmed: false }))
       ).allowed
-    ).toBe(false);
+    ).toBe(true);
   });
 });
 
